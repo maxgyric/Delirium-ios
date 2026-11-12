@@ -247,7 +247,8 @@ public partial class Game
         GUILayout.BeginArea(new Rect(area.x + 10f, area.y + 10f, area.width - 20f, area.height - 20f));
         int t = Grid(kTabs, 3, tab, 30f);
         if (t >= 0 && t != tab) { tab = t; scroll = Vector2.zero; }
-        scroll = GUILayout.BeginScrollView(scroll, false, true);
+        // no sideways scroll bar: the panel's content is made to fit its width
+        scroll = GUILayout.BeginScrollView(scroll, false, true, GUIStyle.none, GUI.skin.verticalScrollbar);
         var m = Sel;
         if (m != null)
             switch (tab)

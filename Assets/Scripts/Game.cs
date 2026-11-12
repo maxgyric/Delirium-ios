@@ -867,8 +867,9 @@ public partial class Game : MonoBehaviour
             else orbiting = true;
             lastPointer = pos;
         }
-        if (Input.GetMouseButtonDown(1)) { orbiting = true; lastPointer = pos; }
-        if (Input.GetMouseButton(0) || Input.GetMouseButton(1))
+        bool rmb = Input.touchCount == 0 && Input.GetMouseButton(1); // a second finger is a pinch, not the right button
+        if (rmb && Input.GetMouseButtonDown(1)) { orbiting = true; lastPointer = pos; }
+        if (Input.GetMouseButton(0) || rmb)
         {
             Vector2 d = pos - lastPointer;
             lastPointer = pos;
@@ -985,7 +986,8 @@ public partial class Game : MonoBehaviour
     }
 
     // ------------------------------------------------------------------ the screen (IMGUI: mouse and fingers alike)
-    static float UiScale() => Mathf.Max(1f, Screen.height / 720f);
+    static float uiZoom = 1f; // Settings > Buttons size
+    static float UiScale() => Mathf.Max(1f, Screen.height / 720f) * uiZoom;
     GUIStyle big, field, label;
 
     void Styles()

@@ -930,7 +930,8 @@ public partial class Game
         if (Input.GetKeyDown(KeyCode.Space)) hJumpReq = true;
         if (Input.GetKeyDown(KeyCode.J)) ToggleDrunk();
         if (Input.GetKeyDown(KeyCode.N)) ToggleNoclip();
-        if (Input.GetMouseButtonDown(1) && heroMode == 0 && !kGuns[weapon % kGuns.Length].Fists) heroAim = !heroAim;
+        // the right mouse button aims (on a phone Unity calls a second finger the right button: not that)
+        if (Input.touchCount == 0 && Input.GetMouseButtonDown(1) && heroMode == 0 && !kGuns[weapon % kGuns.Length].Fists) heroAim = !heroAim;
         heroSprint = hSprintId != kNone || Input.GetKey(KeyCode.LeftShift);
         hCamPitch = Mathf.Clamp(hCamPitch, -40f, 65f);
         if (heroMode != 0) heroAim = false;

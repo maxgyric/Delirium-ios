@@ -4,6 +4,8 @@ using UnityEngine;
 
 public partial class Game
 {
+    const string kPrefUi = "delirium.uiZoom";
+    float uiZoomPending = 1f;
     const string kPrefScale = "delirium.renderScale", kPrefShadows = "delirium.shadowDistance", kPrefFps = "delirium.showFps", kPrefCap = "delirium.fpsCap";
     float renderScale = 1f, shadowDistance = 60f;
     bool showFps;
@@ -25,6 +27,7 @@ public partial class Game
         shadowDistance = Mathf.Clamp(PlayerPrefs.GetFloat(kPrefShadows, 60f), 0f, 150f);
         showFps = PlayerPrefs.GetInt(kPrefFps, 0) == 1;
         fpsCap = PlayerPrefs.GetInt(kPrefCap, 60);
+        uiZoom = uiZoomPending = Mathf.Clamp(PlayerPrefs.GetFloat(kPrefUi, 1f), 0.6f, 1.5f);
         SettingsApply();
     }
 
@@ -34,6 +37,7 @@ public partial class Game
         PlayerPrefs.SetFloat(kPrefShadows, shadowDistance);
         PlayerPrefs.SetInt(kPrefFps, showFps ? 1 : 0);
         PlayerPrefs.SetInt(kPrefCap, fpsCap);
+        PlayerPrefs.SetFloat(kPrefUi, uiZoomPending);
         PlayerPrefs.Save();
     }
 
@@ -88,6 +92,7 @@ public partial class Game
     {
         float dt = Time.unscaledDeltaTime;
         if (dt > 0f) fpsSmooth = fpsSmooth <= 0f ? 1f / dt : Mathf.Lerp(fpsSmooth, 1f / dt, 0.05f);
+        if (uiZoomPending != uiZoom && Input.touchCount == 0 && !Input.GetMouseButton(0)) uiZoom = uiZoomPending;
         // a screen turned or resized: the view's texture follows
         if (renderScale <= 0.99f && view != null && (Mathf.Abs(view.width - Screen.width * renderScale) > 2f || Mathf.Abs(view.height - Screen.height * renderScale) > 2f)) View();
     }
@@ -107,6 +112,12 @@ public partial class Game
         float d = Slide("Shadows reach", Mathf.Round(shadowDistance), 0f, 150f, shadowDistance < 0.5f ? " (off)" : " m");
         if (Mathf.Abs(d - shadowDistance) > 0.5f) { shadowDistance = d; SettingsApply(); SettingsSave(); }
         Info("How far away shadows are still drawn. Less is lighter; 0 turns them off.");
+
+        Head("Buttons");
+        float z = Slide("Buttons size", Mathf.Round(uiZoomPending * 100f), 60f, 150f, "%") / 100f;
+        if (Mathf.Abs(z - uiZoomPending) > 0.004f) { uiZoomPending = z; SettingsSave(); }
+        Info("The menu, the sticks and every button. Takes effect when you let go.");
+        if (GUILayout.Button("Buttons size: 100%", btn, GUILayout.Height(30f))) { uiZoomPending = 1f; SettingsSave(); }
 
         Head("Frame rate");
         int[] caps = { 30, 60, 120 };

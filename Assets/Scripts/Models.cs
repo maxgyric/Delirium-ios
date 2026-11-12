@@ -46,6 +46,12 @@ public partial class Game
     void FilesInit()
     {
         filesDir = PlayerPrefs.GetString(kPrefFiles, Application.persistentDataPath);
+        if (Application.isMobilePlatform)
+        {
+            // the phone: characters and maps in Delirium Sandbox/mods (any subfolders), apart from the game's files
+            try { Directory.CreateDirectory(ModsDir()); } catch (Exception) { }
+            filesDir = ModsDir();
+        }
         RefreshFiles();
         // what was in use the last time (a file that fails now is forgotten, not tried at every start)
         mapPath = PlayerPrefs.GetString(kPrefMap, "");
@@ -61,6 +67,8 @@ public partial class Game
         filesNote = "";
     }
 
+    static string ModsDir() => Path.Combine(Application.persistentDataPath, "mods");
+
     void RefreshFiles()
     {
         try
@@ -68,8 +76,15 @@ public partial class Game
             var found = new List<string>();
             if (Directory.Exists(filesDir))
             {
-                found.AddRange(Directory.GetFiles(filesDir, "*.glb"));
-                found.AddRange(Directory.GetFiles(filesDir, "*.vrm")); // VRM avatars are .glb inside
+                // its subfolders too (mods/maps, mods/characters...)
+                found.AddRange(Directory.GetFiles(filesDir, "*.glb", SearchOption.AllDirectories));
+                found.AddRange(Directory.GetFiles(filesDir, "*.vrm", SearchOption.AllDirectories)); // VRM avatars are .glb inside
+            }
+            // on the phone: ones still loose next to the game's files
+            if (Application.isMobilePlatform && Directory.Exists(Application.persistentDataPath))
+            {
+                found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.glb"));
+                found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.vrm"));
             }
             files = found.ToArray();
             Array.Sort(files, StringComparer.OrdinalIgnoreCase);
@@ -361,15 +376,19 @@ public partial class Game
         Info("Characters: a rigged human as .glb or .vrm: Mixamo, VRM / Unity humanoid, Unreal, Source, Biped, GTA V, Rigify skeletons " +
              "(a .fbx: in Blender File > Import > FBX, then File > Export > glTF 2.0, format glTF Binary). " +
              "Maps: any .glb; its meshes are the ground and walls. An object named Spawn marks where you start.");
-        Info(Application.isMobilePlatform
-            ? "Copy them in the Files app: On My iPhone > Delirium Sandbox. Then Refresh."
-            : "The folder they're in:");
-        string dir = GUILayout.TextField(filesDir ?? "", txt, GUILayout.Height(26f));
-        if (dir != filesDir) filesDir = dir;
+        if (Application.isMobilePlatform)
+            Info("Put them in the Files app: On My iPhone > Delirium Sandbox > mods (folders inside it are fine, e.g. mods/maps). Then Refresh.");
+        else
+        {
+            Info("The folder they're in (its subfolders too):");
+            // a fixed width: a long path would make the whole menu wider than the screen
+            string dir = GUILayout.TextField(filesDir ?? "", txt, GUILayout.Height(26f), GUILayout.Width(kPanel - 64f));
+            if (dir != filesDir) filesDir = dir;
+        }
         if (GUILayout.Button("Refresh", btn, GUILayout.Height(32f)))
         {
             filesDir = filesDir.Trim().Trim('"');
-            PlayerPrefs.SetString(kPrefFiles, filesDir);
+            if (!Application.isMobilePlatform) PlayerPrefs.SetString(kPrefFiles, filesDir);
             filesNote = "";
             RefreshFiles();
         }
@@ -398,7 +417,7 @@ public partial class Game
         {
             long size = 0;
             try { size = new FileInfo(f).Length; } catch (Exception) { }
-            GUILayout.Label(Path.GetFileName(f) + "  (" + (size / 1048576f).ToString("0.0") + " MB)", lab);
+            GUILayout.Label(ShownName(f) + "  (" + (size / 1048576f).ToString("0.0") + " MB)", lab);
             GUILayout.BeginHorizontal();
             int pick = -1;
             if (GUILayout.Button("Hero", btn, GUILayout.Height(30f))) pick = 0;
@@ -411,6 +430,14 @@ public partial class Game
                 GUIUtility.ExitGUI();
             }
         }
+    }
+
+    // where it is under mods (maps/city.glb); one outside it says so
+    string ShownName(string f)
+    {
+        string root = (filesDir ?? "").TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
+        if (f.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return f.Substring(root.Length).Replace('\\', '/');
+        return Path.GetFileName(f) + (Application.isMobilePlatform ? " (not in mods)" : "");
     }
 
     void InUse(string what, string name, Action toDefault)
