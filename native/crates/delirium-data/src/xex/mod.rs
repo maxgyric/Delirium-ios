@@ -8,6 +8,11 @@ const DELTA_PATCH_DESCRIPTOR: u32 = 0x0000_05ff;
 const KEY_SRC: &str = "https://raw.githubusercontent.com/xenia-project/xenia/95a5c3ee250f80c3b9d139658649d9ffb6db3eec/src/xenia/cpu/xex_module.cc";
 
 pub fn config_dir() -> std::path::PathBuf {
+    // iOS: only Documents, Library and tmp of the app's own folder can be written; the game (Delirium Sandbox)
+    // puts xex.key here itself, since an app can't run curl
+    if cfg!(target_os = "ios") {
+        return std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join("Library/Application Support/delirium");
+    }
     std::env::var_os("APPDATA").map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))).unwrap_or_default().join("delirium")
 }

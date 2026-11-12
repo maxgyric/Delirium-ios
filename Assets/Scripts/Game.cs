@@ -76,11 +76,87 @@ public partial class Game : MonoBehaviour
     static string DefaultExe() => Application.isMobilePlatform ? Path.Combine(Application.persistentDataPath, "default.xex") : @"D:\Gta IV\default.xex";
     static string DefaultData() => Application.isMobilePlatform ? Application.persistentDataPath : @"D:\delirium repo\CS-Delirium\mod-files";
 
+    // On the phone Delirium can't run curl for the key that opens default.xex (it's in Xenia's source): fetched
+    // here once, put where Delirium looks (the same xex.key it keeps on a PC).
+    const string kKeySrc = "https://raw.githubusercontent.com/xenia-project/xenia/95a5c3ee250f80c3b9d139658649d9ffb6db3eec/src/xenia/cpu/xex_module.cc";
+    bool fetchingKey;
+
+    static string KeyFile()
+    {
+        string home = Environment.GetEnvironmentVariable("HOME");
+        if (string.IsNullOrEmpty(home)) home = Path.GetDirectoryName(Application.persistentDataPath);
+        return Path.Combine(home, "Library", "Application Support", "delirium", "xex.key");
+    }
+
+    bool NeedsKey()
+    {
+        if (Application.platform != RuntimePlatform.IPhonePlayer || File.Exists(KeyFile())) return false;
+        string exe = Directory.Exists(gameExe) ? Path.Combine(gameExe, "default.xex") : gameExe;
+        try
+        {
+            using (var f = File.OpenRead(exe))
+            {
+                var head = new byte[4];
+                return f.Read(head, 0, 4) == 4 && head[0] == 'X' && head[1] == 'E' && head[2] == 'X' && head[3] == '2';
+            }
+        }
+        catch { return false; }
+    }
+
+    System.Collections.IEnumerator FetchKeyThenLaunch()
+    {
+        fetchingKey = true;
+        error = "Getting the key that opens default.xex (once, from the internet)...";
+        using (var web = UnityEngine.Networking.UnityWebRequest.Get(kKeySrc))
+        {
+            web.timeout = 30;
+            yield return web.SendWebRequest();
+            fetchingKey = false;
+            byte[] key = web.result == UnityEngine.Networking.UnityWebRequest.Result.Success ? KeyOf(web.downloadHandler.text) : null;
+            if (key == null)
+            {
+                error = "Couldn't get the key that opens default.xex: " + (web.error ?? "not in the page") + ". Check the internet and press Start again.";
+                PlayerPrefs.SetInt(kPrefOk, 0);
+                yield break;
+            }
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(KeyFile()));
+                File.WriteAllBytes(KeyFile(), key);
+            }
+            catch (Exception e)
+            {
+                error = "Couldn't keep the key: " + e.Message;
+                yield break;
+            }
+        }
+        Launch();
+    }
+
+    // xe_xex2_retail_key[16] = { 0x.., ... } in Xenia's xex_module.cc
+    static byte[] KeyOf(string src)
+    {
+        int at = src.IndexOf("xe_xex2_retail_key[16] = {", StringComparison.Ordinal);
+        if (at < 0) return null;
+        int end = src.IndexOf('}', at);
+        if (end < 0) return null;
+        var bytes = new List<byte>();
+        foreach (var part in src.Substring(at, end - at).Split('{')[1].Split(','))
+        {
+            string h = part.Trim();
+            if (h.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) h = h.Substring(2);
+            if (byte.TryParse(h, System.Globalization.NumberStyles.HexNumber, null, out byte b)) bytes.Add(b);
+        }
+        return bytes.Count == 16 ? bytes.ToArray() : null;
+    }
+
     void Launch()
     {
+        if (fetchingKey) return;
         error = "";
         gameExe = gameExe.Trim().Trim('"');
         dataDir = dataDir.Trim().Trim('"');
+        if (NeedsKey()) { StartCoroutine(FetchKeyThenLaunch()); return; }
         string xrt = Path.Combine(dataDir, "character.xrt"), build = Path.Combine(dataDir, "build.txt"), tasks = Path.Combine(dataDir, "taskparams.txt");
         if (!File.Exists(gameExe) && !Directory.Exists(gameExe)) error = "No such file: " + gameExe;
         else if (!File.Exists(xrt)) error = "No character.xrt in " + dataDir;
