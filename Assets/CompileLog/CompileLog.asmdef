@@ -1,0 +1,6 @@
+{
+    "name": "CompileLog",
+    "includePlatforms": [
+        "Editor"
+    ]
+}

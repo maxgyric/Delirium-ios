@@ -1,0 +1,144 @@
+# The iPhone build, no Mac needed: an unsigned DeliriumSandbox.ipa (Actions > this run > Artifacts), signed and
+# installed from your PC by Sideloadly with your Apple ID.
+#   1. native (Linux): Delirium + delirium_anim -> libdelirium_ios.a (Rust, aarch64-apple-ios)
+#   2. unity  (Linux): the Unity project -> an Xcode project (game-ci; your Unity licence from the repo's secrets)
+#   3. ipa    (macOS): Xcode -> DeliriumSandbox.ipa
+# Runs on every push to main (not for .md changes) or by hand (Actions > iOS build > Run workflow).
+name: iOS build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'build-anim.bat']
+
+concurrency:
+  group: ios-build
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust for the iPhone
+        run: |
+          rustup toolchain install stable --profile minimal --target aarch64-apple-ios
+          rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: cargo-ios-${{ hashFiles('native/Cargo.lock', 'native/**/Cargo.toml') }}
+          restore-keys: cargo-ios-
+      - name: libdelirium_ios.a
+        working-directory: native
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: '15.0'
+        run: |
+          cargo build --release --locked -p delirium-ios --target aarch64-apple-ios
+          ls -la target/aarch64-apple-ios/release/libdelirium_ios.a
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native
+          path: native/target/aarch64-apple-ios/release/libdelirium_ios.a
+          retention-days: 3
+
+  unity:
+    needs: native
+    runs-on: ubuntu-latest
+    steps:
+      - name: The Unity licence is in the secrets
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          missing=""
+          [ -n "$UNITY_LICENSE" ] || missing="$missing UNITY_LICENSE"
+          [ -n "$UNITY_EMAIL" ] || missing="$missing UNITY_EMAIL"
+          [ -n "$UNITY_PASSWORD" ] || missing="$missing UNITY_PASSWORD"
+          if [ -n "$missing" ]; then echo "::error::Add these repository secrets (Settings > Secrets and variables > Actions):$missing"; exit 1; fi
+      - name: Room on the disk (the Unity image is big)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: native
+          path: Assets/Plugins/iOS
+      - uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-iOS-${{ hashFiles('Packages/manifest.json', 'Packages/packages-lock.json', 'ProjectSettings/ProjectVersion.txt') }}
+          restore-keys: Library-iOS-
+      - uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: iOS
+          unityVersion: 6000.3.28f1
+          buildMethod: BuildIOS.Build
+          buildName: DeliriumSandbox
+          buildsPath: build
+          versioning: None
+      - name: Pack the Xcode project (a tar keeps its scripts runnable)
+        run: |
+          sudo tar -C build -czf xcode.tgz iOS
+          ls -la xcode.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xcode
+          path: xcode.tgz
+          retention-days: 3
+          compression-level: 0
+
+  ipa:
+    needs: unity
+    runs-on: macos-15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: xcode
+      - name: Unpack
+        run: |
+          tar -xzf xcode.tgz
+          proj=$(dirname "$(find iOS -maxdepth 3 -name Unity-iPhone.xcodeproj | head -1)")
+          echo "PROJ=$proj" >> "$GITHUB_ENV"
+          echo "Xcode project: $proj"; xcodebuild -version
+      - name: Build (unsigned; Sideloadly signs it)
+        run: |
+          cd "$PROJ"
+          xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/app.xcarchive" archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
+            > "$GITHUB_WORKSPACE/xcodebuild.log" 2>&1 || { grep -E "error:|Undefined symbol|ld: " "$GITHUB_WORKSPACE/xcodebuild.log" | head -60; tail -80 "$GITHUB_WORKSPACE/xcodebuild.log"; exit 1; }
+          tail -5 "$GITHUB_WORKSPACE/xcodebuild.log"
+      - name: DeliriumSandbox.ipa
+        run: |
+          mkdir -p Payload
+          cp -R "$RUNNER_TEMP/app.xcarchive/Products/Applications/"*.app Payload/
+          zip -qry DeliriumSandbox.ipa Payload
+          ls -la DeliriumSandbox.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeliriumSandbox-ipa
+          path: DeliriumSandbox.ipa
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          retention-days: 7

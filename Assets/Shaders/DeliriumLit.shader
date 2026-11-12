@@ -1,0 +1,43 @@
+// Your own models and maps (.glb): matt (Lambert), the texture times the material's colour times the vertices'
+// colours (a map's corners darkened in its file show), cut where the texture is see-through (_Cutoff: leaves,
+// fences; 0: nothing is cut), both faces drawn when the file says so (_Cull 0).
+Shader "Delirium/Lit"
+{
+    Properties
+    {
+        _Color ("Color", Color) = (1,1,1,1)
+        _MainTex ("Albedo", 2D) = "white" {}
+        _Cutoff ("Alpha cutoff", Range(0,1)) = 0
+        [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 2
+    }
+    SubShader
+    {
+        Tags { "Queue"="AlphaTest" "RenderType"="TransparentCutout" "IgnoreProjector"="True" }
+        LOD 200
+        Cull [_Cull]
+
+        CGPROGRAM
+        #pragma surface surf Lambert addshadow fullforwardshadows
+        #pragma target 3.0
+
+        sampler2D _MainTex;
+        fixed4 _Color;
+        half _Cutoff;
+
+        struct Input
+        {
+            float2 uv_MainTex;
+            float4 color : COLOR;
+        };
+
+        void surf (Input IN, inout SurfaceOutput o)
+        {
+            fixed4 c = tex2D(_MainTex, IN.uv_MainTex) * _Color * IN.color;
+            clip(c.a - _Cutoff);
+            o.Albedo = c.rgb;
+            o.Alpha = 1;
+        }
+        ENDCG
+    }
+    FallBack "Legacy Shaders/Transparent/Cutout/VertexLit"
+}

@@ -1,0 +1,15 @@
+# CS Delirium's hero animations (GTA IV's own clips, read at run time from your game). On iOS: inside libdelirium_ios.a.
+[package]
+name = "delirium-anim"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+publish = false
+
+[lib]
+name = "delirium_anim"
+crate-type = ["rlib"]
+
+[dependencies]
+delirium-data = { path = "../crates/delirium-data" }
+bevy_math = { version = "=0.20.0", default-features = false, features = ["std"] }

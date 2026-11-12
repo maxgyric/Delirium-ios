@@ -1,0 +1,28 @@
+/Library/
+/Temp/
+/Obj/
+/Build/
+/Builds/
+/Logs/
+/UserSettings/
+*.csproj
+*.sln
+.vs/
+# the player's own game and what's exported from it: never in the repo
+*.xex
+*.xrt
+build.txt
+taskparams.txt
+*.rpf
+*.img
+sandbox-log.txt
+compile-log.txt
+# built by the workflow, not kept
+native/target/
+Assets/Plugins/iOS/
+Assets/Plugins/iOS.meta
+Assets/_Recovery/
+Assets/_Recovery.meta
+build-anim-log.txt
+/build/
+*.ipa
