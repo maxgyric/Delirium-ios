@@ -999,6 +999,7 @@ public partial class Game : MonoBehaviour
     void OnGUI()
     {
         Styles();
+        DrawView(); // Settings: the 3D view at a lower resolution, under everything else
         float s = UiScale();
         GUI.matrix = Matrix4x4.Scale(new Vector3(s, s, 1f));
         float w = Screen.width / s, h = Screen.height / s;

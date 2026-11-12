@@ -53,7 +53,9 @@ public partial class Game
         View();
     }
 
-    // The 3D view into a smaller texture when the scale is below 100%, a second camera stretching it over the screen.
+    // The 3D view into a smaller texture when the scale is below 100%. A second camera only clears the screen; the
+    // texture is put on it by OnGUI before the buttons (DrawView), so nothing can land on top of them (a camera's
+    // OnRenderImage blit did on the iPhone: no buttons at all).
     void View()
     {
         if (cam == null) return;
@@ -83,12 +85,17 @@ public partial class Game
             present.clearFlags = CameraClearFlags.SolidColor;
             present.backgroundColor = Color.black;
             present.depth = cam.depth + 10;
-            go.AddComponent<Present>().game = this;
         }
         present.enabled = true;
     }
 
-    internal RenderTexture ViewTexture => view;
+    // First thing in OnGUI: the smaller 3D view stretched over the whole screen.
+    void DrawView()
+    {
+        if (view == null || cam == null || cam.targetTexture != view || Event.current.type != EventType.Repaint) return;
+        GUI.matrix = Matrix4x4.identity;
+        GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), view, ScaleMode.StretchToFill, false);
+    }
 
     void SettingsUpdate()
     {
@@ -131,18 +138,5 @@ public partial class Game
 
         Head("Sound");
         volume = Slide("Volume", volume, 0f, 1f);
-    }
-}
-
-// Stretches the game's 3D view (rendered smaller) over the screen, under the buttons.
-public class Present : MonoBehaviour
-{
-    internal Game game;
-
-    void OnRenderImage(RenderTexture src, RenderTexture dst)
-    {
-        var view = game != null ? game.ViewTexture : null;
-        if (view != null) Graphics.Blit(view, dst);
-        else Graphics.Blit(src, dst);
     }
 }
