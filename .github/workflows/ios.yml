@@ -72,11 +72,7 @@ jobs:
         with:
           name: native
           path: Assets/Plugins/iOS
-      - uses: actions/cache@v4
-        with:
-          path: Library
-          key: Library-iOS-${{ hashFiles('Packages/manifest.json', 'Packages/packages-lock.json', 'ProjectSettings/ProjectVersion.txt') }}
-          restore-keys: Library-iOS-
+      # no cached Library: a restored one built a player whose built-in GUI skin was empty (no buttons at all)
       - name: Unity -> Xcode project
         env:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}

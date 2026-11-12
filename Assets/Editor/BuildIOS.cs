@@ -27,6 +27,7 @@ public static class BuildIOS
         var ios = NamedBuildTarget.iOS;
         PlayerSettings.SetScriptingBackend(ios, ScriptingImplementation.IL2CPP);
         PlayerSettings.SetManagedStrippingLevel(ios, ManagedStrippingLevel.Minimal);
+        PlayerSettings.stripEngineCode = false; // engine classes all kept (IMGUI's skin came out unreadable once)
         PlayerSettings.SetApplicationIdentifier(ios, "com.delirium.sandbox");
         PlayerSettings.iOS.sdkVersion = iOSSdkVersion.DeviceSDK;
         PlayerSettings.iOS.targetOSVersionString = "15.0";
