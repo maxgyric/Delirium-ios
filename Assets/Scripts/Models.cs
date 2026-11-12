@@ -123,7 +123,9 @@ public partial class Game
                 pixelTextures = mapTextures.Count > 0 && small * 2 >= mapTextures.Count;
                 Pixels();
                 PlayerPrefs.SetString(kPrefMap, path);
-                filesNote = "Map: " + name + " (" + made.Triangles + " triangles" + (made.SeeThrough > 0 ? ", " + made.SeeThrough + " see-through materials" : "") +
+                filesNote = "Map: " + name + " (" + made.Triangles + " triangles, " + made.Textures + " textures" +
+                            (made.TexturesFailed > 0 ? ", " + made.TexturesFailed + " didn't load: " + made.TextureWhy : "") +
+                            (made.SeeThrough > 0 ? ", " + made.SeeThrough + " see-through materials" : "") +
                             (made.Coloured > 0 ? ", shading in " + made.Coloured + " meshes" : "") + ").";
                 Debug.Log("[Sandbox] " + filesNote + (Resources.Load<Material>("DeliriumLit") == null ? " (no Delirium/Lit material: the plain one)" : ""));
                 return true;

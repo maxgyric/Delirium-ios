@@ -45,6 +45,8 @@ public partial class Game
     {
         Application.targetFrameRate = fpsCap;
         QualitySettings.vSyncCount = 0; // the cap, not the screen's refresh, sets the pace
+        // a phone's quality level bends skins by 2 bones a vertex: your own characters' (Mixamo: 4) look broken
+        QualitySettings.skinWeights = SkinWeights.Unlimited;
         QualitySettings.shadowDistance = Mathf.Max(shadowDistance, 1f);
         var sun = FindFirstObjectByType<Light>();
         if (sun != null && sun.type == LightType.Directional) sun.shadows = shadowDistance > 0.5f ? LightShadows.Soft : LightShadows.None;

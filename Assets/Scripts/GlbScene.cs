@@ -16,6 +16,8 @@ public static class GlbScene
     {
         public GameObject Root;
         public int Triangles, Skinned, SeeThrough, Coloured;
+        public int Textures, TexturesFailed;   // pictures loaded / not (TextureWhy: the first one's reason)
+        public string TextureWhy = "";
         public readonly List<UnityEngine.Object> Owned = new List<UnityEngine.Object>(); // meshes, textures, materials
     }
 
@@ -243,15 +245,37 @@ public static class GlbScene
             if (!textures.TryGetValue(image, out Texture2D t))
             {
                 byte[] bytes = glb.Image(image);
-                if (bytes != null)
+                string mime = Json.Str(glb.Item("images", image), "mimeType", "?");
+                if (bytes == null)
+                {
+                    made.TexturesFailed++;
+                    if (made.TextureWhy == "") made.TextureWhy = "image " + image + " (" + mime + ") isn't inside the .glb";
+                }
+                else
                 {
                     t = new Texture2D(2, 2, TextureFormat.RGBA32, true) { name = "image" + image };
-                    if (!t.LoadImage(bytes, true)) // PNG or JPEG; true: freed from the CPU's side once it's on the GPU
+                    bool ok = t.LoadImage(bytes, true); // PNG or JPEG; true: freed from the CPU's side once it's on the GPU
+                    if (!ok)
+                    {
+                        // once more the plainest way (kept readable, no mipmaps of our asking)
+                        UnityEngine.Object.Destroy(t);
+                        t = new Texture2D(2, 2) { name = "image" + image };
+                        ok = t.LoadImage(bytes, false);
+                    }
+                    if (!ok)
                     {
                         UnityEngine.Object.Destroy(t);
                         t = null;
+                        made.TexturesFailed++;
+                        if (made.TextureWhy == "")
+                            made.TextureWhy = "image " + image + " (" + mime + ", " + bytes.Length + " bytes, starts " +
+                                              BitConverter.ToString(bytes, 0, Math.Min(4, bytes.Length)) + ") didn't decode";
                     }
-                    else made.Owned.Add(t);
+                    else
+                    {
+                        made.Owned.Add(t);
+                        made.Textures++;
+                    }
                 }
                 textures[image] = t;
             }
