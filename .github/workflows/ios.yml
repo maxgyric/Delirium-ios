@@ -1,7 +1,8 @@
 # The iPhone build, no Mac needed: an unsigned DeliriumSandbox.ipa (Actions > this run > Artifacts), signed and
 # installed from your PC by Sideloadly with your Apple ID.
 #   1. native (Linux): Delirium + delirium_anim -> libdelirium_ios.a (Rust, aarch64-apple-ios)
-#   2. unity  (Linux): the Unity project -> an Xcode project (game-ci; your Unity licence from the repo's secrets)
+#   2. unity  (Linux): the Unity project -> an Xcode project (Unity's own Docker image; a Personal seat taken
+#      with the UNITY_EMAIL / UNITY_PASSWORD secrets and given back at the end)
 #   3. ipa    (macOS): Xcode -> DeliriumSandbox.ipa
 # Runs on every push to main (not for .md changes) or by hand (Actions > iOS build > Run workflow).
 name: iOS build
@@ -14,7 +15,7 @@ on:
 
 concurrency:
   group: ios-build
-  cancel-in-progress: true
+  cancel-in-progress: false   # a cancelled run could keep a Unity seat
 
 jobs:
   native:
@@ -50,18 +51,13 @@ jobs:
     needs: native
     runs-on: ubuntu-latest
     steps:
-      - name: The Unity licence is in the secrets
+      - name: The Unity login is in the secrets
         env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         run: |
-          missing=""
-          [ -n "$UNITY_LICENSE" ] || missing="$missing UNITY_LICENSE"
-          [ -n "$UNITY_EMAIL" ] || missing="$missing UNITY_EMAIL"
-          [ -n "$UNITY_PASSWORD" ] || missing="$missing UNITY_PASSWORD"
-          if [ -n "$missing" ]; then echo "::error::Add these repository secrets (Settings > Secrets and variables > Actions):$missing"; exit 1; fi
-      - name: Room on the disk (the Unity image is big)
+          [ -n "$UNITY_EMAIL" ] && [ -n "$UNITY_PASSWORD" ] || { echo "::error::Add the repository secrets UNITY_EMAIL and UNITY_PASSWORD (Settings > Secrets and variables > Actions)"; exit 1; }
+      - name: Room on the disk (the Unity iOS image is ~6 GB)
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: false
@@ -69,7 +65,7 @@ jobs:
           dotnet: true
           haskell: true
           large-packages: false
-          docker-images: false
+          docker-images: true
           swap-storage: false
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -81,18 +77,19 @@ jobs:
           path: Library
           key: Library-iOS-${{ hashFiles('Packages/manifest.json', 'Packages/packages-lock.json', 'ProjectSettings/ProjectVersion.txt') }}
           restore-keys: Library-iOS-
-      - uses: game-ci/unity-builder@v4
+      - name: Unity -> Xcode project
         env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/project" -w /project -e UNITY_EMAIL -e UNITY_PASSWORD \
+            unityci/editor:ubuntu-6000.3.28f1-ios-3 bash /project/ci/unity-build.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          targetPlatform: iOS
-          unityVersion: 6000.3.28f1
-          buildMethod: BuildIOS.Build
-          buildName: DeliriumSandbox
-          buildsPath: build
-          versioning: None
+          name: unity-build-log
+          path: unity-build.log
+          retention-days: 7
       - name: Pack the Xcode project (a tar keeps its scripts runnable)
         run: |
           sudo tar -C build -czf xcode.tgz iOS

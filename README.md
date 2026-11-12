@@ -26,9 +26,9 @@ your `default.xex` (or `GTAIV.exe`) is and where the three files exported from i
 ## The iPhone build (GitHub Actions, no Mac)
 `.github/workflows/ios.yml` runs on every push to `main` (or by hand: Actions > iOS build > Run workflow):
 Rust builds `native/` (Delirium 0.7.0's source and delirium_anim, GPL-3.0) into `libdelirium_ios.a` for the phone,
-Unity (game-ci, Linux) makes the Xcode project, a macOS runner makes an unsigned `DeliriumSandbox.ipa`
-(the run's Artifacts). The repo needs three secrets: `UNITY_LICENSE` (the whole `C:\ProgramData\Unity\Unity_lic.ulf`),
-`UNITY_EMAIL`, `UNITY_PASSWORD`.
+Unity (its Docker image on Linux, `ci/unity-build.sh`) makes the Xcode project, a macOS runner makes an unsigned
+`DeliriumSandbox.ipa` (the run's Artifacts). The repo needs two secrets, `UNITY_EMAIL` and `UNITY_PASSWORD`: the
+build takes a Unity Personal seat with them and gives it back at the end (Unity 6's Hub makes no .ulf file to use).
 
 Install: Sideloadly on the PC, your Apple ID, the .ipa, the iPhone on the cable. A free Apple ID's app runs 7 days,
 then sign it again. On the phone: Settings > Privacy & Security > Developer Mode on (once), and trust your Apple ID

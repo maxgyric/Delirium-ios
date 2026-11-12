@@ -1,4 +1,4 @@
-// The iPhone build (run by GitHub Actions: game-ci with -executeMethod BuildIOS.Build -customBuildPath <dir>).
+// The iPhone build (run by GitHub Actions, ci/unity-build.sh: -executeMethod BuildIOS.Build -customBuildPath <dir>).
 // Makes the Xcode project; the workflow turns it into an unsigned .ipa (signed on your PC by Sideloadly).
 // The game's own native code (Delirium + delirium_anim) is Assets/Plugins/iOS/libdelirium_ios.a, built by the
 // workflow from native/ just before this runs.
