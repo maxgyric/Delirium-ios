@@ -141,20 +141,32 @@ public class Glb
             throw new FormatException("not a .glb file (export as glTF Binary, .glb)");
         if (BitConverter.ToUInt32(data, 4) != 2) throw new FormatException("glTF version " + BitConverter.ToUInt32(data, 4) + ": only 2.0 is read");
         var g = new Glb();
+        // the header's own total, unless it's nonsense or more than the file holds
+        long said = BitConverter.ToUInt32(data, 8);
+        int total = said >= 20 && said <= data.Length ? (int)said : data.Length;
         int at = 12;
-        while (at + 8 <= data.Length)
+        while (at + 8 <= total)
         {
-            int length = (int)BitConverter.ToUInt32(data, at);
+            long length = BitConverter.ToUInt32(data, at);
             uint kind = BitConverter.ToUInt32(data, at + 4);
             at += 8;
-            if (length < 0 || at + length > data.Length) throw new FormatException("the .glb file is cut short");
-            if (kind == 0x4E4F534Au) g.Root = Json.Obj(Json.Parse(Encoding.UTF8.GetString(data, at, length)));
+            if (at + length > total)
+            {
+                // bytes after the parts it needs (some writers leave some): ignored
+                if (g.Root != null && kind != 0x004E4942u) break;
+                throw new FormatException("the .glb file is cut short (" + data.Length + " bytes; copy it to the phone again)");
+            }
+            int n = (int)length;
+            if (kind == 0x4E4F534Au) g.Root = Json.Obj(Json.Parse(Encoding.UTF8.GetString(data, at, n)));
             else if (kind == 0x004E4942u && g.Bin.Length == 0)
             {
-                g.Bin = new byte[length];
-                Buffer.BlockCopy(data, at, g.Bin, 0, length);
+                g.Bin = new byte[n];
+                Buffer.BlockCopy(data, at, g.Bin, 0, n);
             }
-            at += length + (4 - length % 4) % 4;
+            // chunks are padded to 4 bytes by the spec, but some writers (VRM tools among them) don't pad:
+            // step over the padding only where the next chunk really starts after it
+            int next = at + n, padded = next + (4 - n % 4) % 4;
+            at = padded != next && !ChunkAt(data, padded, total) && ChunkAt(data, next, total) ? next : padded;
         }
         if (g.Root == null) throw new FormatException("the .glb file has no JSON part");
         foreach (var x in g.List("extensionsRequired"))
@@ -164,6 +176,14 @@ public class Glb
                 throw new FormatException("the file is compressed (" + e + "): export it without mesh compression");
         }
         return g;
+    }
+
+    // a JSON or BIN chunk's header at `at`
+    static bool ChunkAt(byte[] data, int at, int total)
+    {
+        if (at + 8 > total) return false;
+        uint kind = BitConverter.ToUInt32(data, at + 4);
+        return kind == 0x4E4F534Au || kind == 0x004E4942u;
     }
 
     public List<object> List(string key) => Json.Arr(Json.Get(Root, key)) ?? new List<object>();
