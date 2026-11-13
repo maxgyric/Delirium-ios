@@ -139,6 +139,10 @@ public partial class Game
                 filesNote = name + ": " + wrong;
                 return false;
             }
+            // hair, breasts, skirts...: the file's VRM spring bones, or its extra bones picked by name
+            string springs = "";
+            try { springs = SpringBones.Setup(wrap, made); }
+            catch (Exception e) { Debug.LogWarning("[Sandbox] physics bones: " + e.Message + "\n" + e.StackTrace); }
             wrap.SetActive(false);
             DontDestroyOnLoad(wrap);
             if (kind == 0)
@@ -156,7 +160,8 @@ public partial class Game
                 PlayerPrefs.SetString(kPrefNpcModel, path);
             }
             Rebody(kind == 0);
-            filesNote = (kind == 0 ? "The hero is " : "Everyone else is ") + name + " (" + made.Triangles + " triangles).";
+            filesNote = (kind == 0 ? "The hero is " : "Everyone else is ") + name + " (" + made.Triangles + " triangles" +
+                        (springs != "" ? ", " + springs : "") + ").";
             Debug.Log("[Sandbox] " + filesNote);
             return true;
         }

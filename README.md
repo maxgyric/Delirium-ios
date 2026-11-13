@@ -18,7 +18,7 @@ your `default.xex` (or `GTAIV.exe`) is and where the three files exported from i
 - Top: Reset, + Man (up to 6), Slow-mo, Gun (with Shoot), Paths (the launcher again next time).
 
 ## What's where
-- `Assets/Scripts/Game.cs`: the launcher and the sandbox. `Mannequin.cs`: the man, made in code.
+- `Assets/Scripts/Game.cs`: the launcher and the sandbox. `Mannequin.cs`: the man, made in code. `SpringBones.cs`: physics bones (VRM spring bones: hair, breasts, skirts) on your own characters.
 - `Assets/Editor/ProjectSetup.cs`: the first-open set-up.
 - `Packages/com.delirium_physics.bridge`: Delirium's Unity package 0.7.0 (GPL-3.0) with `delirium_physics.dll` (x64).
 - `MODLOG.md`: the journal.

@@ -19,6 +19,9 @@ public static class GlbScene
         public int Textures, TexturesFailed;   // pictures loaded / not (TextureWhy: the first one's reason)
         public string TextureWhy = "";
         public readonly List<UnityEngine.Object> Owned = new List<UnityEngine.Object>(); // meshes, textures, materials
+        public GameObject[] Nodes;     // the file's nodes, by their index in it (spring bones point at them)
+        public string[] NodeNames;     // their names in the file (a skeleton's bones are renamed later)
+        public Glb File;
     }
 
     static Matrix4x4 Mirror(float[] m, int at)
@@ -37,13 +40,16 @@ public static class GlbScene
     public static Made Load(byte[] data, string name, Material baseMaterial)
     {
         var glb = Glb.Parse(data);
-        var made = new Made { Root = new GameObject(name) };
+        var made = new Made { Root = new GameObject(name), File = glb };
         var nodes = glb.List("nodes");
         var objects = new GameObject[nodes.Count];
+        made.Nodes = objects;
+        made.NodeNames = new string[nodes.Count];
         for (int i = 0; i < nodes.Count; i++)
         {
             var go = new GameObject(Json.Str(nodes[i], "name", "node" + i));
             objects[i] = go;
+            made.NodeNames[i] = go.name;
         }
         // the tree, then each node's place in its parent
         var hasParent = new bool[nodes.Count];

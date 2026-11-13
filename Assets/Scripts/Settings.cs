@@ -6,6 +6,7 @@ public partial class Game
 {
     const string kPrefUi = "delirium.uiZoom";
     float uiZoomPending = 1f;
+    const string kPrefSprings = "delirium.springBones";
     const string kPrefScale = "delirium.renderScale", kPrefShadows = "delirium.shadowDistance", kPrefFps = "delirium.showFps", kPrefCap = "delirium.fpsCap";
     float renderScale = 1f, shadowDistance = 60f;
     bool showFps;
@@ -28,6 +29,7 @@ public partial class Game
         showFps = PlayerPrefs.GetInt(kPrefFps, 0) == 1;
         fpsCap = PlayerPrefs.GetInt(kPrefCap, 60);
         uiZoom = uiZoomPending = Mathf.Clamp(PlayerPrefs.GetFloat(kPrefUi, 1f), 0.6f, 1.5f);
+        SpringBones.Enabled = PlayerPrefs.GetInt(kPrefSprings, 1) == 1;
         SettingsApply();
     }
 
@@ -38,6 +40,7 @@ public partial class Game
         PlayerPrefs.SetInt(kPrefFps, showFps ? 1 : 0);
         PlayerPrefs.SetInt(kPrefCap, fpsCap);
         PlayerPrefs.SetFloat(kPrefUi, uiZoomPending);
+        PlayerPrefs.SetInt(kPrefSprings, SpringBones.Enabled ? 1 : 0);
         PlayerPrefs.Save();
     }
 
@@ -135,6 +138,11 @@ public partial class Game
         Info("The most frames a second it draws. 120 only on a 120 Hz screen (an iPhone Pro); 30 keeps a phone cooler.");
         bool f = Tick(showFps, "Show FPS");
         if (f != showFps) { showFps = f; SettingsSave(); }
+
+        Head("Characters");
+        bool sp = Tick(SpringBones.Enabled, "Physics bones");
+        if (sp != SpringBones.Enabled) { SpringBones.Enabled = sp; SettingsSave(); }
+        Info("Hair, breasts, skirts, tails and accessories swing: a VRM's own spring bones, or a file's extra bones picked by name (hair, breast, skirt, tail, earring...).");
 
         Head("Sound");
         volume = Slide("Volume", volume, 0f, 1f);
