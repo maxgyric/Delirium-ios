@@ -139,10 +139,6 @@ public partial class Game
                 filesNote = name + ": " + wrong;
                 return false;
             }
-            // hair, breasts, skirts...: the file's VRM spring bones, or its extra bones picked by name
-            string springs = "";
-            try { springs = SpringBones.Setup(wrap, made); }
-            catch (Exception e) { Debug.LogWarning("[Sandbox] physics bones: " + e.Message + "\n" + e.StackTrace); }
             wrap.SetActive(false);
             DontDestroyOnLoad(wrap);
             if (kind == 0)
@@ -160,8 +156,7 @@ public partial class Game
                 PlayerPrefs.SetString(kPrefNpcModel, path);
             }
             Rebody(kind == 0);
-            filesNote = (kind == 0 ? "The hero is " : "Everyone else is ") + name + " (" + made.Triangles + " triangles" +
-                        (springs != "" ? ", " + springs : "") + ").";
+            filesNote = (kind == 0 ? "The hero is " : "Everyone else is ") + name + " (" + made.Triangles + " triangles).";
             Debug.Log("[Sandbox] " + filesNote);
             return true;
         }
@@ -384,7 +379,7 @@ public partial class Game
              "(a .fbx: in Blender File > Import > FBX, then File > Export > glTF 2.0, format glTF Binary). " +
              "Maps: any .glb; its meshes are the ground and walls. An object named Spawn marks where you start.");
         if (Application.isMobilePlatform)
-            Info("Put them in the Files app: On My iPhone > Delirium Sandbox > mods (folders inside it are fine, e.g. mods/maps). Then Refresh.");
+            Info("Select model: pick .glb / .vrm files anywhere in the Files app: they're moved into Delirium Sandbox > mods (folders inside it are fine, e.g. mods/maps).");
         else
         {
             Info("The folder they're in (its subfolders too):");
@@ -392,6 +387,7 @@ public partial class Game
             string dir = GUILayout.TextField(filesDir ?? "", txt, GUILayout.Height(26f), GUILayout.Width(kPanel - 64f));
             if (dir != filesDir) filesDir = dir;
         }
+        if (CanPick && GUILayout.Button("Select model...", btn, GUILayout.Height(36f))) SelectModels(); // moved into mods
         if (GUILayout.Button("Refresh", btn, GUILayout.Height(32f)))
         {
             filesDir = filesDir.Trim().Trim('"');

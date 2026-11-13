@@ -38,6 +38,7 @@ public partial class Game : MonoBehaviour
         Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
         gameExe = PlayerPrefs.GetString(kPrefExe, DefaultExe());
         dataDir = PlayerPrefs.GetString(kPrefData, DefaultData());
+        PathsAtStart();
     }
 
     // The game's own log beside the project (in a build: in the app's folder): what Delirium and the sandbox said,
@@ -1078,6 +1079,8 @@ public partial class Game : MonoBehaviour
         dataDir = GUI.TextField(new Rect(x, y, bw, 32f), dataDir ?? "", field);
         y += 48f;
         if (GUI.Button(new Rect(x, y, 160f, 44f), "Start", big)) Launch();
+        // the iPhone: a folder with default.xex (and xbox360.rpf, xbox360/anim) and the three exported files, from the Files app
+        if (CanPick && GUI.Button(new Rect(x + 176f, y, 220f, 44f), "Choose folder...", big)) ChooseFolder();
         y += 56f;
         if (error != "") GUI.Label(new Rect(x, y, bw, 120f), error, new GUIStyle(label) { normal = { textColor = new Color(1f, 0.45f, 0.4f) } });
     }

@@ -19,8 +19,8 @@ sandbox-log.txt
 compile-log.txt
 # built by the workflow, not kept
 native/target/
-Assets/Plugins/iOS/
-Assets/Plugins/iOS.meta
+Assets/Plugins/iOS/libdelirium_ios.a
+Assets/Plugins/iOS/libdelirium_ios.a.meta
 Assets/_Recovery/
 Assets/_Recovery.meta
 build-anim-log.txt
