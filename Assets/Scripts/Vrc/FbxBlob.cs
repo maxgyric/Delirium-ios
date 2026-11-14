@@ -11,6 +11,7 @@ namespace Vrc
     public sealed class FbxMesh
     {
         public string Name;
+        public int Node;                       // its node in FbxFile.List
         public int Count;                      // vertices
         public float[] Pos, Nrm, Uv;           // 3, 3, 2 a vertex
         public bool Skinned;                   // false: one "bone", the mesh's own node
@@ -22,11 +23,21 @@ namespace Vrc
         public readonly List<KeyValuePair<string, float[]>> Shapes = new List<KeyValuePair<string, float[]>>(); // name, offsets (3 a vertex)
     }
 
+    public sealed class FbxNode
+    {
+        public string Name;
+        public int Parent = -1;
+        public float[] T, R, S;   // its place in its parent (glTF's frame)
+        public float[] World;
+        public int Mesh = -1;     // FbxFile.Meshes
+    }
+
     public sealed class FbxFile
     {
         public readonly List<FbxMesh> Meshes = new List<FbxMesh>();
         public readonly Dictionary<string, float[]> Nodes = new Dictionary<string, float[]>(); // name -> world matrix
         public readonly Dictionary<string, string> Parents = new Dictionary<string, string>(); // name -> its parent's ("": none)
+        public readonly List<FbxNode> List = new List<FbxNode>();                             // every node, in the file's order
 
 #if UNITY_IOS && !UNITY_EDITOR
         const string kLib = "__Internal";
@@ -51,13 +62,14 @@ namespace Vrc
         {
             var f = new FbxFile();
             var r = new BinaryReader(new MemoryStream(b), Encoding.UTF8);
-            if (Encoding.ASCII.GetString(r.ReadBytes(4)) != "FXB3") throw new Exception("fbxblob: not its format");
+            if (Encoding.ASCII.GetString(r.ReadBytes(4)) != "FXB4") throw new Exception("fbxblob: not its format");
             Func<string> str = () => Encoding.UTF8.GetString(r.ReadBytes(r.ReadInt32()));
             Func<int, float[]> floats = n => { var a = new float[n]; for (int i = 0; i < n; i++) a[i] = r.ReadSingle(); return a; };
             int meshes = r.ReadInt32();
             for (int m = 0; m < meshes; m++)
             {
                 var mesh = new FbxMesh { Name = str() };
+                mesh.Node = r.ReadInt32();
                 int nv = mesh.Count = r.ReadInt32();
                 mesh.Pos = floats(nv * 3);
                 mesh.Nrm = floats(nv * 3);
@@ -100,12 +112,61 @@ namespace Vrc
             int nodes = r.ReadInt32();
             for (int i = 0; i < nodes; i++)
             {
-                string name = str(), parent = str();
-                var m4 = floats(16);
-                if (!f.Nodes.ContainsKey(name)) { f.Nodes[name] = m4; f.Parents[name] = parent; }
+                var n = new FbxNode { Name = str(), Parent = r.ReadInt32() };
+                n.T = floats(3);
+                n.R = floats(4);
+                n.S = floats(3);
+                n.World = floats(16);
+                f.List.Add(n);
+                if (!f.Nodes.ContainsKey(n.Name)) f.Nodes[n.Name] = n.World;
             }
+            foreach (var n in f.List)
+                if (!f.Parents.ContainsKey(n.Name)) f.Parents[n.Name] = n.Parent >= 0 && n.Parent < f.List.Count ? f.List[n.Parent].Name : "";
+            for (int m = 0; m < f.Meshes.Count; m++)
+                if (f.Meshes[m].Node >= 0 && f.Meshes[m].Node < f.List.Count) f.List[f.Meshes[m].Node].Mesh = m;
             return f;
         }
+    }
+
+    /// xxHash64 (seed 0). Unity names a model's sub-objects by it: fileID = xxHash64("Type:Mesh->" + name + n), n the
+    /// count of earlier ones of that type and name.
+    public static class XxHash64
+    {
+        const ulong P1 = 11400714785074694791UL, P2 = 14029467366897019727UL, P3 = 1609587929392839161UL, P4 = 9650029242287828579UL, P5 = 2870177450012600261UL;
+        static ulong Rot(ulong x, int r) => (x << r) | (x >> (64 - r));
+        static ulong Round(ulong acc, ulong v) { acc += v * P2; acc = Rot(acc, 31); return acc * P1; }
+        static ulong Merge(ulong acc, ulong v) { acc ^= Round(0, v); return acc * P1 + P4; }
+
+        public static ulong Hash(byte[] b) { unchecked { return HashU(b); } }
+
+        static ulong HashU(byte[] b)
+        {
+            int len = b.Length, i = 0;
+            ulong h;
+            if (len >= 32)
+            {
+                ulong v1 = unchecked(P1 + P2), v2 = P2, v3 = 0, v4 = unchecked(0UL - P1);
+                for (; i + 32 <= len; i += 32)
+                {
+                    v1 = Round(v1, BitConverter.ToUInt64(b, i));
+                    v2 = Round(v2, BitConverter.ToUInt64(b, i + 8));
+                    v3 = Round(v3, BitConverter.ToUInt64(b, i + 16));
+                    v4 = Round(v4, BitConverter.ToUInt64(b, i + 24));
+                }
+                h = Rot(v1, 1) + Rot(v2, 7) + Rot(v3, 12) + Rot(v4, 18);
+                h = Merge(h, v1); h = Merge(h, v2); h = Merge(h, v3); h = Merge(h, v4);
+            }
+            else h = P5;
+            h += (ulong)len;
+            for (; i + 8 <= len; i += 8) { h ^= Round(0, BitConverter.ToUInt64(b, i)); h = Rot(h, 27) * P1 + P4; }
+            if (i + 4 <= len) { h ^= BitConverter.ToUInt32(b, i) * P1; h = Rot(h, 23) * P2 + P3; i += 4; }
+            for (; i < len; i++) { h ^= b[i] * P5; h = Rot(h, 11) * P1; }
+            h ^= h >> 33; h *= P2; h ^= h >> 29; h *= P3; h ^= h >> 32;
+            return h;
+        }
+
+        /// The fileID Unity gives a model's `type` object called `name` (its `n`th of that name).
+        public static long FileId(string type, string name, int n) => unchecked((long)Hash(Encoding.UTF8.GetBytes("Type:" + type + "->" + name + n)));
     }
 
     /// 4x4 matrices as glTF keeps them: 16 floats, column-major.

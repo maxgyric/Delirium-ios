@@ -39,6 +39,7 @@ public class VrcLook : MonoBehaviour
         public readonly List<Fx> Start = new List<Fx>(), Base = new List<Fx>();
         public readonly Dictionary<string, List<Fx>> Effects = new Dictionary<string, List<Fx>>();
         public readonly List<KeyValuePair<int, string>> Parts = new List<KeyValuePair<int, string>>(); // target, path
+        public readonly Dictionary<int, List<Fx>> Tucks = new Dictionary<int, List<Fx>>();            // a part's blend shapes on the body, let out when it's hidden
         public readonly Dictionary<int, bool> Hidden = new Dictionary<int, bool>();             // parts you switched by hand
         public readonly List<string> Notes = new List<string>();
     }
@@ -83,7 +84,10 @@ public class VrcLook : MonoBehaviour
         foreach (object p in Json.Arr(Json.Get(j, "parts")) ?? new List<object>())
         {
             var a = Json.Arr(p);
-            if (a != null && a.Count >= 2) d.Parts.Add(new KeyValuePair<int, string>((int)(double)a[0], a[1] as string ?? ""));
+            if (a == null || a.Count < 2) continue;
+            int t = (int)(double)a[0];
+            d.Parts.Add(new KeyValuePair<int, string>(t, a[1] as string ?? ""));
+            if (a.Count > 2) d.Tucks[t] = fx(a[2]);
         }
         foreach (object n in Json.Arr(Json.Get(j, "notes")) ?? new List<object>()) d.Notes.Add(n as string ?? "");
         // the targets: node indices in the .glb -> places under the root
@@ -144,7 +148,11 @@ public class VrcLook : MonoBehaviour
             if (Mathf.Abs(kv.Value - def) < 1e-4f) continue;
             if (d.Effects.TryGetValue(K(kv.Key, kv.Value), out var list)) put(list);
         }
-        foreach (var kv in d.Hidden) final[kv.Key + "|active"] = new Fx { T = kv.Key, Attr = "active", V = kv.Value ? 0f : 1f };
+        foreach (var kv in d.Hidden)
+        {
+            final[kv.Key + "|active"] = new Fx { T = kv.Key, Attr = "active", V = kv.Value ? 0f : 1f };
+            if (kv.Value && d.Tucks.TryGetValue(kv.Key, out var tucks)) put(tucks);
+        }
         foreach (var e in final.Values)
         {
             var t = Target(e.T);

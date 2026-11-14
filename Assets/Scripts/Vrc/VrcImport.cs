@@ -23,6 +23,8 @@ public partial class Game
     string vrcBusy = "";          // what the import is doing ("": nothing)
     float vrcProgress = -1f;
     bool vrcParts;                // the parts list unfolded
+    List<Vrc.Avatar> vrcChoices;  // the package's avatars, while you pick one
+    int vrcPick = -1;             // -1 not yet, -2 cancelled
     string[] packages = new string[0];
 
     void PickPackage() => DP_PickPackage(gameObject.name, nameof(OnPickedPackage));
@@ -47,7 +49,7 @@ public partial class Game
 
     IEnumerator ImportPackage(string package, bool deleteAfter)
     {
-        if (vrcBusy != "") yield break;
+        if (vrcBusy != "" || vrcChoices != null) yield break;
         vrcBusy = "Opening " + Path.GetFileName(package) + "...";
         vrcProgress = 0f;
         filesNote = "";
@@ -55,6 +57,7 @@ public partial class Game
         Vrc.Avatar av = null;
         AvatarModel model = null;
         Exception err = null;
+        List<Vrc.Avatar> found = null;
         var th = new Thread(() =>
         {
             try
@@ -62,15 +65,44 @@ public partial class Game
                 var assets = UnityPackage.Extract(package, work, f => vrcProgress = f);
                 vrcProgress = -1f;
                 vrcBusy = "Finding the avatar...";
-                av = Vrc.Avatar.Find(assets);
-                if (av == null) throw new Exception("no VRChat avatar in it (a prefab with a VRC Avatar Descriptor)");
-                vrcBusy = "Reading " + av.Name + "...";
-                model = AvatarModel.Build(av, s => vrcBusy = av.Name + ": " + s + "...");
+                found = Vrc.Avatar.FindAll(assets);
+                if (found.Count == 0) throw new Exception("no VRChat avatar in it (a prefab or scene with a VRC Avatar Descriptor)");
             }
             catch (Exception e) { err = e; }
         }) { IsBackground = true };
         th.Start();
         while (th.IsAlive) yield return null;
+        // more than one (PC and Quest, several versions): yours to pick
+        if (err == null)
+        {
+            av = found[0];
+            if (found.Count > 1)
+            {
+                vrcChoices = found;
+                vrcPick = -1;
+                vrcBusy = "";
+                while (vrcPick == -1) yield return null;
+                vrcChoices = null;
+                if (vrcPick < 0) err = new Exception("cancelled");
+                else av = found[vrcPick];
+            }
+        }
+        if (err == null)
+        {
+            vrcBusy = "Reading " + av.Name + "...";
+            th = new Thread(() =>
+            {
+                try
+                {
+                    av.Make();
+                    if (av.Root == null) throw new Exception("the avatar's object isn't found in " + av.File0);
+                    model = AvatarModel.Build(av, s => vrcBusy = av.Name + ": " + s + "...");
+                }
+                catch (Exception e) { err = e; }
+            }) { IsBackground = true };
+            th.Start();
+            while (th.IsAlive) yield return null;
+        }
         if (err == null)
         {
             // the pictures, one a frame
@@ -237,6 +269,18 @@ public partial class Game
         Head("VRChat avatars");
         Info("A VRChat avatar's .unitypackage (your own or one you bought) made into a character here: its meshes, " +
              "textures, PhysBones and menu toggles (objects and blend shapes; no gestures).");
+        if (vrcChoices != null)
+        {
+            Info("This package has " + vrcChoices.Count + " avatars. Which one?");
+            for (int i = 0; i < vrcChoices.Count; i++)
+            {
+                var c = vrcChoices[i];
+                string what = c.Label + "  (" + c.Toggles.Count + " toggles" + (c.Score < -1000 ? ", Quest / fallback" : "") + ")";
+                if (GUILayout.Button(what, i == 0 ? btnOn : btn, GUILayout.Height(34f))) vrcPick = i;
+            }
+            if (GUILayout.Button("Cancel", btn, GUILayout.Height(30f))) vrcPick = -2;
+            return;
+        }
         if (vrcBusy != "")
         {
             GUILayout.Label(vrcBusy + (vrcProgress >= 0f ? " " + Mathf.RoundToInt(vrcProgress * 100f) + "%" : ""), lab);

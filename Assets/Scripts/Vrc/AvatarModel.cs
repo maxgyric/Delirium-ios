@@ -36,7 +36,7 @@ namespace Vrc
         sealed class Node
         {
             public string Name;
-            public long Go, Tf;
+            public GNode G;
             public float[] T, R, S;
             public readonly List<int> Kids = new List<int>();
             public int Parent = -1;
@@ -47,9 +47,8 @@ namespace Vrc
         }
 
         readonly Avatar av;
-        readonly Dictionary<long, UDoc> byId = new Dictionary<long, UDoc>();
         readonly List<Node> nodes = new List<Node>();
-        readonly Dictionary<long, int> nodeOfTf = new Dictionary<long, int>();
+        readonly Dictionary<GNode, int> nodeOf = new Dictionary<GNode, int>();
         readonly Dictionary<string, int> nodeOfPath = new Dictionary<string, int>();
         readonly List<int> disabledRenderers = new List<int>();
         readonly Dictionary<int, Dictionary<string, float>> blendDefaults = new Dictionary<int, Dictionary<string, float>>();
@@ -68,38 +67,19 @@ namespace Vrc
         public static AvatarModel Build(Avatar av, Action<string> status)
         {
             var m = new AvatarModel(av);
-            foreach (var d in av.Prefab) m.byId[d.Id] = d;
-            if (av.Root == null) throw new Exception("the avatar's own object isn't in its prefab");
-            if (av.Prefab.Any(d => d.Class == 1001)) m.Notes.Add("the prefab has other prefabs nested in it: their parts aren't read");
+            if (av.Root == null) throw new Exception("the avatar's own object isn't in its prefab or scene");
             m.Tree(av.Root, -1, "");
             if (status != null) status("reading the meshes");
             m.Renderers();
             m.Humanoid();
             try { m.PhysBones(); }
             catch (Exception e) { m.Notes.Add("PhysBones: " + e.Message); }
+            m.Notes.InsertRange(0, av.Builder.Notes.Concat(av.ModelNotes));
             return m;
         }
 
-        UDoc Get(long id) => byId.TryGetValue(id, out var d) ? d : null;
-
-        UDoc Component(UDoc go, params int[] classes)
-        {
-            foreach (var c in go.Body.L("m_Component"))
-            {
-                var d = Get(c.FileId("component"));
-                if (d != null && classes.Contains(d.Class)) return d;
-            }
-            return null;
-        }
-
-        IEnumerable<UDoc> Components(UDoc go, int cls)
-        {
-            foreach (var c in go.Body.L("m_Component"))
-            {
-                var d = Get(c.FileId("component"));
-                if (d != null && d.Class == cls) yield return d;
-            }
-        }
+        static GComp Comp(GNode n, params int[] classes) => n?.Comps.FirstOrDefault(c => classes.Contains(c.Class));
+        int Index(GNode n) => n != null && nodeOf.TryGetValue(n, out int i) ? i : -1;
 
         static float[] V3(object o, string key, float or = 0f)
         {
@@ -107,52 +87,27 @@ namespace Vrc
             return new[] { v.F("x", or), v.F("y", or), v.F("z", or) };
         }
 
-        void Tree(UDoc go, int parent, string path)
+        void Tree(GNode g, int parent, string path)
         {
-            var tf = Component(go, 4, 224);
-            if (tf == null) return;
-            var n = new Node { Name = go.Body.S("m_Name"), Go = go.Id, Tf = tf.Id, Parent = parent, Active = go.Body.I("m_IsActive", 1) != 0 };
-            float[] p = V3(tf.Body, "m_LocalPosition"), s = V3(tf.Body, "m_LocalScale", 1f);
-            var q = tf.Body.At("m_LocalRotation");
-            // Unity's left-handed frame to glTF's: X mirrored
-            n.T = parent < 0 ? new float[] { 0, 0, 0 } : new[] { -p[0], p[1], p[2] };
-            n.R = parent < 0 ? new float[] { 0, 0, 0, 1 } : new[] { q.F("x"), -q.F("y"), -q.F("z"), q.F("w", 1f) };
-            n.S = s;
-            if (parent < 0) n.Active = true; // the avatar itself
-            n.Path = path;
+            var n = new Node { Name = g.Name, G = g, Parent = parent, Active = parent < 0 || g.Active, Path = path };
+            // the avatar itself at the origin, unturned
+            n.T = parent < 0 ? new float[] { 0, 0, 0 } : (float[])g.T.Clone();
+            n.R = parent < 0 ? new float[] { 0, 0, 0, 1 } : (float[])g.R.Clone();
+            n.S = (float[])g.S.Clone();
             int me = nodes.Count;
             nodes.Add(n);
-            nodeOfTf[tf.Id] = me;
+            nodeOf[g] = me;
             if (!nodeOfPath.ContainsKey(path)) nodeOfPath[path] = me;
             var local = M4.Trs(n.T, n.R, n.S);
             n.World = parent < 0 ? local : M4.Mul(nodes[parent].World, local);
             if (parent >= 0) nodes[parent].Kids.Add(me);
-            foreach (var c in tf.Body.L("m_Children"))
-            {
-                var ctf = Get(long.TryParse(c.S("fileID"), out long id) ? id : 0);
-                if (ctf == null) continue;
-                var cgo = Get(ctf.Body.FileId("m_GameObject"));
-                if (cgo == null) continue;
-                string name = cgo.Body.S("m_Name");
-                Tree(cgo, me, path == "" ? name : path + "/" + name);
-            }
+            foreach (var k in g.Kids) Tree(k, me, path == "" ? k.Name : path + "/" + k.Name);
         }
 
         // ------------------------------------------------------------------ meshes
-        readonly Dictionary<string, FbxFile> fbx = new Dictionary<string, FbxFile>();
         readonly Dictionary<string, Dictionary<long, FbxMesh>> meshOfId = new Dictionary<string, Dictionary<long, FbxMesh>>();
 
-        FbxFile Fbx(string guid)
-        {
-            if (fbx.TryGetValue(guid, out var f)) return f;
-            fbx[guid] = null;
-            if (!av.Assets.TryGetValue(guid, out var a) || a.File == null) { Notes.Add("a mesh's model file isn't in the package (" + guid + ")"); return null; }
-            string ext = Path.GetExtension(a.Path).ToLowerInvariant();
-            if (ext != ".fbx" && ext != ".obj") { Notes.Add(Path.GetFileName(a.Path) + ": a " + ext + " model isn't read (an .fbx is)"); return null; }
-            try { fbx[guid] = f = FbxFile.Load(a.File); }
-            catch (Exception e) { Notes.Add(Path.GetFileName(a.Path) + ": " + e.Message); }
-            return f;
-        }
+        FbxFile Fbx(string guid) => av.Fbx(guid);
 
         static string Plain(string s) => new string((s ?? "").ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
 
@@ -167,8 +122,20 @@ namespace Vrc
                 meshOfId[guid] = map = new Dictionary<long, FbxMesh>();
                 var refs = allRefs.GroupBy(r => r.Key).ToList();
                 var used = new HashSet<FbxMesh>();
+                // Unity's own IDs for them: xxHash64("Type:Mesh->" + name + n)
+                var seen = new Dictionary<string, int>();
+                var ids = new Dictionary<long, FbxMesh>();
+                foreach (var m in f.Meshes)
+                {
+                    int n = seen.TryGetValue(m.Name, out int c) ? c : 0;
+                    seen[m.Name] = n + 1;
+                    ids[XxHash64.FileId("Mesh", m.Name, n)] = m;
+                }
+                foreach (var g in refs)
+                    if (ids.TryGetValue(g.Key, out var hit)) { map[g.Key] = hit; used.Add(hit); }
                 foreach (var g in refs) // exact names
                 {
+                    if (map.ContainsKey(g.Key)) continue;
                     var hit = f.Meshes.FirstOrDefault(m => !used.Contains(m) && g.Any(r => m.Name == r.Value));
                     if (hit != null) { map[g.Key] = hit; used.Add(hit); }
                 }
@@ -191,33 +158,59 @@ namespace Vrc
         void Renderers()
         {
             // every renderer's mesh reference first (a model's meshes are matched all at once)
-            var rs = new List<KeyValuePair<int, UDoc>>();
+            var rs = new List<KeyValuePair<int, GComp>>();
             var refsOf = new Dictionary<string, List<KeyValuePair<long, string>>>();
             for (int i = 0; i < nodes.Count; i++)
             {
-                var go = Get(nodes[i].Go);
-                var r = Component(go, 137, 23);
+                var r = Comp(nodes[i].G, 137, 23);
                 if (r == null) continue;
-                object mref = r.Class == 137 ? r.Body.At("m_Mesh") : Component(go, 33)?.Body.At("m_Mesh");
+                if (r.Mesh != null) { rs.Add(new KeyValuePair<int, GComp>(i, r)); continue; } // a model's own
+                object mref = r.Class == 137 ? r.Body.At("m_Mesh") : Comp(nodes[i].G, 33)?.Body.At("m_Mesh");
                 string guid = mref.S("guid");
                 long id = long.TryParse(mref.S("fileID"), out long fid) ? fid : 0;
                 if (guid == "" || id == 0) continue;
-                rs.Add(new KeyValuePair<int, UDoc>(i, r));
+                rs.Add(new KeyValuePair<int, GComp>(i, r));
                 if (!refsOf.TryGetValue(guid, out var l)) refsOf[guid] = l = new List<KeyValuePair<long, string>>();
                 l.Add(new KeyValuePair<long, string>(id, nodes[i].Name));
+            }
+            // a material the package lacks: the pictures its renderers' other materials use (an edit that retextured
+            // the body did its eyes' and brows' materials on the same atlas too)
+            foreach (var kv in rs)
+            {
+                var mats = kv.Value.Body.L("m_Materials");
+                var have = new List<string>();
+                var lack = new List<string>();
+                foreach (var m in mats)
+                {
+                    string g = m.S("guid");
+                    if (g == "") continue;
+                    string tex = av.Assets.TryGetValue(g, out var ma) && ma.File != null && ma.Path.EndsWith(".mat", StringComparison.OrdinalIgnoreCase) ? MainTexOf(ma) : null;
+                    if (tex != null) have.Add(tex);
+                    else if (!av.Assets.ContainsKey(g)) lack.Add(g);
+                }
+                foreach (string g in lack)
+                {
+                    if (!siblingTex.TryGetValue(g, out var l)) siblingTex[g] = l = new List<string>();
+                    l.AddRange(have);
+                }
             }
             var shared = new Dictionary<FbxMesh, int[]>(); // a mesh's accessors, written once
             foreach (var kv in rs)
             {
                 int ni = kv.Key;
                 var r = kv.Value;
-                var go = Get(nodes[ni].Go);
-                object mref = r.Class == 137 ? r.Body.At("m_Mesh") : Component(go, 33)?.Body.At("m_Mesh");
-                string guid = mref.S("guid");
-                long id = long.Parse(mref.S("fileID"));
-                var mesh = MeshFor(guid, id, nodes[ni].Name, refsOf[guid]);
+                FbxMesh mesh;
+                string guid;
+                if (r.Mesh != null) { mesh = r.Mesh; guid = r.FbxGuid; }
+                else
+                {
+                    object mref = r.Class == 137 ? r.Body.At("m_Mesh") : Comp(nodes[ni].G, 33)?.Body.At("m_Mesh");
+                    guid = mref.S("guid");
+                    long id = long.Parse(mref.S("fileID"));
+                    mesh = MeshFor(guid, id, nodes[ni].Name, refsOf[guid]);
+                }
                 if (mesh == null) continue;
-                if (r.Body.I("m_Enabled", 1) == 0) disabledRenderers.Add(ni);
+                if (!r.Enabled) disabledRenderers.Add(ni);
                 try { AddRenderer(ni, r, mesh, Fbx(guid), shared); }
                 catch (Exception e) { Notes.Add(nodes[ni].Name + ": " + e.Message); }
             }
@@ -226,9 +219,12 @@ namespace Vrc
         }
 
         // a node by a bone's name: the renderer's own bones first, then the whole tree
-        int BoneNode(string name, List<int> rendererBones)
+        int BoneNode(string name, List<int> rendererBones, GNode scope = null)
         {
             foreach (int b in rendererBones) if (b >= 0 && nodes[b].Name == name) return b;
+            if (scope != null)
+                for (int i = 0; i < nodes.Count; i++)
+                    if (nodes[i].Name == name && nodes[i].G != null && nodes[i].G.Scope == scope) return i;
             for (int i = 0; i < nodes.Count; i++) if (nodes[i].Name == name) return i;
             foreach (int b in rendererBones) if (b >= 0 && Plain(nodes[b].Name) == Plain(name)) return b;
             return -1;
@@ -236,24 +232,26 @@ namespace Vrc
 
         readonly Dictionary<string, int> lostBones = new Dictionary<string, int>();
 
-        void AddRenderer(int ni, UDoc r, FbxMesh mesh, FbxFile file, Dictionary<FbxMesh, int[]> shared)
+        void AddRenderer(int ni, GComp r, FbxMesh mesh, FbxFile file, Dictionary<FbxMesh, int[]> shared)
         {
             var node = nodes[ni];
             // joints: the .fbx's bones on the prefab's (an unskinned mesh: its own object)
             var rBones = new List<int>();
-            foreach (var b in r.Body.L("m_Bones")) rBones.Add(nodeOfTf.TryGetValue(long.TryParse(b.S("fileID"), out long id) ? id : 0, out int bn) ? bn : -1);
-            int rootBone = nodeOfTf.TryGetValue(r.Body.FileId("m_RootBone"), out int rb) ? rb : ni;
+            foreach (var b in r.Body.L("m_Bones")) rBones.Add(Index(r.File.Node(b)));
+            int rootBone = Index(r.File.Node(r.Body.At("m_RootBone")));
+            if (rootBone < 0) rootBone = ni;
+            var scope = r.Node.Scope;
             var joints = new int[mesh.Bones.Length];
             var missing = new List<string>();
             for (int j = 0; j < joints.Length; j++)
             {
                 if (!mesh.Skinned) { joints[j] = ni; continue; }
-                joints[j] = BoneNode(mesh.Bones[j], rBones);
+                joints[j] = BoneNode(mesh.Bones[j], rBones, scope);
                 if (joints[j] >= 0) continue;
                 missing.Add(mesh.Bones[j]);
                 // a bone the avatar lost: its nearest parent in the .fbx that it has
                 string up = mesh.Bones[j];
-                for (int k = 0; k < 64 && joints[j] < 0 && file.Parents.TryGetValue(up, out up) && up != ""; k++) joints[j] = BoneNode(up, rBones);
+                for (int k = 0; k < 64 && joints[j] < 0 && file.Parents.TryGetValue(up, out up) && up != ""; k++) joints[j] = BoneNode(up, rBones, scope);
                 if (joints[j] < 0) joints[j] = rootBone;
             }
             if (missing.Count > 0)
@@ -346,11 +344,19 @@ namespace Vrc
                 if (a == null)
                 {
                     var pic = ByName(fbxName, ".png") ?? ByName(fbxName, ".jpg") ?? ByName(fbxName, ".tga");
+                    // ...unless the renderer's other materials use another picture of the same size: that one
+                    if (pic != null && siblingTex.TryGetValue(guid, out var sib))
+                    {
+                        var size = PngSize(pic);
+                        var alt = sib.Where(x => x != pic.Guid && av.Assets.ContainsKey(x) && size != null && PngSize(av.Assets[x]) == size)
+                                     .GroupBy(x => x).OrderByDescending(x => x.Count()).Select(x => x.Key).FirstOrDefault();
+                        if (alt != null) pic = av.Assets[alt];
+                    }
                     if (pic != null)
                     {
                         int ti = Texture(pic.Guid, false);
                         if (ti >= 0) pbr["baseColorTexture"] = new Dictionary<string, object> { { "index", ti } };
-                        Notes.Add("material " + fbxName + " isn't in the package: its picture found by name (" + Path.GetFileName(pic.Path) + ")");
+                        Notes.Add("material " + fbxName + " isn't in the package: its picture found by name or by its mesh's other materials (" + Path.GetFileName(pic.Path) + ")");
                     }
                     else
                     {
@@ -421,6 +427,33 @@ namespace Vrc
             return best;
         }
 
+        readonly Dictionary<string, List<string>> siblingTex = new Dictionary<string, List<string>>();
+
+        static string MainTexOf(PackageAsset mat)
+        {
+            try
+            {
+                var m = Regex.Match(File.ReadAllText(mat.File), @"- _MainTex:\s*\n\s*m_Texture: \{fileID: -?\d+, guid: ([0-9a-f]{32})");
+                return m.Success ? m.Groups[1].Value : null;
+            }
+            catch (Exception) { return null; }
+        }
+
+        // a PNG's "width x height" (null: not a PNG)
+        static string PngSize(PackageAsset a)
+        {
+            try
+            {
+                using (var f = File.OpenRead(a.File))
+                {
+                    var b = new byte[24];
+                    if (f.Read(b, 0, 24) < 24 || b[0] != 0x89 || b[1] != (byte)'P') return null;
+                    return ((b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19]) + "x" + ((b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23]);
+                }
+            }
+            catch (Exception) { return null; }
+        }
+
         int Texture(string guid, bool alpha)
         {
             if (texOf.TryGetValue(guid, out int have))
@@ -455,7 +488,14 @@ namespace Vrc
         // The model's Unity humanoid (the Animator's avatar: its .fbx's import settings) names the body's bones.
         void Humanoid()
         {
-            var animator = Component(av.Root, 95);
+            // the avatar's Animator; else a model's under it
+            var animator = Comp(av.Root, 95);
+            if (animator == null || animator.Body.At("m_Avatar").S("guid") == "")
+                foreach (var n in nodes)
+                {
+                    var a2 = Comp(n.G, 95);
+                    if (a2 != null && a2.Body.At("m_Avatar").S("guid") != "") { animator = a2; break; }
+                }
             string guid = animator?.Body.At("m_Avatar").S("guid") ?? "";
             if (guid == "" || !av.Assets.TryGetValue(guid, out var a) || a.Meta == "")
             {
@@ -487,17 +527,18 @@ namespace Vrc
         void PhysBones()
         {
             var colliders = new List<object>();
-            var colliderIndex = new Dictionary<long, int>();
+            var colliderIndex = new Dictionary<GComp, int>();
             var springs = new List<object>();
             var groups = new List<object>();
             foreach (var n in nodes.ToList())
             {
-                var go = Get(n.Go);
-                foreach (var mb in Components(go, 114))
+                if (n.G == null) continue;
+                foreach (var mb in n.G.Comps.Where(c => c.Class == 114).ToList())
                 {
                     var b = mb.Body;
                     if (!b.ContainsKey("shapeType") || !b.ContainsKey("insideBounds")) continue;
-                    int at = nodeOfTf.TryGetValue(b.FileId("rootTransform"), out int rt) ? rt : nodes.IndexOf(n);
+                    int at = Index(mb.File.Node(b.At("rootTransform")));
+                    if (at < 0) at = nodes.IndexOf(n);
                     int shape = b.I("shapeType");
                     if (shape == 2) continue; // a plane
                     float rad = b.F("radius", 0.05f), h = b.F("height", 0f);
@@ -517,27 +558,31 @@ namespace Vrc
                             { "tail", new List<object> { (double)a1[0], (double)a1[1], (double)a1[2] } } } } };
                     }
                     else sh = new Dictionary<string, object> { { "sphere", new Dictionary<string, object> { { "offset", off }, { "radius", (double)rad } } } };
-                    colliderIndex[mb.Id] = colliders.Count;
+                    colliderIndex[mb] = colliders.Count;
                     colliders.Add(new Dictionary<string, object> { { "node", at }, { "shape", sh } });
                 }
             }
             foreach (var n in nodes.ToList())
             {
-                var go = Get(n.Go);
-                foreach (var mb in Components(go, 114))
+                if (n.G == null) continue;
+                foreach (var mb in n.G.Comps.Where(c => c.Class == 114).ToList())
                 {
                     var b = mb.Body;
-                    if (!b.ContainsKey("pull") || !b.ContainsKey("rootTransform") || b.I("m_Enabled", 1) == 0) continue;
-                    int root = nodeOfTf.TryGetValue(b.FileId("rootTransform"), out int rt) ? rt : nodes.IndexOf(n);
+                    if (!b.ContainsKey("pull") || !b.ContainsKey("rootTransform") || !mb.Enabled) continue;
+                    int root = Index(mb.File.Node(b.At("rootTransform")));
+                    if (root < 0) root = nodes.IndexOf(n);
                     var ignore = new HashSet<int>();
-                    foreach (var x in b.L("ignoreTransforms")) if (nodeOfTf.TryGetValue(long.TryParse(x.S("fileID"), out long id) ? id : 0, out int ig)) ignore.Add(ig);
+                    foreach (var x in b.L("ignoreTransforms")) { int ig = Index(mb.File.Node(x)); if (ig >= 0) ignore.Add(ig); }
                     // VRChat's pull / spring (momentum) / stiffness / gravity as VRM's stiffness, drag, gravity
                     float pull = b.F("pull", 0.2f), spring = b.F("spring", 0.2f), stiff = b.F("stiffness", 0.2f), grav = b.F("gravity", 0f);
                     double vStiff = 0.3 + pull * 2.5 + stiff * 1.0, vDrag = Math.Max(0.1, Math.Min(0.95, 1.0 - spring * 0.7)), vGrav = grav * 1.5;
                     double radius = b.F("radius", 0f);
                     var mine = new List<object>();
                     foreach (var c in b.L("colliders"))
-                        if (colliderIndex.TryGetValue(long.TryParse(c.S("fileID"), out long cid) ? cid : 0, out int ci)) mine.Add(ci);
+                    {
+                        var cc = mb.File.Component(c);
+                        if (cc != null && colliderIndex.TryGetValue(cc, out int ci)) mine.Add(ci);
+                    }
                     int group = -1;
                     if (mine.Count > 0) { group = groups.Count; groups.Add(new Dictionary<string, object> { { "colliders", mine } }); }
                     float[] endpoint = V3(b, "endpointPosition");
@@ -700,6 +745,15 @@ namespace Vrc
 
         static object Json0(object bt) => (bt as Dictionary<string, object>)["index"];
 
+        static readonly HashSet<string> kTuckWords = new HashSet<string> { "on", "off", "hide", "hidden", "shrink", "fix", "tuck", "under", "clothes", "clothing" };
+
+        static HashSet<string> Words(string s)
+        {
+            var r = new HashSet<string>();
+            foreach (Match m in Regex.Matches(s ?? "", @"[A-Za-z]+|\d+")) r.Add(m.Value.ToLowerInvariant());
+            return r;
+        }
+
         /// The toggles for VrcLook: what each menu item does, to objects by their node index in the .glb.
         public string Sidecar()
         {
@@ -727,7 +781,22 @@ namespace Vrc
             // every mesh, to show or hide by hand (outfits an edit left without toggles)
             var parts = new List<object>();
             for (int i = 0; i < nodes.Count; i++)
-                if (nodes[i].Mesh >= 0) parts.Add(new List<object> { T(i), nodes[i].Path });
+            {
+                if (nodes[i].Mesh < 0) continue;
+                // the blend shapes that tuck the body in under this piece ("DEFAULT Pants ON" for "Frenni - DEFAULT -
+                // Pants"): let out when it's hidden
+                var mine = Words(nodes[i].Name);
+                var tucks = new List<object>();
+                foreach (var kv in blendDefaults)
+                    if (kv.Key != i)
+                        foreach (var b in kv.Value)
+                        {
+                            var w = Words(b.Key);
+                            w.ExceptWith(kTuckWords);
+                            if (w.Count > 0 && w.IsSubsetOf(mine)) tucks.Add(new List<object> { T(kv.Key), "blend:" + b.Key, 0.0 });
+                        }
+                parts.Add(new List<object> { T(i), nodes[i].Path, tucks });
+            }
             var baseFx = effects(av.Base.Values);
             var fx = new Dictionary<string, object>();
             foreach (var kv in av.ValueEffects) fx[kv.Key] = effects(kv.Value);

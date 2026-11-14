@@ -12,6 +12,7 @@ namespace Vrc
         public int Class;
         public long Id;
         public string Type;              // "GameObject", "MonoBehaviour"...
+        public bool Stripped;            // a stand-in for an object of a nested prefab ("--- !u!4 &123 stripped")
         public Dictionary<string, object> Body;
     }
 
@@ -30,6 +31,7 @@ namespace Vrc
                 var head = l.Substring(7).Split(' ');
                 int.TryParse(head[0], out d.Class);
                 if (head.Length > 1 && head[1].StartsWith("&")) long.TryParse(head[1].Substring(1), out d.Id);
+                d.Stripped = head.Length > 2 && head[2] == "stripped";
                 i++;
                 if (i >= lines.Length) break;
                 string typeLine = lines[i];
@@ -125,6 +127,18 @@ namespace Vrc
 
         static object Scalar(string s, string[] lines, ref int i, int end, int ind)
         {
+            if (s.StartsWith("{") || s.StartsWith("["))
+            {
+                // a flow map or list wrapped over several lines
+                char close = s[0] == '{' ? '}' : ']';
+                var sb = new StringBuilder(s);
+                while (!s.TrimEnd().EndsWith(close.ToString()) && i < end && Indent(lines[i]) > ind)
+                {
+                    s = lines[i++].Trim();
+                    sb.Append(' ').Append(s);
+                }
+                s = sb.ToString();
+            }
             if (s.StartsWith("{")) return Flow(s);
             if (s.StartsWith("[")) return s.Trim() == "[]" ? new List<object>() : (object)FlowList(s);
             if (s.StartsWith("'") || s.StartsWith("\""))

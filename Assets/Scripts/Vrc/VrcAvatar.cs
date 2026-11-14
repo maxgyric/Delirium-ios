@@ -30,8 +30,30 @@ namespace Vrc
     {
         public string Name, PrefabGuid;
         public Dictionary<string, PackageAsset> Assets;
-        public List<UDoc> Prefab;
-        public UDoc Root;                       // the avatar's own GameObject (the descriptor's)
+        public List<UDoc> Prefab;               // the prefab or scene it's in
+        public UDoc Descriptor;
+        public GNode Root;                      // the avatar's own object (the descriptor's), its parts under it
+        public PGFile Graph;
+        public PrefabGraph Builder;
+        public readonly Dictionary<string, FbxFile> Models = new Dictionary<string, FbxFile>(); // .fbx files read, by GUID
+        public readonly List<string> ModelNotes = new List<string>();
+
+        /// A model of the package, read once (null: it isn't there or didn't read).
+        public FbxFile Fbx(string guid)
+        {
+            if (Models.TryGetValue(guid, out var f)) return f;
+            Models[guid] = null;
+            if (!Assets.TryGetValue(guid, out var a) || a.File == null) { ModelNotes.Add("a model file isn't in the package (" + guid + ")"); return null; }
+            string ext = Path.GetExtension(a.Path).ToLowerInvariant();
+            if (ext != ".fbx" && ext != ".obj")
+            {
+                ModelNotes.Add(Path.GetFileName(a.Path) + ": a " + ext + " model isn't read (an .fbx is)");
+                return null;
+            }
+            try { Models[guid] = f = FbxFile.Load(a.File); }
+            catch (Exception e) { ModelNotes.Add(Path.GetFileName(a.Path) + ": " + e.Message); }
+            return f;
+        }
         public readonly List<Toggle> Toggles = new List<Toggle>();
         public readonly Dictionary<string, float> Defaults = new Dictionary<string, float>();       // parameter -> its default
         public readonly Dictionary<string, Effect> Base = new Dictionary<string, Effect>();          // what the FX layers set with every parameter at its default
@@ -40,24 +62,73 @@ namespace Vrc
 
         public static string Key(string param, float value) => param + "=" + value.ToString(CultureInfo.InvariantCulture);
 
+        public string Label = "";               // for a choice: the file and the object it's on
+        public string File0 = "";
+        public int Score;
+
+        /// The package's best avatar (FindAll's first), made.
         public static Avatar Find(Dictionary<string, PackageAsset> assets)
         {
-            Avatar best = null;
-            foreach (var a in assets.Values)
+            var all = FindAll(assets);
+            if (all.Count == 0) return null;
+            all[0].Make();
+            return all[0];
+        }
+
+        /// Every avatar in the package's prefabs and scenes (a scene may hold one for PC and one for Quest), the
+        /// likeliest first: for PC, with the most toggles.
+        public static List<Avatar> FindAll(Dictionary<string, PackageAsset> assets)
+        {
+            var found = new List<Avatar>();
+            foreach (var a in assets.Values.OrderBy(x => x.Path))
             {
-                if (a.File == null || !a.Path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)) continue;
+                if (a.File == null) continue;
+                bool scene = a.Path.EndsWith(".unity", StringComparison.OrdinalIgnoreCase);
+                if (!scene && !a.Path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)) continue;
                 string text = File.ReadAllText(a.File);
                 if (!text.Contains("expressionsMenu:")) continue;
                 var docs = UYaml.Parse(text);
-                var desc = docs.FirstOrDefault(d => d.Body.ContainsKey("expressionsMenu") && d.Body.ContainsKey("baseAnimationLayers"));
-                if (desc == null) continue;
-                var av = new Avatar { Name = Path.GetFileNameWithoutExtension(a.Path), PrefabGuid = a.Guid, Assets = assets, Prefab = docs };
-                long go = desc.Body.FileId("m_GameObject");
-                av.Root = docs.FirstOrDefault(d => d.Id == go);
-                av.Read(desc);
-                if (best == null || av.Toggles.Count > best.Toggles.Count) best = av;
+                foreach (var desc in docs.Where(d => !d.Stripped && d.Body.ContainsKey("expressionsMenu") && d.Body.ContainsKey("baseAnimationLayers")))
+                {
+                    var av = new Avatar { Name = Path.GetFileNameWithoutExtension(a.Path), PrefabGuid = a.Guid, Assets = assets, Prefab = docs, Descriptor = desc, File0 = a.Path };
+                    av.Read(desc);
+                    string goName = GoName(docs, desc.Body.FileId("m_GameObject"), assets);
+                    av.Label = Path.GetFileName(a.Path) + (goName != "" ? " > " + goName : "");
+                    string lower = (a.Path + " " + goName).ToLowerInvariant();
+                    av.Score = av.Toggles.Count * 10 + (scene ? 0 : 1);
+                    foreach (string w in new[] { "quest", "fallback", "android", "mobile", "lite", "impostor" })
+                        if (lower.Contains(w)) av.Score -= 100000;
+                    if (goName != "") av.Name = goName;
+                    found.Add(av);
+                }
             }
-            return best;
+            return found.OrderByDescending(x => x.Score).ToList();
+        }
+
+        // an object's name in a prefab or scene: its own, or the name its nested prefab gives it
+        static string GoName(List<UDoc> docs, long id, Dictionary<string, PackageAsset> assets)
+        {
+            var go = docs.FirstOrDefault(d => d.Id == id);
+            if (go == null) return "";
+            if (!go.Stripped) return go.Body.S("m_Name");
+            long inst = go.Body.FileId("m_PrefabInstance");
+            var pi = docs.FirstOrDefault(d => d.Id == inst);
+            if (pi == null) return "";
+            foreach (var m in pi.Body.At("m_Modification").L("m_Modifications"))
+                if (m.S("propertyPath") == "m_Name" && m.At("target").S("fileID") == go.Body.At("m_CorrespondingSourceObject").S("fileID")) return m.S("value");
+            return assets.TryGetValue(pi.Body.Guid("m_SourcePrefab"), out var src) ? Path.GetFileNameWithoutExtension(src.Path) : "";
+        }
+
+        /// Its objects made (nested prefabs and the models too).
+        public void Make()
+        {
+            Builder = new PrefabGraph(Assets, Fbx);
+            Graph = Builder.Load(Prefab);
+            Builder.Finish();
+            Root = Graph.Comp.TryGetValue(Descriptor.Id, out var dc) ? dc.Node : null;
+            if (Root != null && Root.Name != "") Name = Root.Name;
+            // what was added onto the model's parts that weren't found: kept on the avatar
+            if (Root != null) foreach (var o in Graph.Orphans) Root.Add(o);
         }
 
         List<UDoc> Load(string guid)

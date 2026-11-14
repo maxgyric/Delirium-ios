@@ -35,7 +35,7 @@ static void mat(Buf* b, ufbx_matrix m) // column-major 4x4
 
 typedef struct { ufbx_vec3 pos, nrm; ufbx_vec2 uv; float w[4]; uint32_t j[4]; uint32_t vtx; } Vert;
 
-static void mesh_blob(Buf* b, ufbx_node* node, ufbx_mesh* mesh)
+static void mesh_blob(Buf* b, ufbx_node* node, ufbx_mesh* mesh, uint32_t node_index)
 {
     ufbx_skin_deformer* skin = mesh->skin_deformers.count ? mesh->skin_deformers.data[0] : NULL;
     ufbx_matrix toWorld = node->geometry_to_world;
@@ -97,6 +97,7 @@ static void mesh_blob(Buf* b, ufbx_node* node, ufbx_mesh* mesh)
     size_t nv = k ? ufbx_generate_indices(&stream, 1, idx, k, NULL, &err) : 0;
 
     str(b, node->name);
+    u32(b, node_index);
     u32(b, (uint32_t)nv);
     for (size_t i = 0; i < nv; ++i) f32(b, (float)v[i].pos.x), f32(b, (float)v[i].pos.y), f32(b, (float)v[i].pos.z);
     for (size_t i = 0; i < nv; ++i) f32(b, (float)v[i].nrm.x), f32(b, (float)v[i].nrm.y), f32(b, (float)v[i].nrm.z);
@@ -176,14 +177,14 @@ int fx_load(const char* path, uint8_t** out, int* len)
         *out = b.p, *len = (int)b.n;
         return 1;
     }
-    put(&b, "FXB3", 4);
+    put(&b, "FXB4", 4);
     uint32_t count = 0;
     for (size_t i = 0; i < scene->nodes.count; ++i) count += scene->nodes.data[i]->mesh != NULL;
     u32(&b, count);
     for (size_t i = 0; i < scene->nodes.count; ++i)
     {
         ufbx_node* n = scene->nodes.data[i];
-        if (n->mesh) mesh_blob(&b, n, n->mesh);
+        if (n->mesh) mesh_blob(&b, n, n->mesh, (uint32_t)i);
     }
     // every node's bind/rest world matrix by name (to fit the file to the prefab's skeleton)
     u32(&b, (uint32_t)scene->nodes.count);
@@ -191,7 +192,11 @@ int fx_load(const char* path, uint8_t** out, int* len)
     {
         ufbx_node* n = scene->nodes.data[i];
         str(&b, n->name);
-        str(&b, n->parent ? n->parent->name : (ufbx_string){"", 0});
+        u32(&b, n->parent ? n->parent->typed_id : 0xFFFFFFFFu);
+        ufbx_transform t = n->local_transform;
+        f32(&b, (float)t.translation.x), f32(&b, (float)t.translation.y), f32(&b, (float)t.translation.z);
+        f32(&b, (float)t.rotation.x), f32(&b, (float)t.rotation.y), f32(&b, (float)t.rotation.z), f32(&b, (float)t.rotation.w);
+        f32(&b, (float)t.scale.x), f32(&b, (float)t.scale.y), f32(&b, (float)t.scale.z);
         mat(&b, n->node_to_world);
     }
     ufbx_free_scene(scene);
