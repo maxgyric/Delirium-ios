@@ -101,7 +101,8 @@ static void mesh_blob(Buf* b, ufbx_node* node, ufbx_mesh* mesh, uint32_t node_in
     u32(b, (uint32_t)nv);
     for (size_t i = 0; i < nv; ++i) f32(b, (float)v[i].pos.x), f32(b, (float)v[i].pos.y), f32(b, (float)v[i].pos.z);
     for (size_t i = 0; i < nv; ++i) f32(b, (float)v[i].nrm.x), f32(b, (float)v[i].nrm.y), f32(b, (float)v[i].nrm.z);
-    for (size_t i = 0; i < nv; ++i) f32(b, (float)v[i].uv.x), f32(b, (float)v[i].uv.y);
+    // glTF's v runs down the picture, FBX's (and Unity's) up
+    for (size_t i = 0; i < nv; ++i) f32(b, (float)v[i].uv.x), f32(b, 1.0f - (float)v[i].uv.y);
     // bones (a mesh without a skin: one, its own node, flag 0)
     uint32_t nb = skin ? (uint32_t)skin->clusters.count : 0;
     u32(b, skin ? 1 : 0);
