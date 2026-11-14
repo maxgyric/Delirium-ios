@@ -1,6 +1,8 @@
 # Run by hand: the fileIDs Unity gives a model's objects (for the on-phone VRChat import), from ufbx's test models.
 name: fileIDs probe
 on: workflow_dispatch
+permissions:
+  contents: write
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -25,6 +27,17 @@ jobs:
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/project" -w /project -e UNITY_EMAIL -e UNITY_PASSWORD \
             unityci/editor:ubuntu-6000.3.28f1-ios-3 bash /project/ci/fileids.sh
+      - name: The list on the probe-results branch
+        if: always()
+        run: |
+          sudo chown -R "$(id -u)" . || true
+          mkdir -p /tmp/out && cp fileids.txt probe.log /tmp/out/ 2>/dev/null || true
+          git config user.name "fileids probe"; git config user.email "probe@users.noreply.github.com"
+          git checkout --orphan probe-results
+          git rm -rf --cached . > /dev/null
+          cp /tmp/out/* . 2>/dev/null || true
+          git add fileids.txt probe.log 2>/dev/null || true
+          git commit -m "fileIDs probe" && git push -f origin probe-results
       - uses: actions/upload-artifact@v4
         if: always()
         with:
