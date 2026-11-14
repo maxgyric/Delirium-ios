@@ -2,7 +2,8 @@
 //  - DP_PickFolder: a folder with your game's files, anywhere the Files app reaches (kept open across launches by a
 //    bookmark: DP_RestoreFolder);
 //  - DP_PickModels: .glb / .vrm files, MOVED into the app's Documents/mods (copied then the original removed when a
-//    plain move isn't allowed there).
+//    plain move isn't allowed there);
+//  - DP_PickPackage: one file (a VRChat .unitypackage) copied into the app's tmp folder for the import to read.
 // Answers come back by UnitySendMessage to the "Game" object.
 #import <UIKit/UIKit.h>
 
@@ -14,6 +15,7 @@ static NSURL* gFolder = nil; // the picked folder, kept accessible
 
 @interface DPDelegate : NSObject <UIDocumentPickerDelegate>
 @property(nonatomic) BOOL folder;
+@property(nonatomic) BOOL package;
 @property(nonatomic, copy) NSString* obj;
 @property(nonatomic, copy) NSString* method;
 @end
@@ -32,6 +34,7 @@ static void DPKeep(NSURL* u)
 - (void)documentPicker:(UIDocumentPickerViewController*)c didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls
 {
     NSFileManager* fm = [NSFileManager defaultManager];
+    if (self.package) return DPSend(self, urls.firstObject ? urls.firstObject.path : @"");
     if (self.folder)
     {
         NSURL* u = urls.firstObject;
@@ -89,31 +92,34 @@ static void DPKeep(NSURL* u)
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)c
 {
-    DPSend(self, self.folder ? @"" : @"-1|");
+    DPSend(self, self.folder || self.package ? @"" : @"-1|");
 }
 @end
 
-static void DPPresent(BOOL folder, const char* obj, const char* method)
+static void DPPresent(BOOL folder, BOOL package, const char* obj, const char* method)
 {
     if (!gDelegate) gDelegate = [DPDelegate new];
     gDelegate.folder = folder;
+    gDelegate.package = package;
     gDelegate.obj = [NSString stringWithUTF8String:obj];
     gDelegate.method = [NSString stringWithUTF8String:method];
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     UIDocumentPickerViewController* p =
-        [[UIDocumentPickerViewController alloc] initWithDocumentTypes:folder ? @[ @"public.folder" ] : @[ @"public.item" ] inMode:UIDocumentPickerModeOpen];
+        [[UIDocumentPickerViewController alloc] initWithDocumentTypes:folder ? @[ @"public.folder" ] : @[ @"public.item" ]
+                                                               inMode:package ? UIDocumentPickerModeImport : UIDocumentPickerModeOpen];
 #pragma clang diagnostic pop
     p.delegate = gDelegate;
-    p.allowsMultipleSelection = !folder;
+    p.allowsMultipleSelection = !folder && !package;
     p.modalPresentationStyle = UIModalPresentationFormSheet;
     [UnityGetGLViewController() presentViewController:p animated:YES completion:nil];
 }
 
 extern "C"
 {
-    void DP_PickFolder(const char* obj, const char* method) { DPPresent(YES, obj, method); }
-    void DP_PickModels(const char* obj, const char* method) { DPPresent(NO, obj, method); }
+    void DP_PickFolder(const char* obj, const char* method) { DPPresent(YES, NO, obj, method); }
+    void DP_PickModels(const char* obj, const char* method) { DPPresent(NO, NO, obj, method); }
+    void DP_PickPackage(const char* obj, const char* method) { DPPresent(NO, YES, obj, method); }
 
     // the folder picked before (another launch), opened again; "" if none
     const char* DP_RestoreFolder()

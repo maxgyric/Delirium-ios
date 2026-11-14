@@ -80,6 +80,13 @@ public partial class Game
                 found.AddRange(Directory.GetFiles(filesDir, "*.glb", SearchOption.AllDirectories));
                 found.AddRange(Directory.GetFiles(filesDir, "*.vrm", SearchOption.AllDirectories)); // VRM avatars are .glb inside
             }
+            // VRChat packages to import (put there by hand)
+            var pk = new List<string>();
+            foreach (string dir in new[] { filesDir, Application.persistentDataPath })
+                if (Directory.Exists(dir))
+                    foreach (string f in Directory.GetFiles(dir, "*.unitypackage", SearchOption.AllDirectories))
+                        if (!pk.Contains(f)) pk.Add(f);
+            packages = pk.ToArray();
             // on the phone: ones still loose next to the game's files
             if (Application.isMobilePlatform && Directory.Exists(Application.persistentDataPath))
             {
@@ -105,6 +112,10 @@ public partial class Game
             byte[] data = File.ReadAllBytes(path);
             string name = Path.GetFileNameWithoutExtension(path);
             var made = GlbScene.Load(data, name, ModelMaterial());
+            // an imported VRChat avatar: its toggles (on its own tree, before Prepare renames the bones)
+            if (kind != 2)
+                try { VrcLook.Attach(path, made); }
+                catch (Exception e) { Debug.LogWarning("[Sandbox] toggles: " + e.Message); }
             if (kind == 2)
             {
                 if (made.Triangles == 0)
@@ -139,6 +150,10 @@ public partial class Game
                 filesNote = name + ": " + wrong;
                 return false;
             }
+            // hair, breasts, skirts...: the file's VRM spring bones, or its extra bones picked by name
+            string springs = "";
+            try { springs = SpringBones.Setup(wrap, made); }
+            catch (Exception e) { Debug.LogWarning("[Sandbox] physics bones: " + e.Message + "\n" + e.StackTrace); }
             wrap.SetActive(false);
             DontDestroyOnLoad(wrap);
             if (kind == 0)
@@ -156,7 +171,8 @@ public partial class Game
                 PlayerPrefs.SetString(kPrefNpcModel, path);
             }
             Rebody(kind == 0);
-            filesNote = (kind == 0 ? "The hero is " : "Everyone else is ") + name + " (" + made.Triangles + " triangles).";
+            filesNote = (kind == 0 ? "The hero is " : "Everyone else is ") + name + " (" + made.Triangles + " triangles" +
+                        (springs != "" ? ", " + springs : "") + ").";
             Debug.Log("[Sandbox] " + filesNote);
             return true;
         }
@@ -414,6 +430,10 @@ public partial class Game
             if (GUILayout.Button("Map 2x bigger", btn, GUILayout.Height(30f))) ScaleMap(2f);
             GUILayout.EndHorizontal();
         }
+
+        VrcToggles(heroTemplate, "Hero");
+        VrcToggles(npcTemplate, "Everyone else");
+        VrcImportUi();
 
         Head(files.Length + " file" + (files.Length == 1 ? "" : "s"));
         foreach (string f in files)

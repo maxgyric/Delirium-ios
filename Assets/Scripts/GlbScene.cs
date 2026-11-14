@@ -87,6 +87,21 @@ public static class GlbScene
         var textures = new Dictionary<int, Texture2D>();
         var materials = new Dictionary<int, Material>();
         Material fallback = null;
+        System.Func<int, Material> materialOf = matIndex =>
+        {
+            Material mat;
+            if (matIndex < 0 || glb.Item("materials", matIndex) == null)
+            {
+                if (fallback == null) { fallback = new Material(baseMaterial) { color = new Color(0.75f, 0.75f, 0.78f) }; made.Owned.Add(fallback); }
+                return fallback;
+            }
+            if (!materials.TryGetValue(matIndex, out mat))
+            {
+                mat = MakeMaterial(glb, matIndex, baseMaterial, textures, made);
+                materials[matIndex] = mat;
+            }
+            return mat;
+        };
         for (int i = 0; i < nodes.Count; i++)
         {
             object mesh = glb.Item("meshes", Json.Int(nodes[i], "mesh"));
@@ -94,12 +109,25 @@ public static class GlbScene
             object skin = glb.Item("skins", Json.Int(nodes[i], "skin"));
             var prims = Json.Arr(Json.Get(mesh, "primitives"));
             if (prims == null) continue;
+            // primitives on the same vertices (one model's materials): one mesh, a sub-mesh each
+            var groups = new List<List<int>>();
+            var groupOf = new Dictionary<string, List<int>>();
             for (int p = 0; p < prims.Count; p++)
             {
                 if (Json.Int(prims[p], "mode", 4) != 4) continue; // triangles only
-                object attrs = Json.Get(prims[p], "attributes");
+                object a = Json.Get(prims[p], "attributes");
+                if (Json.Int(a, "POSITION") < 0) continue;
+                string key = Json.Int(a, "POSITION") + "/" + Json.Int(a, "NORMAL") + "/" + Json.Int(a, "TEXCOORD_0") + "/" + Json.Int(a, "COLOR_0") + "/" +
+                             Json.Int(a, "JOINTS_0") + "/" + Json.Int(a, "WEIGHTS_0");
+                if (!groupOf.TryGetValue(key, out var g)) { groupOf[key] = g = new List<int>(); groups.Add(g); }
+                g.Add(p);
+            }
+            for (int gi = 0; gi < groups.Count; gi++)
+            {
+                var group = groups[gi];
+                object first = prims[group[0]];
+                object attrs = Json.Get(first, "attributes");
                 int posAcc = Json.Int(attrs, "POSITION");
-                if (posAcc < 0) continue;
                 float[] pos = glb.Floats(posAcc, out int pc);
                 if (pc != 3 || pos.Length < 9) continue;
                 int n = pos.Length / 3;
@@ -132,56 +160,72 @@ public static class GlbScene
                     colours[v] = coloured ? (Color32)new Color(col[v * cc], col[v * cc + 1], col[v * cc + 2], cc == 4 ? col[v * cc + 3] : 1f) : new Color32(255, 255, 255, 255);
                 m.colors32 = colours;
                 if (coloured) made.Coloured++;
-                int[] idx;
-                int idxAcc = Json.Int(prims[p], "indices");
-                if (idxAcc >= 0) idx = glb.Ints(idxAcc, out int unusedComps);
-                else
+                // each primitive's triangles: a sub-mesh
+                var subs = new List<int[]>();
+                var mats = new List<Material>();
+                foreach (int p in group)
                 {
-                    idx = new int[n];
-                    for (int v = 0; v < n; v++) idx[v] = v;
+                    int[] idx;
+                    int idxAcc = Json.Int(prims[p], "indices");
+                    if (idxAcc >= 0) idx = glb.Ints(idxAcc, out int unusedComps);
+                    else
+                    {
+                        idx = new int[n];
+                        for (int v = 0; v < n; v++) idx[v] = v;
+                    }
+                    int tris = idx.Length / 3;
+                    var wound = new int[tris * 3];
+                    bool bad = false;
+                    for (int k = 0; k < tris; k++)
+                    {
+                        int a = idx[k * 3], b = idx[k * 3 + 1], c = idx[k * 3 + 2];
+                        if (a < 0 || b < 0 || c < 0 || a >= n || b >= n || c >= n) { bad = true; break; }
+                        wound[k * 3] = a;
+                        wound[k * 3 + 1] = c; // the mirror turned the triangle round
+                        wound[k * 3 + 2] = b;
+                    }
+                    if (bad || tris == 0) continue;
+                    subs.Add(wound);
+                    mats.Add(materialOf(Json.Int(prims[p], "material")));
+                    made.Triangles += tris;
                 }
-                int tris = idx.Length / 3;
-                var wound = new int[tris * 3];
-                bool bad = false;
-                for (int k = 0; k < tris; k++)
-                {
-                    int a = idx[k * 3], b = idx[k * 3 + 1], c = idx[k * 3 + 2];
-                    if (a < 0 || b < 0 || c < 0 || a >= n || b >= n || c >= n) { bad = true; break; }
-                    wound[k * 3] = a;
-                    wound[k * 3 + 1] = c; // the mirror turned the triangle round
-                    wound[k * 3 + 2] = b;
-                }
-                if (bad || tris == 0) { UnityEngine.Object.Destroy(m); continue; }
-                m.triangles = wound;
+                if (subs.Count == 0) { UnityEngine.Object.Destroy(m); continue; }
+                m.subMeshCount = subs.Count;
+                for (int k = 0; k < subs.Count; k++) m.SetTriangles(subs[k], k, false);
                 m.OptimizeIndexBuffers(); // the same triangles, in the order the GPU's vertex cache likes best
                 if (!normals) m.RecalculateNormals();
                 m.RecalculateBounds();
-                made.Triangles += tris;
                 made.Owned.Add(m);
+                // blend shapes (glTF's morph targets: their names in the mesh's extras)
+                var targets = Json.Arr(Json.Get(first, "targets"));
+                var names = Json.Arr(Json.Get(Json.Get(mesh, "extras"), "targetNames")) ?? Json.Arr(Json.Get(Json.Get(first, "extras"), "targetNames"));
+                int shapes = 0;
+                if (targets != null)
+                    for (int t = 0; t < targets.Count; t++)
+                    {
+                        float[] d = glb.Floats(Json.Int(targets[t], "POSITION"), out int dc);
+                        var deltas = new Vector3[n];
+                        if (dc == 3 && d.Length == n * 3)
+                            for (int v = 0; v < n; v++) deltas[v] = new Vector3(-d[v * 3], d[v * 3 + 1], d[v * 3 + 2]);
+                        string shape = names != null && t < names.Count && names[t] is string sn && sn != "" ? sn : "shape" + t;
+                        if (m.GetBlendShapeIndex(shape) >= 0) shape += "_" + t;
+                        m.AddBlendShapeFrame(shape, 100f, deltas, null, null);
+                        shapes++;
+                    }
+                float[] weights = Json.Nums(mesh, "weights");
 
-                // one primitive: on the node itself; more: a child each
+                // one group: on the node itself; more: a child each
                 GameObject go = objects[i];
-                if (prims.Count > 1)
+                if (groups.Count > 1)
                 {
-                    go = new GameObject(objects[i].name + "_" + p);
+                    go = new GameObject(objects[i].name + "_" + gi);
                     go.transform.SetParent(objects[i].transform, false);
-                }
-                int matIndex = Json.Int(prims[p], "material");
-                Material mat;
-                if (matIndex < 0 || glb.Item("materials", matIndex) == null)
-                {
-                    if (fallback == null) { fallback = new Material(baseMaterial) { color = new Color(0.75f, 0.75f, 0.78f) }; made.Owned.Add(fallback); }
-                    mat = fallback;
-                }
-                else if (!materials.TryGetValue(matIndex, out mat))
-                {
-                    mat = MakeMaterial(glb, matIndex, baseMaterial, textures, made);
-                    materials[matIndex] = mat;
                 }
 
                 int[] joints = skin == null ? null : Json.Ints(skin, "joints");
                 int[] vj = glb.Ints(Json.Int(attrs, "JOINTS_0"), out int jc);
                 float[] vw = glb.Floats(Json.Int(attrs, "WEIGHTS_0"), out int wc);
+                SkinnedMeshRenderer smr = null;
                 if (joints != null && joints.Length > 0 && jc == 4 && wc == 4 && vj.Length == n * 4 && vw.Length == n * 4)
                 {
                     var bw = new BoneWeight[n];
@@ -206,19 +250,29 @@ public static class GlbScene
                     for (int b = 0; b < binds.Length; b++)
                         binds[b] = ic == 16 && ibm.Length >= (b + 1) * 16 ? Mirror(ibm, b * 16) : Matrix4x4.identity;
                     m.bindposes = binds;
-                    var smr = go.AddComponent<SkinnedMeshRenderer>();
+                    smr = go.AddComponent<SkinnedMeshRenderer>();
                     smr.sharedMesh = m;
                     smr.bones = bones;
                     int rootNode = Json.Int(skin, "skeleton");
                     smr.rootBone = rootNode >= 0 && rootNode < objects.Length ? objects[rootNode].transform : bones[0];
-                    smr.sharedMaterial = mat;
                     smr.updateWhenOffscreen = true; // its bounds follow the bones wherever a ragdoll throws them
                     made.Skinned++;
+                }
+                else if (shapes > 0)
+                {
+                    smr = go.AddComponent<SkinnedMeshRenderer>(); // blend shapes need one (no bones: where the node is)
+                    smr.sharedMesh = m;
+                }
+                if (smr != null)
+                {
+                    smr.sharedMaterials = mats.ToArray();
+                    if (weights != null)
+                        for (int t = 0; t < weights.Length && t < shapes; t++) smr.SetBlendShapeWeight(t, weights[t] * 100f);
                 }
                 else
                 {
                     go.AddComponent<MeshFilter>().sharedMesh = m;
-                    go.AddComponent<MeshRenderer>().sharedMaterial = mat;
+                    go.AddComponent<MeshRenderer>().sharedMaterials = mats.ToArray();
                 }
             }
         }

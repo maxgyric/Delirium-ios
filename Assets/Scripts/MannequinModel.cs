@@ -171,6 +171,33 @@ public partial class Mannequin
         mesh.name = src.name + " (bound)";
         mesh.vertices = verts;
         if (hasNormals) mesh.normals = normals;
+        // its blend shapes' offsets turned with the vertices they move
+        if (src.blendShapeCount > 0)
+        {
+            mesh.ClearBlendShapes();
+            var d = new Vector3[verts.Length];
+            var dn = new Vector3[verts.Length];
+            var dt = new Vector3[verts.Length];
+            for (int s = 0; s < src.blendShapeCount; s++)
+                for (int f = 0; f < src.GetBlendShapeFrameCount(s); f++)
+                {
+                    src.GetBlendShapeFrameVertices(s, f, d, dn, dt);
+                    for (int v = 0; v < d.Length; v++)
+                    {
+                        if (d[v].sqrMagnitude == 0f) continue;
+                        var w = weights[v];
+                        Vector3 r = Vector3.zero;
+                        for (int k = 0; k < 4; k++)
+                        {
+                            int bone = k == 0 ? w.boneIndex0 : k == 1 ? w.boneIndex1 : k == 2 ? w.boneIndex2 : w.boneIndex3;
+                            float wt = k == 0 ? w.weight0 : k == 1 ? w.weight1 : k == 2 ? w.weight2 : w.weight3;
+                            if (wt > 0f && bone >= 0 && bone < skin.Length) r += skin[bone].MultiplyVector(d[v]) * wt;
+                        }
+                        d[v] = r;
+                    }
+                    mesh.AddBlendShapeFrame(src.GetBlendShapeName(s), src.GetBlendShapeFrameWeight(s, f), d, null, null);
+                }
+        }
         mesh.bindposes = now;
         mesh.RecalculateBounds();
         smr.sharedMesh = mesh;
