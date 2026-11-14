@@ -431,7 +431,7 @@ public partial class Game
             GUILayout.EndHorizontal();
         }
 
-        VrcToggles(heroTemplate, "Hero");
+        if (HeroLook() != null) Info("The hero's VRChat menu: the Expr. button in hero mode.");
         VrcToggles(npcTemplate, "Everyone else");
         VrcImportUi();
 

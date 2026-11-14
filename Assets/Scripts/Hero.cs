@@ -891,13 +891,15 @@ public partial class Game
         if (!Has(hFireId)) hFireId = kNone;
         if (!Has(hJumpId)) hJumpId = kNone;
         if (!Has(hDownId)) hDownId = kNone;
+        if (!Has(radialFinger)) radialFinger = -99;
 
         hStick = Vector2.zero;
         foreach (var f in fingers)
         {
             if (f.Began && !OverUi(f.Screen))
             {
-                if (Vector2.Distance(f.Pos, BtnJump(w, h)) < kBtnR + 6f) { hJumpReq = true; hJumpId = f.Id; }
+                if (RadialTap(f.Pos, f.Id, w, h)) { } // the VRChat avatar's Expressions button and its wheel
+                else if (Vector2.Distance(f.Pos, BtnJump(w, h)) < kBtnR + 6f) { hJumpReq = true; hJumpId = f.Id; }
                 else if (Vector2.Distance(f.Pos, BtnAim(w, h)) < kBtnR + 6f) { if (heroMode == 0 && !kGuns[weapon % kGuns.Length].Fists) heroAim = !heroAim; }
                 else if (Vector2.Distance(f.Pos, BtnDrunk(w, h)) < kBtnR + 6f) { if (heroNoclip) hDownId = f.Id; else ToggleDrunk(); }
                 else if ((heroAim || (kGuns[weapon % kGuns.Length].Fists && heroMode == 0)) && Vector2.Distance(f.Pos, BtnFire(w, h)) < kBtnR + 6f) hFireId = f.Id;
@@ -910,6 +912,7 @@ public partial class Game
                 }
             }
             if (f.Ended) continue;
+            if (f.Id == radialFinger) { RadialDrag(f.Pos, w, h); continue; }
             if (f.Id == hStickId)
             {
                 Vector2 v = (f.Pos - PadL(w, h)) / kStickR;
@@ -981,6 +984,7 @@ public partial class Game
             Disc(BtnFire(w, h), kBtnR, new Color(1f, 0.45f, 0.35f, 0.6f), "Fire");
             Disc(new Vector2(w * 0.5f, h * 0.5f), 4f, new Color(1f, 1f, 1f, 0.9f)); // where the shot goes
         }
+        RadialGui(w, h);
         string what = hero.Killed ? "dead (Reset)" : hero.Rising ? "getting up" : heroMode == 2 ? "drunk" : heroMode == 1 ? "knocked" : kGuns[weapon % kGuns.Length].Label;
         if (what != "") GUI.Label(new Rect(w * 0.5f - 90f, 60f, 180f, 24f), what, new GUIStyle(chip) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold });
     }

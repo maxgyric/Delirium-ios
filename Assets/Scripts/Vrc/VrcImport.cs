@@ -113,6 +113,12 @@ public partial class Game
                 catch (Exception e) { model.Notes.Add(Path.GetFileName(model.Textures[i].File) + ": " + e.Message); }
                 yield return null;
             }
+            // the menu's icons
+            foreach (var icon in model.Icons)
+            {
+                try { Encode(icon); }
+                catch (Exception) { icon.Out = null; }
+            }
             vrcProgress = -1f;
             vrcBusy = av.Name + ": writing...";
         }
@@ -168,7 +174,7 @@ public partial class Game
         bool png = bytes.Length > 8 && bytes[0] == 0x89 && bytes[1] == 'P', jpg = bytes.Length > 3 && bytes[0] == 0xFF && bytes[1] == 0xD8;
         int w = 0, h = 0;
         if (png && bytes.Length > 24) { w = Be(bytes, 16); h = Be(bytes, 20); }
-        if ((png || jpg) && w > 0 && w <= kMaxTexture && h <= kMaxTexture)
+        if ((png || jpg) && w > 0 && w <= job.Max && h <= job.Max)
         {
             job.Out = bytes;
             job.Mime = png ? "image/png" : "image/jpeg";
@@ -185,7 +191,7 @@ public partial class Game
             }
             else tex = Tga(bytes);
             int tw = tex.width, th = tex.height;
-            while (tw > kMaxTexture || th > kMaxTexture) { tw = Mathf.Max(1, tw / 2); th = Mathf.Max(1, th / 2); }
+            while (tw > job.Max || th > job.Max) { tw = Mathf.Max(1, tw / 2); th = Mathf.Max(1, th / 2); }
             if (tw != tex.width || th != tex.height)
             {
                 rt = RenderTexture.GetTemporary(tw, th, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
@@ -305,6 +311,7 @@ public partial class Game
         string menu = null;
         foreach (var t in d.Toggles)
         {
+            if (t.Radial) continue;
             if (t.Menu != menu)
             {
                 menu = t.Menu;

@@ -18,11 +18,20 @@ namespace Vrc
         public string Key => Path + "|" + Attr;
     }
 
+    public sealed class MenuNode
+    {
+        public string Name = "", Icon = "";      // Icon: a texture's GUID
+        public int Kind;                         // 0 a menu, 101 button, 102 toggle, 103 sub-menu, 203 radial
+        public Toggle Toggle;
+        public readonly List<MenuNode> Items = new List<MenuNode>();
+    }
+
     public sealed class Toggle
     {
+        public string Icon = "";
         public string Menu, Name, Param;
         public float Value;
-        public int Kind; // 101 button, 102 toggle
+        public int Kind; // 101 button, 102 toggle, 203 radial (Param a float 0..1)
         public bool ParamIsBool;
     }
 
@@ -55,6 +64,7 @@ namespace Vrc
             return f;
         }
         public readonly List<Toggle> Toggles = new List<Toggle>();
+        public readonly MenuNode MenuRoot = new MenuNode { Name = "Expressions" };
         public readonly Dictionary<string, float> Defaults = new Dictionary<string, float>();       // parameter -> its default
         public readonly Dictionary<string, Effect> Base = new Dictionary<string, Effect>();          // what the FX layers set with every parameter at its default
         public readonly Dictionary<string, List<Effect>> ValueEffects = new Dictionary<string, List<Effect>>(); // "param=value" -> what differs from Base
@@ -157,7 +167,7 @@ namespace Vrc
                 }
             // the menu
             var seenMenus = new HashSet<string>();
-            Menu(desc.Body.Guid("expressionsMenu"), "", 0, seenMenus, parTypes);
+            Menu(desc.Body.Guid("expressionsMenu"), "", 0, seenMenus, parTypes, MenuRoot);
             // menus in the package on the same parameters that the menu doesn't reach (an edit unlinked them)
             string parGuid = desc.Body.Guid("expressionParameters");
             foreach (var a in Assets.Values.OrderBy(x => x.Path))
@@ -168,7 +178,9 @@ namespace Vrc
                 string text = File.ReadAllText(a.File);
                 if (!text.Contains("controls:") || parGuid == "" || !text.Contains(parGuid)) continue;
                 int before = Toggles.Count;
-                Menu(a.Guid, "(not in the menu) " + Path.GetFileNameWithoutExtension(a.Path), 0, seenMenus, parTypes);
+                var orphan = new MenuNode { Name = Path.GetFileNameWithoutExtension(a.Path), Kind = 103 };
+                Menu(a.Guid, "(not in the menu) " + Path.GetFileNameWithoutExtension(a.Path), 0, seenMenus, parTypes, orphan);
+                if (orphan.Items.Count > 0) MenuRoot.Items.Add(orphan);
                 if (Toggles.Count > before) Notes.Add("menu " + Path.GetFileNameWithoutExtension(a.Path) + " isn't reached from the avatar's menu: listed anyway");
             }
             // the playable layers' controllers in VRChat's order (Base, Additive, Gesture, Action, FX: later ones win);
@@ -192,7 +204,9 @@ namespace Vrc
             foreach (var e in run(state)) Base[e.Key] = e;
             foreach (var t in Toggles)
             {
-                foreach (float v in new[] { t.Value, 0f })
+                // a radial: its parameter at every tenth
+                var values = t.Kind == 203 ? Enumerable.Range(0, 11).Select(i => i / 10f).ToArray() : new[] { t.Value, 0f };
+                foreach (float v in values)
                 {
                     string k = Key(t.Param, v);
                     if (ValueEffects.ContainsKey(k)) continue;
@@ -204,12 +218,24 @@ namespace Vrc
                 }
             }
             // toggles nothing listens to (an edit took their layers out): not shown
-            var dead = Toggles.Where(t => ValueEffects[Key(t.Param, t.Value)].Count == 0 && ValueEffects[Key(t.Param, 0)].Count == 0).ToList();
+            var dead = Toggles.Where(t => t.Kind == 203 ? Enumerable.Range(0, 11).All(i => ValueEffects[Key(t.Param, i / 10f)].Count == 0)
+                                                        : ValueEffects[Key(t.Param, t.Value)].Count == 0 && ValueEffects[Key(t.Param, 0)].Count == 0).ToList();
             foreach (var t in dead) Toggles.Remove(t);
+            Prune(MenuRoot, new HashSet<Toggle>(Toggles));
             if (dead.Count > 0) Notes.Add(dead.Count + " menu items change nothing in this avatar's controllers (" + string.Join(", ", dead.Take(6).Select(t => t.Name)) + (dead.Count > 6 ? "..." : "") + "): left out");
         }
 
-    void Menu(string guid, string path, int depth, HashSet<string> seen, Dictionary<string, int> parTypes)
+        // the menu without the items that do nothing, and sub-menus left empty
+        static void Prune(MenuNode m, HashSet<Toggle> alive)
+        {
+            foreach (var i in m.Items.ToList())
+            {
+                if (i.Kind == 103) Prune(i, alive);
+                if ((i.Kind == 103 && i.Items.Count == 0) || (i.Kind != 103 && (i.Toggle == null || !alive.Contains(i.Toggle)))) m.Items.Remove(i);
+            }
+        }
+
+        void Menu(string guid, string path, int depth, HashSet<string> seen, Dictionary<string, int> parTypes, MenuNode into)
         {
             if (depth > 8 || !seen.Add(guid)) return;
             var m = Load(guid);
@@ -218,15 +244,23 @@ namespace Vrc
             {
                 int type = c.I("type");
                 string name = c.S("name");
-                if (type == 103) Menu(c.Guid("subMenu"), path == "" ? name : path + "/" + name, depth + 1, seen, parTypes);
-                else if (type == 101 || type == 102)
+                string icon = c.At("icon").S("guid");
+                if (type == 103)
                 {
-                    string param = c.At("parameter").S("name");
-                    if (param == "") continue;
-                    Toggles.Add(new Toggle { Menu = path, Name = name, Param = param, Value = c.F("value", 1), Kind = type,
-                                             ParamIsBool = parTypes.ContainsKey(param) && parTypes[param] == 2 });
+                    var sub = new MenuNode { Name = name, Icon = icon, Kind = 103 };
+                    into.Items.Add(sub);
+                    Menu(c.Guid("subMenu"), path == "" ? name : path + "/" + name, depth + 1, seen, parTypes, sub);
                 }
-                else if (type != 0) Notes.Add("menu " + (path == "" ? "" : path + "/") + name + ": a " + (type == 203 ? "radial" : type == 201 || type == 202 ? "puppet" : "control " + type) + " (not taken)");
+                else if (type == 101 || type == 102 || type == 203)
+                {
+                    string param = type == 203 ? (c.L("subParameters").Count > 0 ? c.L("subParameters")[0].S("name") : "") : c.At("parameter").S("name");
+                    if (param == "") continue;
+                    var t = new Toggle { Menu = path, Name = name, Param = param, Value = type == 203 ? 1f : c.F("value", 1), Kind = type, Icon = icon,
+                                         ParamIsBool = parTypes.ContainsKey(param) && parTypes[param] == 2 };
+                    Toggles.Add(t);
+                    into.Items.Add(new MenuNode { Name = name, Icon = icon, Kind = type, Toggle = t });
+                }
+                else if (type != 0) Notes.Add("menu " + (path == "" ? "" : path + "/") + name + ": a " + (type == 201 || type == 202 ? "puppet" : "control " + type) + " (not taken)");
             }
         }
 
@@ -361,17 +395,51 @@ namespace Vrc
                 {
                     var kids = d.Body.L("m_Childs");
                     if (kids.Count == 0) yield break;
-                    object pick = kids[0];
-                    if (d.Body.I("m_BlendType") == 0) // 1D: the child nearest the parameter
+                    int bt = d.Body.I("m_BlendType");
+                    if (bt == 0)
                     {
+                        // 1D: between the two children either side of the parameter, blend shapes in between
                         float v = P(s, d.Body.S("m_BlendParameter"));
-                        pick = kids.OrderBy(k => Math.Abs(k.F("m_Threshold") - v)).First();
+                        var ordered = kids.OrderBy(k => k.F("m_Threshold")).ToList();
+                        int i = 0;
+                        while (i + 1 < ordered.Count && ordered[i + 1].F("m_Threshold") <= v) i++;
+                        float t0 = ordered[i].F("m_Threshold");
+                        if (i + 1 >= ordered.Count || v <= t0)
+                        {
+                            foreach (var e in Motion(ordered[i].At("m_Motion"), s, depth + 1)) yield return e;
+                            yield break;
+                        }
+                        float t1 = ordered[i + 1].F("m_Threshold"), t = t1 > t0 ? (v - t0) / (t1 - t0) : 0f;
+                        var a = new Dictionary<string, Effect>();
+                        foreach (var e in Motion(ordered[i].At("m_Motion"), s, depth + 1)) a[e.Key] = e;
+                        var b = new Dictionary<string, Effect>();
+                        foreach (var e in Motion(ordered[i + 1].At("m_Motion"), s, depth + 1)) b[e.Key] = e;
+                        foreach (var k in a.Keys.Union(b.Keys).ToList())
+                        {
+                            Effect ea, eb;
+                            bool inA = a.TryGetValue(k, out ea), inB = b.TryGetValue(k, out eb);
+                            if (inA && inB && ea.Attr.StartsWith("blend:")) { ea.Value += (eb.Value - ea.Value) * t; yield return ea; }
+                            else yield return t < 0.5f ? (inA ? ea : eb) : (inB ? eb : ea);
+                        }
+                        yield break;
                     }
-                    foreach (var e in Motion(pick.At("m_Motion"), s, depth + 1)) yield return e;
-                    if (d.Body.I("m_BlendType") == 4) // direct: every child whose weight parameter is up
-                        foreach (var k in kids.Skip(1))
-                            if (P(s, k.S("m_DirectBlendParameter")) > 0.5f)
-                                foreach (var e in Motion(k.At("m_Motion"), s, depth + 1)) yield return e;
+                    if (bt == 4)
+                    {
+                        // direct: each child by its own weight (blend shapes scaled by it)
+                        foreach (var k in kids)
+                        {
+                            float w = P(s, k.S("m_DirectBlendParameter"));
+                            if (w <= 0.001f) continue;
+                            foreach (var e in Motion(k.At("m_Motion"), s, depth + 1))
+                            {
+                                var x = e;
+                                if (x.Attr.StartsWith("blend:")) { x.Value *= Math.Min(1f, w); yield return x; }
+                                else if (w > 0.5f) yield return x;
+                            }
+                        }
+                        yield break;
+                    }
+                    foreach (var e in Motion(kids[0].At("m_Motion"), s, depth + 1)) yield return e;
                     yield break;
                 }
                 if (d.Type != "AnimationClip") yield break;

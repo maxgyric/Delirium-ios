@@ -25,12 +25,15 @@ namespace Vrc
         public bool Alpha;          // a cut-out or see-through material uses it: kept as PNG
         public byte[] Out;          // the encoded picture for the .glb (null: left out)
         public string Mime = "image/png";
+        public int Max = 2048;      // its longest side at most
     }
 
     public sealed class AvatarModel
     {
         public readonly List<string> Notes = new List<string>();
         public readonly List<TexJob> Textures = new List<TexJob>();
+        public readonly List<TexJob> Icons = new List<TexJob>();      // the expressions menu's icons (kept in the sidecar)
+        readonly Dictionary<string, int> iconOf = new Dictionary<string, int>();
         public int Triangles, MeshCount, Springs;
 
         sealed class Node
@@ -75,7 +78,38 @@ namespace Vrc
             try { m.PhysBones(); }
             catch (Exception e) { m.Notes.Add("PhysBones: " + e.Message); }
             m.Notes.InsertRange(0, av.Builder.Notes.Concat(av.ModelNotes));
+            m.MenuIcons(av.MenuRoot);
             return m;
+        }
+
+        // the menu's pictures, small
+        void MenuIcons(MenuNode m)
+        {
+            foreach (var i in m.Items)
+            {
+                if (i.Icon != "" && !iconOf.ContainsKey(i.Icon) && av.Assets.TryGetValue(i.Icon, out var a) && a.File != null)
+                {
+                    string ext = Path.GetExtension(a.Path).ToLowerInvariant();
+                    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga")
+                    {
+                        iconOf[i.Icon] = Icons.Count;
+                        Icons.Add(new TexJob { Guid = i.Icon, File = a.File, Ext = ext, Alpha = true, Max = 128 });
+                    }
+                }
+                if (i.Kind == 103) MenuIcons(i);
+            }
+        }
+
+        object MenuJson(MenuNode m, Dictionary<Toggle, int> toggleIndex)
+        {
+            var o = new Dictionary<string, object>
+            {
+                { "name", m.Name }, { "kind", m.Kind },
+                { "icon", m.Icon != "" && iconOf.TryGetValue(m.Icon, out int ic) && Icons[ic].Out != null ? ic : -1 },
+            };
+            if (m.Toggle != null && toggleIndex.TryGetValue(m.Toggle, out int ti)) o["toggle"] = ti;
+            if (m.Kind == 103 || m.Kind == 0) o["items"] = m.Items.Select(x => MenuJson(x, toggleIndex)).ToList();
+            return o;
         }
 
         static GComp Comp(GNode n, params int[] classes) => n?.Comps.FirstOrDefault(c => classes.Contains(c.Class));
@@ -845,11 +879,15 @@ namespace Vrc
             if (swaps > 0) Notes.Add(swaps + " material swaps aren't done (only objects and blend shapes)");
             var toggles = av.Toggles.Select(t => (object)new Dictionary<string, object>
             {
-                { "menu", t.Menu }, { "name", t.Name }, { "param", t.Param }, { "value", (double)t.Value }, { "button", t.Kind == 101 },
+                { "menu", t.Menu }, { "name", t.Name }, { "param", t.Param }, { "value", (double)t.Value }, { "button", t.Kind == 101 }, { "radial", t.Kind == 203 },
             }).ToList();
+            var toggleIndex = new Dictionary<Toggle, int>();
+            for (int i = 0; i < av.Toggles.Count; i++) toggleIndex[av.Toggles[i]] = i;
             var root = new Dictionary<string, object>
             {
                 { "avatar", av.Name }, { "targets", targets }, { "start", start }, { "base", baseFx }, { "effects", fx }, { "toggles", toggles }, { "parts", parts },
+                { "menu", MenuJson(av.MenuRoot, toggleIndex) },
+                { "icons", Icons.Select(x => (object)(x.Out != null ? Convert.ToBase64String(x.Out) : "")).ToList() },
                 { "defaults", av.Defaults.ToDictionary(kv => kv.Key, kv => (object)(double)kv.Value) },
                 { "notes", av.Notes.Concat(Notes).Select(x => (object)x).ToList() },
             };

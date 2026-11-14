@@ -27,7 +27,17 @@ public class VrcLook : MonoBehaviour
     {
         public string Menu, Name, Param;
         public float Value;
-        public bool Button;
+        public bool Button, Radial;
+    }
+
+    /// The avatar's expressions menu: sub-menus, toggles, buttons, radials.
+    public sealed class Item
+    {
+        public string Name = "";
+        public int Kind;          // 0 the menu, 101 button, 102 toggle, 103 sub-menu, 203 radial
+        public int Icon = -1;
+        public Toggle Toggle;
+        public readonly List<Item> Items = new List<Item>();
     }
 
     public sealed class Data
@@ -42,6 +52,24 @@ public class VrcLook : MonoBehaviour
         public readonly Dictionary<int, List<Fx>> Tucks = new Dictionary<int, List<Fx>>();            // a part's blend shapes on the body, let out when it's hidden
         public readonly Dictionary<int, bool> Hidden = new Dictionary<int, bool>();             // parts you switched by hand
         public readonly List<string> Notes = new List<string>();
+        public Item Menu;
+        public string[] IconData = new string[0];   // base64 PNGs
+        public Texture2D[] Icons = new Texture2D[0];
+
+        public Texture2D Icon(int i)
+        {
+            if (i < 0 || i >= IconData.Length || IconData[i] == "") return null;
+            if (Icons.Length != IconData.Length) Icons = new Texture2D[IconData.Length];
+            if (Icons[i] == null)
+                try
+                {
+                    var t = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                    if (t.LoadImage(Convert.FromBase64String(IconData[i]))) Icons[i] = t;
+                    else { Destroy(t); IconData[i] = ""; }
+                }
+                catch (Exception) { IconData[i] = ""; }
+            return Icons[i];
+        }
     }
 
     static readonly Dictionary<string, Data> all = new Dictionary<string, Data>();
@@ -80,7 +108,20 @@ public class VrcLook : MonoBehaviour
             foreach (var kv in defs) if (kv.Value is double v) d.Defaults[kv.Key] = (float)v;
         foreach (object t in Json.Arr(Json.Get(j, "toggles")) ?? new List<object>())
             d.Toggles.Add(new Toggle { Menu = Json.Str(t, "menu", ""), Name = Json.Str(t, "name", ""), Param = Json.Str(t, "param", ""),
-                                       Value = Json.Num(t, "value", 1f), Button = Json.Flag(t, "button") });
+                                       Value = Json.Num(t, "value", 1f), Button = Json.Flag(t, "button"), Radial = Json.Flag(t, "radial") });
+        var icons = Json.Arr(Json.Get(j, "icons")) ?? new List<object>();
+        d.IconData = new string[icons.Count];
+        for (int i = 0; i < icons.Count; i++) d.IconData[i] = icons[i] as string ?? "";
+        Func<object, Item> item = null;
+        item = o =>
+        {
+            var it = new Item { Name = Json.Str(o, "name", ""), Kind = Json.Int(o, "kind", 0), Icon = Json.Int(o, "icon", -1) };
+            int ti = Json.Int(o, "toggle", -1);
+            if (ti >= 0 && ti < d.Toggles.Count) it.Toggle = d.Toggles[ti];
+            foreach (object c in Json.Arr(Json.Get(o, "items")) ?? new List<object>()) it.Items.Add(item(c));
+            return it;
+        };
+        if (Json.Get(j, "menu") != null) d.Menu = item(Json.Get(j, "menu"));
         foreach (object p in Json.Arr(Json.Get(j, "parts")) ?? new List<object>())
         {
             var a = Json.Arr(p);
@@ -147,6 +188,7 @@ public class VrcLook : MonoBehaviour
             float def = d.Defaults.TryGetValue(kv.Key, out float v) ? v : 0f;
             if (Mathf.Abs(kv.Value - def) < 1e-4f) continue;
             if (d.Effects.TryGetValue(K(kv.Key, kv.Value), out var list)) put(list);
+            else if (d.Effects.TryGetValue(K(kv.Key, Mathf.Round(kv.Value * 10f) / 10f), out list)) put(list); // a radial: its nearest tenth
         }
         foreach (var kv in d.Hidden)
         {
@@ -195,6 +237,20 @@ public class VrcLook : MonoBehaviour
     {
         float v = d.State.TryGetValue(t.Param, out float s) ? s : d.Defaults.TryGetValue(t.Param, out float def) ? def : 0f;
         return Mathf.Abs(v - t.Value) < 1e-4f;
+    }
+
+    /// A parameter's value now (a radial's 0..1).
+    public static float Value(Data d, string param) =>
+        d.State.TryGetValue(param, out float s) ? s : d.Defaults.TryGetValue(param, out float def) ? def : 0f;
+
+    /// A radial's value (0..1).
+    public static void SetValue(string key, string param, float v)
+    {
+        if (!all.TryGetValue(key, out var d)) return;
+        v = Mathf.Round(Mathf.Clamp01(v) * 20f) / 20f; // 5% steps (each one redoes the look)
+        if (d.State.TryGetValue(param, out float was) && Mathf.Abs(was - v) < 1e-4f) return;
+        d.State[param] = v;
+        Changed(key, d);
     }
 
     public static void Set(string key, Toggle t, bool on)
