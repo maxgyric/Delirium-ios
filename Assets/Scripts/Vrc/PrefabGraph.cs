@@ -247,6 +247,15 @@ namespace Vrc
                 else if (root == null) root = nodes[i];
             }
             if (root == null) return null;
+            // a model with one top node: Unity makes that node the root itself (its parts, its children)
+            if (root.Kids.Count == 1 && root.Comps.Count == 0)
+            {
+                var top = root.Kids[0];
+                root.Kids.Clear();
+                foreach (var k in top.Kids.ToList()) root.Add(k);
+                root.S = top.S;
+                for (int i = 0; i < nodes.Length; i++) if (nodes[i] == top) nodes[i] = root;
+            }
             // the root at the model's origin (the scene places it)
             root.T = new float[] { 0, 0, 0 };
             root.R = new float[] { 0, 0, 0, 1 };
