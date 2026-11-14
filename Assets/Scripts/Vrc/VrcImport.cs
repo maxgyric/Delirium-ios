@@ -22,7 +22,6 @@ public partial class Game
     const int kMaxTexture = 2048;
     string vrcBusy = "";          // what the import is doing ("": nothing)
     float vrcProgress = -1f;
-    bool vrcParts;                // the parts list unfolded
     List<Vrc.Avatar> vrcChoices;  // the package's avatars, while you pick one
     int vrcPick = -1;             // -1 not yet, -2 cancelled
     string[] packages = new string[0];
@@ -316,17 +315,6 @@ public partial class Game
             if (now != on) VrcLook.Set(look.Key, t, now);
         }
         if (d.Toggles.Count == 0) Info("No menu toggles that change anything.");
-        GUILayout.BeginHorizontal();
-        if (GUILayout.Button(vrcParts ? "Hide parts" : "Parts...", btn, GUILayout.Height(30f))) vrcParts = !vrcParts;
-        if (GUILayout.Button("Reset", btn, GUILayout.Width(80f), GUILayout.Height(30f))) VrcLook.Reset(look.Key);
-        GUILayout.EndHorizontal();
-        if (!vrcParts) return;
-        foreach (var p in d.Parts)
-        {
-            bool shown = look.Shown(p.Key);
-            int cut = p.Value.LastIndexOf('/');
-            bool now = Tick(shown, cut >= 0 ? p.Value.Substring(cut + 1) : p.Value);
-            if (now != shown) VrcLook.SetPart(look.Key, p.Key, now);
-        }
+        if (GUILayout.Button("Reset toggles", btn, GUILayout.Height(30f))) VrcLook.Reset(look.Key);
     }
 }

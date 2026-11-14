@@ -88,6 +88,9 @@ namespace Vrc
                 string text = File.ReadAllText(a.File);
                 if (!text.Contains("expressionsMenu:")) continue;
                 var docs = UYaml.Parse(text);
+                // materials it uses that the package lacks (an older copy of an edited avatar, often)
+                int missingMats = System.Text.RegularExpressions.Regex.Matches(text, @"\{fileID: 2100000, guid: ([0-9a-f]{32})")
+                    .Cast<System.Text.RegularExpressions.Match>().Select(m => m.Groups[1].Value).Distinct().Count(g => !assets.ContainsKey(g));
                 foreach (var desc in docs.Where(d => !d.Stripped && d.Body.ContainsKey("expressionsMenu") && d.Body.ContainsKey("baseAnimationLayers")))
                 {
                     var av = new Avatar { Name = Path.GetFileNameWithoutExtension(a.Path), PrefabGuid = a.Guid, Assets = assets, Prefab = docs, Descriptor = desc, File0 = a.Path };
@@ -95,7 +98,7 @@ namespace Vrc
                     string goName = GoName(docs, desc.Body.FileId("m_GameObject"), assets);
                     av.Label = Path.GetFileName(a.Path) + (goName != "" ? " > " + goName : "");
                     string lower = (a.Path + " " + goName).ToLowerInvariant();
-                    av.Score = av.Toggles.Count * 10 + (scene ? 0 : 1);
+                    av.Score = av.Toggles.Count * 10 + (scene ? 0 : 1) - 5 * missingMats;
                     foreach (string w in new[] { "quest", "fallback", "android", "mobile", "lite", "impostor" })
                         if (lower.Contains(w)) av.Score -= 100000;
                     if (goName != "") av.Name = goName;

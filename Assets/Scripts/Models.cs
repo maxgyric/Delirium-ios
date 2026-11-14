@@ -446,13 +446,41 @@ public partial class Game
             if (GUILayout.Button("Hero", btn, GUILayout.Height(30f))) pick = 0;
             if (GUILayout.Button("Everyone else", btn, GUILayout.Height(30f))) pick = 1;
             if (GUILayout.Button("Map", btn, GUILayout.Height(30f))) pick = 2;
+            // a second tap deletes it
+            if (GUILayout.Button(removeAsk == f ? "Sure?" : "Remove", removeAsk == f ? btnOn : btn, GUILayout.Width(80f), GUILayout.Height(30f)))
+            {
+                if (removeAsk == f) { RemoveFile(f); GUIUtility.ExitGUI(); }
+                else removeAsk = f;
+            }
             GUILayout.EndHorizontal();
             if (pick >= 0)
             {
+                removeAsk = "";
                 Use(f, pick);
                 GUIUtility.ExitGUI();
             }
         }
+    }
+
+    string removeAsk = ""; // the file whose Remove was tapped once
+
+    // A model or map deleted from the phone (with its VRChat toggles); in use: the default again first.
+    void RemoveFile(string f)
+    {
+        removeAsk = "";
+        if (PlayerPrefs.GetString(kPrefHeroModel, "") == f) DefaultModel(true);
+        if (PlayerPrefs.GetString(kPrefNpcModel, "") == f) DefaultModel(false);
+        if (mapPath == f) DefaultMap();
+        try
+        {
+            File.Delete(f);
+            string side = Path.Combine(Path.GetDirectoryName(f) ?? "", Path.GetFileNameWithoutExtension(f) + ".vrc.json");
+            if (File.Exists(side)) File.Delete(side);
+            PlayerPrefs.DeleteKey("delirium.vrc." + Path.GetFileNameWithoutExtension(f));
+            filesNote = Path.GetFileName(f) + " removed.";
+        }
+        catch (Exception e) { filesNote = Path.GetFileName(f) + ": " + e.Message; }
+        RefreshFiles();
     }
 
     // where it is under mods (maps/city.glb); one outside it says so
