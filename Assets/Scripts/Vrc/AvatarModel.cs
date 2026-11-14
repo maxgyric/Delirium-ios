@@ -600,6 +600,7 @@ namespace Vrc
         // ------------------------------------------------------------------ PhysBones -> VRM spring bones
         void PhysBones()
         {
+            int hips = nodes.FindIndex(x => x.Name == "Hips");
             var colliders = new List<object>();
             var colliderIndex = new Dictionary<GComp, int>();
             var springs = new List<object>();
@@ -648,8 +649,13 @@ namespace Vrc
                     var ignore = new HashSet<int>();
                     foreach (var x in b.L("ignoreTransforms")) { int ig = Index(mb.File.Node(x)); if (ig >= 0) ignore.Add(ig); }
                     // VRChat's pull / spring (momentum) / stiffness / gravity as VRM's stiffness, drag, gravity
+                    // (VRM's pull back to rest is a distance a second, VRChat's a share of the way: firmer than a straight copy)
                     float pull = b.F("pull", 0.2f), spring = b.F("spring", 0.2f), stiff = b.F("stiffness", 0.2f), grav = b.F("gravity", 0f);
-                    double vStiff = 0.3 + pull * 2.5 + stiff * 1.0, vDrag = Math.Max(0.1, Math.Min(0.95, 1.0 - spring * 0.7)), vGrav = grav * 1.5;
+                    double vStiff = 1.0 + pull * 4.0 + stiff * 2.0, vDrag = Math.Max(0.35, Math.Min(0.95, 0.4 + (1.0 - spring) * 0.5)), vGrav = grav * 1.0;
+                    // its limit (angle, hinge, polar); none: 75 degrees, so nothing folds through the body
+                    int limitType = b.I("limitType");
+                    double maxAngle = limitType == 0 ? 75.0 : limitType == 3 ? Math.Max(b.F("maxAngleX", 45f), b.F("maxAngleZ", 45f)) : b.F("maxAngleX", 45f);
+                    if (maxAngle <= 0.5) maxAngle = 75.0;
                     double radius = b.F("radius", 0f);
                     var mine = new List<object>();
                     foreach (var c in b.L("colliders"))
@@ -666,13 +672,19 @@ namespace Vrc
                     foreach (var chain in chains)
                     {
                         // a tip past the last bone, so it swings too
-                        int last = chain[chain.Count - 1];
-                        chain.Add(EndNode(last, endpoint));
+                        if (chain[chain.Count - 1] < 0)
+                        {
+                            chain.RemoveAt(chain.Count - 1);
+                            chain.Add(EndNode(chain[chain.Count - 1], endpoint));
+                        }
+                        if (chain.Count < 2) continue;
                         var js = new List<object>();
                         foreach (int j in chain)
                             js.Add(new Dictionary<string, object> { { "node", j }, { "stiffness", vStiff }, { "dragForce", vDrag }, { "gravityPower", vGrav },
-                                                                    { "gravityDir", new List<object> { 0.0, -1.0, 0.0 } }, { "hitRadius", radius } });
+                                                                    { "gravityDir", new List<object> { 0.0, -1.0, 0.0 } }, { "hitRadius", radius }, { "maxAngle", maxAngle } });
                         var sp = new Dictionary<string, object> { { "name", nodes[root].Name }, { "joints", js } };
+                        // swinging in the hips' own space: walking and running don't leave it trailing behind
+                        if (hips >= 0 && hips != root) sp["center"] = hips;
                         if (group >= 0) sp["colliderGroups"] = new List<object> { group };
                         springs.Add(sp);
                     }
@@ -683,14 +695,17 @@ namespace Vrc
             springExt = new Dictionary<string, object> { { "specVersion", "1.0" }, { "colliders", colliders }, { "colliderGroups", groups }, { "springs", springs } };
         }
 
+        // The chains under a PhysBone's root: straight runs of bones, each ending at a leaf (then a tip is added past
+        // it) or at a fork (the fork's bone is its tip and doesn't swing itself: it can't point at two ways at once,
+        // as VRChat's "multi child: ignore"). A trailing -1: add a tip.
         void Chains(int at, List<int> path, HashSet<int> ignore, List<List<int>> into)
         {
             if (ignore.Contains(at) || path.Count > 64) return;
-            path.Add(at);
             var kids = nodes[at].Kids.Where(k => !ignore.Contains(k) && nodes[k].Mesh < 0).ToList();
-            if (kids.Count == 0) into.Add(new List<int>(path));
-            else foreach (int k in kids) Chains(k, path, ignore, into);
-            path.RemoveAt(path.Count - 1);
+            if (kids.Count == 1) { path.Add(at); Chains(kids[0], path, ignore, into); path.RemoveAt(path.Count - 1); return; }
+            if (kids.Count == 0) { var c = new List<int>(path) { at, -1 }; into.Add(c); return; }
+            if (path.Count > 0) into.Add(new List<int>(path) { at });
+            foreach (int k in kids) Chains(k, new List<int>(), ignore, into);
         }
 
         int EndNode(int leaf, float[] endpoint)

@@ -32,6 +32,7 @@ public class SpringBones : MonoBehaviour
         public Vector3 GravityDir;      // in the world
         public float Radius;            // the tip's own radius, in the bone's units (scaled by it)
         public Transform Center;        // its swing measured in this bone's space (VRM's "center"); null: the world
+        public float MaxAngle;          // how far from its rest it may swing, degrees (0: any way; a VRChat PhysBone's limit)
         public int[] Colliders = new int[0];
         [NonSerialized] public Vector3 Prev, Curr; // the tip now and a frame ago (in Center's space when it has one)
     }
@@ -139,6 +140,14 @@ public class SpringBones : MonoBehaviour
                 next = head + (next - head).normalized * length;
             }
 
+            // no further from its rest than its limit (a breast doesn't swing through the chest)
+            if (j.MaxAngle > 0f)
+            {
+                Vector3 dir = (next - head) / length;
+                float ang = Vector3.Angle(restDir, dir);
+                if (ang > j.MaxAngle) next = head + Vector3.Slerp(restDir, dir, j.MaxAngle / ang) * length;
+            }
+
             j.Prev = j.Curr;
             j.Curr = j.Center != null ? j.Center.InverseTransformPoint(next) : next;
             bone.rotation = Quaternion.FromToRotation(restDir, (next - head).normalized) * rest;
@@ -238,6 +247,7 @@ public class SpringBones : MonoBehaviour
                 Vector3 g = Json.Has(p, "gravityDir") ? V(p, "gravityDir") : Vector3.down;
                 Add(bone, bone.InverseTransformPoint(next.position), Json.Num(p, "stiffness", 1f), Json.Num(p, "dragForce", 0.5f),
                     Json.Num(p, "gravityPower", 0f), g, Json.Num(p, "hitRadius", 0f), center, cols.ToArray(), taken);
+                if (Joints.Count > 0 && Joints[Joints.Count - 1].Bone == bone) Joints[Joints.Count - 1].MaxAngle = Json.Num(p, "maxAngle", 0f);
             }
         }
     }
