@@ -95,6 +95,22 @@ public partial class Mannequin
             if (key == null) continue;
             if (!pick.TryGetValue(key, out var had) || Depth(t, model) < Depth(had, model)) pick[key] = t;
         }
+        // "Leg" for the thigh and "Knee" (or "Calf", "Shin") for the shin below it: both read as the shin; the
+        // higher one is the thigh then
+        foreach (string side in new[] { "Left", "Right" })
+        {
+            if (pick.ContainsKey(side + "UpLeg") || !pick.TryGetValue(side + "Leg", out var upper)) continue;
+            Transform lower = null;
+            foreach (var t in candidates)
+            {
+                if (t == upper || !Above(upper, t)) continue;
+                Words(t.name, out int s2, out string w2);
+                if ((s2 == (side == "Left" ? 1 : 2)) && kSided.TryGetValue(w2, out string k2) && k2 == "Leg" && (lower == null || Depth(t, model) < Depth(lower, model))) lower = t;
+            }
+            if (lower == null) continue;
+            pick[side + "UpLeg"] = upper;
+            pick[side + "Leg"] = lower;
+        }
         // the hips: else the thighs' shared parent
         if (!pick.ContainsKey("Hips") && pick.TryGetValue("LeftUpLeg", out var lt) && pick.TryGetValue("RightUpLeg", out var rt) && lt.parent == rt.parent && lt.parent != null)
             pick["Hips"] = lt.parent;

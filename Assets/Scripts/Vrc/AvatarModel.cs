@@ -332,7 +332,7 @@ namespace Vrc
             if (matOf.TryGetValue(key, out int have)) return have;
             int index = gMaterials.Count;
             matOf[key] = index;
-            var g = new Dictionary<string, object> { { "name", fbxName } };
+            var g = new Dictionary<string, object> { { "name", fbxName }, { "extras", new Dictionary<string, object> { { "toon", true } } } };
             var pbr = new Dictionary<string, object> { { "metallicFactor", 0.0 }, { "roughnessFactor", 0.9 } };
             g["pbrMetallicRoughness"] = pbr;
             gMaterials.Add(g);
@@ -375,11 +375,38 @@ namespace Vrc
             var floats = new Dictionary<string, float>();
             foreach (var e in props.L("m_Floats"))
                 if (e is Dictionary<string, object> d) foreach (var kv in d) floats[kv.Key] = Num(kv.Value);
-            object color = null, mainTex = null;
+            object color = null, mainTex = null, emColor = null, emMap = null;
             foreach (var e in props.L("m_Colors"))
-                if (e is Dictionary<string, object> d && d.ContainsKey("_Color")) color = d["_Color"];
+                if (e is Dictionary<string, object> d)
+                {
+                    if (d.ContainsKey("_Color")) color = d["_Color"];
+                    if (d.ContainsKey("_EmissionColor")) emColor = d["_EmissionColor"];
+                }
             foreach (var e in props.L("m_TexEnvs"))
-                if (e is Dictionary<string, object> d && d.ContainsKey("_MainTex")) mainTex = d["_MainTex"];
+                if (e is Dictionary<string, object> d)
+                {
+                    if (d.ContainsKey("_MainTex")) mainTex = d["_MainTex"];
+                    if (d.ContainsKey("_EmissionMap")) emMap = d["_EmissionMap"];
+                }
+            // drawn with the sandbox's toon shader (a VRChat avatar's look)
+            g["extras"] = new Dictionary<string, object> { { "toon", true } };
+            // its glow: Poiyomi's emission switched on, or Standard's _EMISSION keyword
+            bool glows = floats.TryGetValue("_EnableEmission", out float en) ? en > 0.5f : (mat.Body.S("m_ShaderKeywords").Contains("_EMISSION") || mat.Body.L("m_ValidKeywords").Any(k => k as string == "_EMISSION"));
+            if (glows && emColor != null)
+            {
+                float strength = floats.TryGetValue("_EmissionStrength", out float es) ? es : 1f;
+                double er = Math.Min(1.0, emColor.F("r") * strength), eg = Math.Min(1.0, emColor.F("g") * strength), eb = Math.Min(1.0, emColor.F("b") * strength);
+                if (er + eg + eb > 0.01)
+                {
+                    g["emissiveFactor"] = new List<object> { er, eg, eb };
+                    string eguid = emMap.At("m_Texture").S("guid");
+                    int ei = eguid != "" ? Texture(eguid, false) : -1;
+                    if (ei >= 0) g["emissiveTexture"] = new Dictionary<string, object> { { "index", ei } };
+                    // Poiyomi's "base colour as map": the glow in the texture's own colours
+                    if (floats.TryGetValue("_EmissionBaseColorAsMap", out float bm) && bm > 0.5f)
+                        ((Dictionary<string, object>)g["extras"])["emissionTimesBase"] = true;
+                }
+            }
             if (color != null) pbr["baseColorFactor"] = new List<object> { (double)color.F("r", 1), (double)color.F("g", 1), (double)color.F("b", 1), 1.0 };
             // see-through: Poiyomi's and Standard's render mode, else the queue it draws in
             float mode = floats.TryGetValue("_Mode", out float md) ? md : 0f;
@@ -497,12 +524,25 @@ namespace Vrc
                     if (a2 != null && a2.Body.At("m_Avatar").S("guid") != "") { animator = a2; break; }
                 }
             string guid = animator?.Body.At("m_Avatar").S("guid") ?? "";
-            if (guid == "" || !av.Assets.TryGetValue(guid, out var a) || a.Meta == "")
+            // the import settings that map the most of these bones: the Animator's model's, else any model's
+            // in the package (an Animator pointing at an avatar asset, or at none)
+            var names = new HashSet<string>(nodes.Select(x => x.Name));
+            MatchCollection pairs = null;
+            int best = 0;
+            var metas = new List<string>();
+            if (guid != "" && av.Assets.TryGetValue(guid, out var own) && own.Meta != "") metas.Add(own.Meta);
+            metas.AddRange(av.Assets.Values.Where(x => x.Meta.Contains("humanDescription:") && x.Meta.Contains("humanName:")).Select(x => x.Meta));
+            foreach (string meta in metas)
+            {
+                var ps = Regex.Matches(meta, @"- boneName: (.*)\r?\n\s*humanName: (.*)");
+                int hits = ps.Cast<Match>().Count(m => kMixamo.ContainsKey(Unquote(m.Groups[2].Value.Trim())) && names.Contains(Unquote(m.Groups[1].Value.Trim())));
+                if (hits > best) { best = hits; pairs = ps; }
+            }
+            if (pairs == null)
             {
                 Notes.Add("no humanoid mapping: bones told by their names");
                 return;
             }
-            var pairs = Regex.Matches(a.Meta, @"- boneName: (.*)\r?\n\s*humanName: (.*)");
             var renamed = new HashSet<int>();
             foreach (Match m in pairs)
             {
@@ -704,6 +744,7 @@ namespace Vrc
             {
                 var pbr = m["pbrMetallicRoughness"] as Dictionary<string, object>;
                 if (pbr.TryGetValue("baseColorTexture", out object bt) && !(gTextures[(int)Json0(bt)] as Dictionary<string, object>).ContainsKey("source")) pbr.Remove("baseColorTexture");
+                if (m.TryGetValue("emissiveTexture", out object et) && !(gTextures[(int)Json0(et)] as Dictionary<string, object>).ContainsKey("source")) m.Remove("emissiveTexture");
             }
             var gNodes = new List<object>();
             foreach (var n in nodes)

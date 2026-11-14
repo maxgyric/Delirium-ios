@@ -279,30 +279,14 @@ public static class GlbScene
         return made;
     }
 
-    // The sandbox's own material (a shader the build surely has) with the glTF material's base colour and texture.
-    static Material MakeMaterial(Glb glb, int index, Material baseMaterial, Dictionary<int, Texture2D> textures, Made made)
+    // A glTF texture's picture, decoded once (null: none, or it didn't load: made says why).
+    static Texture2D Picture(Glb glb, int tex, Dictionary<int, Texture2D> textures, Made made)
     {
-        object src = glb.Item("materials", index);
-        var mat = new Material(baseMaterial) { name = Json.Str(src, "name", "material" + index) };
-        made.Owned.Add(mat);
-        object pbr = Json.Get(src, "pbrMetallicRoughness");
-        float[] c = Json.Nums(pbr, "baseColorFactor");
-        mat.color = c != null && c.Length >= 3 ? new Color(c[0], c[1], c[2], 1f) : Color.white;
-        // matt: the file's own shine needs its roughness map, which isn't read (Standard's default is glossy plastic)
-        if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.05f);
-        if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0f);
-        // see-through parts cut out (leaves, fences, glass panes): MASK at its cutoff; BLEND too, at a half (no
-        // sorting of see-through faces); OPAQUE: nothing cut
-        string alpha = Json.Str(src, "alphaMode", "OPAQUE");
-        float cut = alpha == "MASK" ? Json.Num(src, "alphaCutoff", 0.5f) : alpha == "BLEND" ? 0.5f : 0f;
-        if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", cut);
-        if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", Json.Flag(src, "doubleSided") ? 0f : 2f);
-        if (alpha != "OPAQUE") made.SeeThrough++;
-        int tex = Json.Int(Json.Get(pbr, "baseColorTexture"), "index");
         int image = Json.Int(glb.Item("textures", tex), "source");
+        Texture2D t = null;
         if (image >= 0)
         {
-            if (!textures.TryGetValue(image, out Texture2D t))
+            if (!textures.TryGetValue(image, out t))
             {
                 byte[] bytes = glb.Image(image);
                 string mime = Json.Str(glb.Item("images", image), "mimeType", "?");
@@ -339,7 +323,48 @@ public static class GlbScene
                 }
                 textures[image] = t;
             }
-            if (t != null) mat.mainTexture = t;
+        }
+        return t;
+    }
+
+    static Material toonBase;
+
+    // The sandbox's own material (a shader the build surely has) with the glTF material's base colour and texture.
+    static Material MakeMaterial(Glb glb, int index, Material baseMaterial, Dictionary<int, Texture2D> textures, Made made)
+    {
+        object src = glb.Item("materials", index);
+        // an imported VRChat avatar's: the toon look
+        if (Json.Flag(Json.Get(src, "extras"), "toon"))
+        {
+            if (toonBase == null) toonBase = Resources.Load<Material>("DeliriumToon");
+            if (toonBase != null) baseMaterial = toonBase;
+        }
+        var mat = new Material(baseMaterial) { name = Json.Str(src, "name", "material" + index) };
+        made.Owned.Add(mat);
+        object pbr = Json.Get(src, "pbrMetallicRoughness");
+        float[] c = Json.Nums(pbr, "baseColorFactor");
+        mat.color = c != null && c.Length >= 3 ? new Color(c[0], c[1], c[2], 1f) : Color.white;
+        // matt: the file's own shine needs its roughness map, which isn't read (Standard's default is glossy plastic)
+        if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.05f);
+        if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0f);
+        // see-through parts cut out (leaves, fences, glass panes): MASK at its cutoff; BLEND too, at a half (no
+        // sorting of see-through faces); OPAQUE: nothing cut
+        string alpha = Json.Str(src, "alphaMode", "OPAQUE");
+        float cut = alpha == "MASK" ? Json.Num(src, "alphaCutoff", 0.5f) : alpha == "BLEND" ? 0.5f : 0f;
+        if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", cut);
+        if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", Json.Flag(src, "doubleSided") ? 0f : 2f);
+        if (alpha != "OPAQUE") made.SeeThrough++;
+        int tex = Json.Int(Json.Get(pbr, "baseColorTexture"), "index");
+        var main = Picture(glb, tex, textures, made);
+        if (main != null) mat.mainTexture = main;
+        // what glows (an imported VRChat avatar's emission)
+        float[] em = Json.Nums(src, "emissiveFactor");
+        if (em != null && em.Length >= 3 && (em[0] > 0f || em[1] > 0f || em[2] > 0f) && mat.HasProperty("_EmissionColor"))
+        {
+            mat.SetColor("_EmissionColor", new Color(em[0], em[1], em[2], 1f));
+            if (Json.Flag(Json.Get(src, "extras"), "emissionTimesBase") && mat.HasProperty("_EmissionBase")) mat.SetFloat("_EmissionBase", 1f);
+            var glow = Picture(glb, Json.Int(Json.Get(src, "emissiveTexture"), "index"), textures, made);
+            if (glow != null) mat.SetTexture("_EmissionMap", glow);
         }
         return mat;
     }
