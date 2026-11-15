@@ -29,11 +29,22 @@ public partial class Game
     void PickPackage() => DP_PickPackage(gameObject.name, nameof(OnPickedPackage));
 
     // DeliriumPicker.mm: a copy of the picked file in the app's tmp folder ("": cancelled)
-    void OnPickedPackage(string path)
+    // (several: one a line; a model with its textures' own .zip)
+    void OnPickedPackage(string picked)
     {
-        if (string.IsNullOrEmpty(path)) return;
+        if (string.IsNullOrEmpty(picked)) return;
+        var all = new List<string>(picked.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries));
+        if (all.Count > 1 || IsBlendish(all[0]))
+        {
+            var bad = all.FindAll(p => !IsBlendish(p));
+            foreach (var p in bad) TryDelete(p);
+            all.RemoveAll(p => !IsBlendish(p));
+            if (all.Count == 0) { filesNote = "a .blend, or .zips (a model and its textures), please"; return; }
+            StartCoroutine(ImportBlend(all, true));
+            return;
+        }
+        string path = all[0];
         string ext = Path.GetExtension(path).ToLowerInvariant();
-        if (ext == ".blend" || ext == ".zip") { StartCoroutine(ImportBlend(path, true)); return; }
         if (ext != ".unitypackage")
         {
             filesNote = Path.GetFileName(path) + ": a .unitypackage, a .blend or a .zip with a .blend in it, please";
@@ -46,33 +57,81 @@ public partial class Game
     List<string> blendChoices;   // a .zip's .blend files, while you pick one
     string blendRoot = "";
 
-    // A Blender file (or a .zip with one and its textures) made into a character: mods/models/<name>.glb + its wheel.
-    IEnumerator ImportBlend(string file, bool deleteAfter)
+    static bool IsBlendish(string p)
+    {
+        string e = Path.GetExtension(p).ToLowerInvariant();
+        return e == ".blend" || e == ".zip";
+    }
+
+    // a .zip's insides into a folder of its own under `into` (and the .zips inside it: a textures.zip in the model's)
+    static void Unzip(string zip, string into, int depth)
+    {
+        string to = Path.Combine(into, Path.GetFileNameWithoutExtension(zip));
+        for (int n = 2; Directory.Exists(to); n++) to = Path.Combine(into, Path.GetFileNameWithoutExtension(zip) + " " + n);
+        System.IO.Compression.ZipFile.ExtractToDirectory(zip, to);
+        if (depth < 2)
+            foreach (var inner in Directory.GetFiles(to, "*.zip", SearchOption.AllDirectories))
+                try { Unzip(inner, Path.GetDirectoryName(inner), depth + 1); File.Delete(inner); } catch (Exception) { }
+    }
+
+    // textures picked on their own (a .zip with no .blend): kept for the next model picked
+    static string PendingTextures => Path.Combine(Application.temporaryCachePath, "blendtextures");
+
+    IEnumerator ImportBlend(string file, bool deleteAfter) => ImportBlend(new List<string> { file }, deleteAfter);
+
+    // A Blender file (or .zips: one with it, others with its textures) made into a character: mods/models/<name>.glb
+    // + its wheel. Textures picked alone are kept for the model picked after them.
+    IEnumerator ImportBlend(List<string> files, bool deleteAfter)
     {
         if (vrcBusy != "" || vrcChoices != null || blendChoices != null) yield break;
-        vrcBusy = "Opening " + Path.GetFileName(file) + "...";
+        string file = files[0];
+        vrcBusy = "Opening " + string.Join(", ", files.ConvertAll(Path.GetFileName).ToArray()) + "...";
         vrcProgress = -1f;
         filesNote = "";
         string work = Path.Combine(Application.temporaryCachePath, "blendimport");
+        string pending = PendingTextures;
         string blend = file, texDir = Path.GetDirectoryName(file);
         Exception err = null;
         List<string> found = null;
-        if (file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        bool texturesOnly = false;
+        bool hadPending = Directory.Exists(pending);
+        bool unpack = files.Count > 1 || file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || hadPending;
+        if (unpack)
         {
             var th0 = new Thread(() =>
             {
                 try
                 {
                     if (Directory.Exists(work)) Directory.Delete(work, true);
-                    System.IO.Compression.ZipFile.ExtractToDirectory(file, work);
+                    Directory.CreateDirectory(work);
+                    foreach (var f in files)
+                        if (f.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) Unzip(f, work, 0);
+                        else File.Copy(f, Path.Combine(work, Path.GetFileName(f)), true);
                     found = new List<string>(Directory.GetFiles(work, "*.blend", SearchOption.AllDirectories));
                     found.Sort((a, b) => new FileInfo(b).Length.CompareTo(new FileInfo(a).Length));
-                    if (found.Count == 0) throw new Exception("no .blend in it");
+                    if (found.Count == 0)
+                    {
+                        // only textures: keep them for the model
+                        if (Directory.GetFiles(work, "*", SearchOption.AllDirectories).Length == 0) throw new Exception("nothing in it");
+                        Directory.CreateDirectory(pending);
+                        Directory.Move(work, Path.Combine(pending, Guid.NewGuid().ToString("N")));
+                        texturesOnly = true;
+                        return;
+                    }
+                    // textures picked before, with this model
+                    if (Directory.Exists(pending)) Directory.Move(pending, Path.Combine(work, "_textures"));
                 }
                 catch (Exception e) { err = e; }
             }) { IsBackground = true };
             th0.Start();
             while (th0.IsAlive) yield return null;
+            if (texturesOnly)
+            {
+                if (deleteAfter) foreach (var f in files) TryDelete(f);
+                vrcBusy = "";
+                filesNote = "Textures kept: now import the model (.blend or its .zip) - or pick both together.";
+                yield break;
+            }
             if (err == null)
             {
                 blend = found[0];
@@ -131,7 +190,7 @@ public partial class Game
             while (th.IsAlive) yield return null;
         }
         try { if (Directory.Exists(work)) Directory.Delete(work, true); } catch (Exception) { }
-        if (deleteAfter) TryDelete(file);
+        if (deleteAfter) foreach (var f in files) TryDelete(f);
         vrcBusy = "";
         if (err != null)
         {
@@ -379,7 +438,8 @@ public partial class Game
         Head("Import");
         Info("A VRChat avatar's .unitypackage (your own or one you bought) made into a character here: its meshes, " +
              "textures, PhysBones and menu toggles (objects and blend shapes; no gestures). Or a Blender file (.blend, " +
-             "or a .zip with one and its textures): its meshes, armature, shape keys (on the Expr. wheel) and textures.");
+             "or a .zip with one; textures in a .zip of their own: pick it too, together or before): its meshes, armature, " +
+             "shape keys (on the Expr. wheel) and textures.");
         if (blendChoices != null)
         {
             Info("It has " + blendChoices.Count + " .blend files. Which one?");

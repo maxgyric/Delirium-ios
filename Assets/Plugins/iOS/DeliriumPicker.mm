@@ -3,7 +3,8 @@
 //    bookmark: DP_RestoreFolder);
 //  - DP_PickModels: .glb / .vrm files, MOVED into the app's Documents/mods (copied then the original removed when a
 //    plain move isn't allowed there);
-//  - DP_PickPackage: one file (a VRChat .unitypackage) copied into the app's tmp folder for the import to read.
+//  - DP_PickPackage: files (a VRChat .unitypackage; a .blend / .zip, with a textures .zip) copied into the app's tmp
+//    folder for the import to read.
 // Answers come back by UnitySendMessage to the "Game" object.
 #import <UIKit/UIKit.h>
 
@@ -34,7 +35,12 @@ static void DPKeep(NSURL* u)
 - (void)documentPicker:(UIDocumentPickerViewController*)c didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls
 {
     NSFileManager* fm = [NSFileManager defaultManager];
-    if (self.package) return DPSend(self, urls.firstObject ? urls.firstObject.path : @"");
+    if (self.package) // several: a model and its textures' .zip (one path a line)
+    {
+        NSMutableArray* paths = [NSMutableArray array];
+        for (NSURL* u in urls) [paths addObject:u.path];
+        return DPSend(self, [paths componentsJoinedByString:@"\n"]);
+    }
     if (self.folder)
     {
         NSURL* u = urls.firstObject;
@@ -110,7 +116,7 @@ static void DPPresent(BOOL folder, BOOL package, const char* obj, const char* me
                                                                inMode:package ? UIDocumentPickerModeImport : UIDocumentPickerModeOpen];
 #pragma clang diagnostic pop
     p.delegate = gDelegate;
-    p.allowsMultipleSelection = !folder && !package;
+    p.allowsMultipleSelection = !folder;
     p.modalPresentationStyle = UIModalPresentationFormSheet;
     [UnityGetGLViewController() presentViewController:p animated:YES completion:nil];
 }

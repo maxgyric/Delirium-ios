@@ -140,7 +140,8 @@ namespace Vrc
 
         void ReadDna(int p)
         {
-            Func<int, int> Align = q => (q + 3) & ~3;
+            int start = p; // the padding is counted from the block's start (not always 4-aligned in the file)
+            Func<int, int> Align = q => start + ((q - start + 3) & ~3);
             Func<int, string> Tag = q => Encoding.ASCII.GetString(B, q, 4);
             p += 4; // SDNA
             if (Tag(p) != "NAME") throw new Exception("its DNA isn't readable");
@@ -338,7 +339,7 @@ namespace Vrc
                 from = r.K ?? from;
                 if (!r.Ok) yield break;
                 yield return r;
-                p = r.P("next");
+                p = r.Has("next") ? r.P("next") : F.Ptr(r.At); // a link's next comes first (inside an embedded ModifierData too)
             }
         }
 

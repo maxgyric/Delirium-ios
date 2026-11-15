@@ -12,6 +12,7 @@ public partial class Mannequin
     static readonly HashSet<string> kNoise = new HashSet<string>
     {
         "mixamorig", "valve", "biped", "bip", "skel", "def", "org", "j", "c", "jnt", "joint", "bone", "bn", "rig", "armature", "cc", "base", "sk",
+        "x", // Auto-Rig Pro's middle bones: spine_01.x, neck.x, head.x
     };
     // what a sided bone is called -> Mixamo's name without its side
     static readonly Dictionary<string, string> kSided = new Dictionary<string, string>
@@ -60,6 +61,16 @@ public partial class Mannequin
         what = rest.ToString();
     }
 
+    // a sided bone's kind; Auto-Rig Pro's halves (thigh_twist.l, arm_stretch.l) as the bone they're part of
+    static bool SidedKind(string what, out string kind)
+    {
+        if (kSided.TryGetValue(what, out kind)) return true;
+        foreach (string tail in new[] { "twist", "stretch" })
+            if (what.Length > tail.Length && what.EndsWith(tail) && kSided.TryGetValue(what.Substring(0, what.Length - tail.Length), out kind)) return true;
+        kind = null;
+        return false;
+    }
+
     static int Depth(Transform t, Transform top)
     {
         int d = 0;
@@ -90,7 +101,7 @@ public partial class Mannequin
         {
             Words(t.name, out int side, out string what);
             string key = null;
-            if (side != 0 && kSided.TryGetValue(what, out string sided)) key = (side == 1 ? "Left" : "Right") + sided;
+            if (side != 0 && SidedKind(what, out string sided)) key = (side == 1 ? "Left" : "Right") + sided;
             else if (side == 0 && kCentre.TryGetValue(what, out string centre)) key = centre;
             if (key == null) continue;
             if (!pick.TryGetValue(key, out var had) || Depth(t, model) < Depth(had, model)) pick[key] = t;
@@ -105,7 +116,7 @@ public partial class Mannequin
             {
                 if (t == upper || !Above(upper, t)) continue;
                 Words(t.name, out int s2, out string w2);
-                if ((s2 == (side == "Left" ? 1 : 2)) && kSided.TryGetValue(w2, out string k2) && k2 == "Leg" && (lower == null || Depth(t, model) < Depth(lower, model))) lower = t;
+                if ((s2 == (side == "Left" ? 1 : 2)) && SidedKind(w2, out string k2) && k2 == "Leg" && (lower == null || Depth(t, model) < Depth(lower, model))) lower = t;
             }
             if (lower == null) continue;
             pick[side + "UpLeg"] = upper;
@@ -114,6 +125,29 @@ public partial class Mannequin
         // the hips: else the thighs' shared parent
         if (!pick.ContainsKey("Hips") && pick.TryGetValue("LeftUpLeg", out var lt) && pick.TryGetValue("RightUpLeg", out var rt) && lt.parent == rt.parent && lt.parent != null)
             pick["Hips"] = lt.parent;
+        // no neck nor head by name (Rigify's DEF-spine.004-.006): the spine bones above the one the shoulders
+        // hang on, the first the neck, the last the head
+        if (!pick.ContainsKey("Neck") && !pick.ContainsKey("Head"))
+        {
+            Transform arm = pick.TryGetValue("LeftShoulder", out var ls) ? ls : pick.TryGetValue("LeftArm", out var la) ? la
+                          : pick.TryGetValue("RightShoulder", out var rs) ? rs : pick.TryGetValue("RightArm", out var ra) ? ra : null;
+            var up = new List<Transform>();
+            for (var at = arm != null ? arm.parent : null; at != null && up.Count < 8; )
+            {
+                Transform next = null;
+                for (int i = 0; i < at.childCount && next == null; i++)
+                {
+                    var ch = at.GetChild(i);
+                    Words(ch.name, out int s3, out string w3);
+                    if (s3 == 0 && (w3 == "spine" || w3 == "neck" || w3 == "head") && candidates.Contains(ch)) next = ch;
+                }
+                if (next == null) break;
+                up.Add(next);
+                at = next;
+            }
+            if (up.Count >= 2) pick["Neck"] = up[0];
+            if (up.Count >= 1) pick["Head"] = up[up.Count - 1];
+        }
         // the spine: what's between the hips and the neck (or the head), from the hips up
         Transform top = pick.TryGetValue("Neck", out var neck) ? neck : pick.TryGetValue("Head", out var head) ? head : null;
         if (top != null && pick.TryGetValue("Hips", out var hips))

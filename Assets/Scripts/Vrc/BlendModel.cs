@@ -9,6 +9,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Vrc
 {
@@ -186,6 +187,14 @@ namespace Vrc
             if (objects.Count == 0)
                 foreach (var ob in f.Ids("OB")) objects.Add(new KeyValuePair<BRef, bool>(ob, true));
             objects.RemoveAll(o => o.Key.IdName().StartsWith("WGT", StringComparison.OrdinalIgnoreCase)); // Rigify's bone shapes
+            // any rig's bone shapes (Auto-Rig Pro's cs_...): what its pose bones are drawn as
+            var shapesOfBones = new HashSet<long>();
+            foreach (var o in objects.Where(x => x.Key.In("type") == 25))
+            {
+                var pose = o.Key.Go("pose");
+                if (pose.Ok) foreach (var ch in pose.List("chanbase", "bPoseChannel")) { var cs = ch.Go("custom"); if (cs.Ok) shapesOfBones.Add(cs.At); }
+            }
+            objects.RemoveAll(o => !o.Value && shapesOfBones.Contains(o.Key.At));
 
             nodes.Add(new Node { Name = Name, World = M4.Identity() });
             // armatures and their bones
@@ -216,16 +225,35 @@ namespace Vrc
                         string wn = walk.Str("name");
                         if (keep.Contains(wn) && wn != nm) return wn;
                         if (wn.StartsWith("ORG-") && keep.Contains("DEF-" + wn.Substring(4)) && "DEF-" + wn.Substring(4) != nm) return "DEF-" + wn.Substring(4);
+                        // Auto-Rig Pro: c_thigh_b.l -> c_root.x, whose deforming twin is root.x
+                        if (wn.StartsWith("c_") && keep.Contains(wn.Substring(2)) && wn.Substring(2) != nm) return wn.Substring(2);
                     }
                     return null;
                 };
+                // what each bone's constraints follow (Child Of head.x...), on this armature
+                var follows = new Dictionary<string, List<string>>();
+                var pose = ob.Go("pose");
+                if (pose.Ok)
+                    foreach (var ch in pose.List("chanbase", "bPoseChannel"))
+                        foreach (var con in ch.List("constraints", "bConstraint"))
+                        {
+                            var cd = con.Go("data");
+                            if (!cd.Ok || !cd.Has("subtarget") || (con.In("flag") & (4 | 512)) != 0) continue; // disabled, muted
+                            var tar = cd.Go("tar");
+                            string sub = cd.Str("subtarget");
+                            if (sub == "" || (tar.Ok && tar.At != ob.At)) continue;
+                            string cn = ch.Str("name");
+                            if (!follows.TryGetValue(cn, out var lst)) follows[cn] = lst = new List<string>();
+                            lst.Add(sub);
+                        }
                 Func<BRef, string> keptAbove = b =>
                 {
                     string nm = b.Str("name");
-                    string r = nearestKept(b, b.Go("parent"));
-                    if (r == null && nm.StartsWith("DEF-") && byName.TryGetValue("ORG-" + nm.Substring(4), out var org)) r = nearestKept(b, org.Go("parent"));
-                    if (r != null) return r;
-                    // none: the kept bone whose tail its head sits on (a chain Rigify drives by constraints)
+                    // its own parent, kept
+                    var up = b.Go("parent");
+                    if (up.Ok && keep.Contains(up.Str("name")) && up.Str("name") != nm) return up.Str("name");
+                    // the kept bone whose tail its head sits on (a chain a rig drives by constraints)
+                    string r = null;
                     var head = b.Floats("arm_head");
                     float best = 0.02f * Math.Max(0.05f, b.Fl("length"));
                     foreach (var c in all)
@@ -237,10 +265,45 @@ namespace Vrc
                         float d = (float)Math.Sqrt((t[0] - head[0]) * (t[0] - head[0]) + (t[1] - head[1]) * (t[1] - head[1]) + (t[2] - head[2]) * (t[2] - head[2]));
                         if (d < best) { best = d; r = cn; }
                     }
+                    if (r != null) return r;
+                    // up its parents (and their twins)
+                    r = nearestKept(b, up);
+                    if (r == null && nm.StartsWith("DEF-") && byName.TryGetValue("ORG-" + nm.Substring(4), out var org)) r = nearestKept(b, org.Go("parent"));
+                    // what its constraints follow
+                    if (r == null && follows.TryGetValue(nm, out var fl))
+                        foreach (string sub in fl)
+                        {
+                            if (keep.Contains(sub) && sub != nm) { r = sub; break; }
+                            if (byName.TryGetValue(sub, out var sb) && (r = nearestKept(b, sb)) != null) break;
+                        }
                     return r;
                 };
                 var parentOf = new Dictionary<string, string>();
                 foreach (var b in all) if (keep.Contains(b.Str("name"))) parentOf[b.Str("name")] = keptAbove(b);
+                // still free: under a bone whose head is at its own, if that one holds more (Auto-Rig Pro's spine_01.x
+                // starts where root.x, the hips, does)
+                Func<string, int> kidsOf = nm => parentOf.Count(kv => kv.Value == nm);
+                foreach (var nm in parentOf.Keys.Where(k => parentOf[k] == null).ToList())
+                {
+                    var h = byName[nm].Floats("arm_head");
+                    if (h.Length < 3) continue;
+                    float tol = 0.02f * Math.Max(0.05f, byName[nm].Fl("length"));
+                    string best = null;
+                    int most = kidsOf(nm);
+                    foreach (var c in parentOf.Keys)
+                    {
+                        if (c == nm) continue;
+                        var ch = byName[c].Floats("arm_head");
+                        if (ch.Length < 3) continue;
+                        float d = (float)Math.Sqrt((ch[0] - h[0]) * (ch[0] - h[0]) + (ch[1] - h[1]) * (ch[1] - h[1]) + (ch[2] - h[2]) * (ch[2] - h[2]));
+                        if (d > tol) continue;
+                        bool below = false; // c is under nm already
+                        for (string u = parentOf[c]; u != null && !below; u = parentOf.TryGetValue(u, out var uu) ? uu : null) below = u == nm;
+                        int k = kidsOf(c);
+                        if (!below && k > most) { most = k; best = c; }
+                    }
+                    if (best != null) parentOf[nm] = best;
+                }
                 // no loops
                 foreach (var nm in parentOf.Keys.ToList())
                 {
@@ -355,6 +418,7 @@ namespace Vrc
             if (!me.Ok || me.Type != "Mesh") return;
             string name = ob.IdName();
             int nv = me.In("totvert", 0, me.In("verts_num")), np = me.In("totpoly", 0, me.In("faces_num")), nl = me.In("totloop", 0, me.In("corners_num"));
+            if (np == 0) return; // edges only: a bone's widget, a guide
             var attrs = Attributes(me, out var uvLayers);
             // positions
             float[] pos = null;
@@ -431,11 +495,14 @@ namespace Vrc
             if (armOb.Ok) boneNode.TryGetValue(armOb.IdName(), out bones);
             var noDeform = new HashSet<string>();
             if (armOb.Ok) foreach (var b in Bones(armOb.Go("data"))) if ((b.In("flag") & (1 << 12)) != 0) noDeform.Add(b.Str("name"));
+            var masks = new List<BRef>();
             foreach (var md in ob.List("modifiers"))
             {
-                int t = md.Has("type") ? md.In("type") : md.Sub("modifier").In("type");
-                string mname = md.Has("name") ? md.Str("name") : md.Sub("modifier").Str("name");
-                if (t != 8 && t != 0) Notes.Add(name + ": its " + mname + " modifier isn't applied");
+                var head = md.Has("type") ? md : md.Sub("modifier");
+                int t = head.In("type");
+                if ((head.In("mode") & 1) == 0) continue; // off in the viewport
+                if (md.Type == "MaskModifierData" && md.In("mode") == 0) { masks.Add(md); continue; }
+                if (t != 8 && t != 0 && md.Type != "SubsurfModifierData") Notes.Add(name + ": its " + head.Str("name") + " modifier isn't applied");
             }
             // the node it's on: under its parent bone / object, else the root
             var world = World(ob);
@@ -496,6 +563,34 @@ namespace Vrc
                 else { weighted = true; for (int q = 0; q < 4; q++) vw[v * 4 + q] /= s; }
             }
             if (bones != null && !weighted) Notes.Add(name + ": no weights on its armature's bones");
+            // Mask modifiers (by vertex group): what they hide left out
+            bool[] keepVert = null;
+            if (masks.Count > 0 && dv != null && dv.Data != null)
+            {
+                var dvt = me.F.StructOf("MDeformVert");
+                int dwOff = dvt.Fields["dw"].Offset, totOff = dvt.Fields["totweight"].Offset;
+                keepVert = Enumerable.Repeat(true, nv).ToArray();
+                foreach (var mk in masks)
+                {
+                    int g = groupNames.IndexOf(mk.Str("vgroup"));
+                    bool inv = (mk.In("flag") & 1) != 0;
+                    float th = mk.Fl("threshold");
+                    for (int v = 0; v < nv; v++)
+                    {
+                        float w = 0f;
+                        if (g >= 0 && (v + 1) * dvt.Size <= dv.Data.Length)
+                        {
+                            ulong dwp = me.F.PtrSize == 8 ? BitConverter.ToUInt64(dv.Data, v * dvt.Size + dwOff) : BitConverter.ToUInt32(dv.Data, v * dvt.Size + dwOff);
+                            int tw = BitConverter.ToInt32(dv.Data, v * dvt.Size + totOff);
+                            var dw = me.F.BytesAt(dwp, me.K);
+                            for (int k = 0; dw != null && k < tw && (k + 1) * 8 <= dw.Length; k++)
+                                if (BitConverter.ToInt32(dw, k * 8) == g) w = BitConverter.ToSingle(dw, k * 8 + 4);
+                        }
+                        bool inside = g >= 0 && w > th;
+                        if (inside == inv) keepVert[v] = false;
+                    }
+                }
+            }
 
             // shape keys (relative to the basis), with their current values
             var shapes = new List<KeyValuePair<string, float[]>>();
@@ -557,6 +652,12 @@ namespace Vrc
             for (int fi = 0; fi < np; fi++)
             {
                 int s = fi < faceMat.Length ? Math.Max(0, Math.Min(slots - 1, faceMat[fi])) : 0;
+                if (keepVert != null)
+                {
+                    bool all = true;
+                    for (int k = 0; k < faceLen[fi] && all; k++) { int vv = cornerVert[faceStart[fi] + k]; all = vv < 0 || vv >= nv || keepVert[vv]; }
+                    if (!all) continue;
+                }
                 for (int k = 1; k + 1 < faceLen[fi]; k++)
                 {
                     tris[s].Add(cornerOut[faceStart[fi]]);
@@ -663,7 +764,7 @@ namespace Vrc
             g["name"] = ma.IdName();
             float[] color = { ma.Fl("r", 0, 0.8f), ma.Fl("g", 0, 0.8f), ma.Fl("b", 0, 0.8f) };
             BRef image = default(BRef);
-            bool alpha = false;
+            bool alpha = false, rampColor = false;
             var tree = ma.Go("nodetree");
             if (tree.Ok && ma.In("use_nodes", 0, 1) != 0 || tree.Ok && f.Version >= 500)
             {
@@ -674,7 +775,13 @@ namespace Vrc
                 if (bsdf.Ok)
                 {
                     var link = links.FirstOrDefault(l => l.Go("tonode").At == bsdf.At && (l.Go("tosock").Str("name") == "Base Color" || l.Go("tosock").Str("name") == "Color"));
-                    if (link.Ok) image = Upstream(link.Go("fromnode"), links, 0);
+                    if (link.Ok)
+                    {
+                        image = Upstream(link.Go("fromnode"), links, 0);
+                        // a colour ramp driven by a data picture (a bump, a mask): the ramp's colours, not the picture
+                        var ramp = RampColor(link.Go("fromnode"), links, 0);
+                        if (ramp != null && (!image.Ok || ImageScore(image.IdName(), image.Sub("colorspace_settings").Str("name")) < 0)) { color = ramp; image = default(BRef); rampColor = true; }
+                    }
                     else
                     {
                         // an unlinked colour: the socket's own
@@ -685,12 +792,26 @@ namespace Vrc
                     }
                     alpha = links.Any(l => l.Go("tonode").At == bsdf.At && l.Go("tosock").Str("name") == "Alpha");
                 }
-                if (!image.Ok) // a picture anywhere in it, that isn't data (normals, roughness)
-                    foreach (var nd in nodesL.Where(x => x.Str("idname") == "ShaderNodeTexImage"))
+                // a toon set-up's own nodes (anime shaders: diffuse, ramps, masks, a normal map fed in as a colour...):
+                // the picture that looks most like the colour one, by its name and where it goes
+                BRef bestIm = default(BRef);
+                int bestScore = int.MinValue;
+                foreach (var nd in nodesL.Where(x => x.Str("idname") == "ShaderNodeTexImage"))
+                {
+                    var im = nd.Go("id");
+                    if (!im.Ok) continue;
+                    int sc = ImageScore(im.IdName(), im.Sub("colorspace_settings").Str("name"));
+                    foreach (var l in links.Where(l => l.Go("fromnode").At == nd.At))
                     {
-                        var im = nd.Go("id");
-                        if (im.Ok && !im.Sub("colorspace_settings").Str("name").Contains("Non-Color")) { image = im; break; }
+                        string to = l.Go("tonode").Str("idname"), sock = l.Go("tosock").Str("name");
+                        if (to == "ShaderNodeNormalMap" || to == "ShaderNodeBump" || to == "ShaderNodeSeparateColor" || to == "ShaderNodeSeparateRGB" || to == "ShaderNodeValToRGB") sc -= 4;
+                        else if (sock == "Base Color" || to == "ShaderNodeMix" || to == "ShaderNodeMixRGB" || to == "ShaderNodeHueSaturation" || to == "ShaderNodeBrightContrast" || to == "ShaderNodeGamma") sc += 1;
+                        if (l.Go("fromsock").Str("name") == "Alpha") sc -= 1;
                     }
+                    if (sc > bestScore) { bestScore = sc; bestIm = im; }
+                }
+                if (image.Ok && ImageScore(image.IdName(), image.Sub("colorspace_settings").Str("name")) < 0 && bestIm.Ok && bestScore >= 0) image = bestIm;
+                if (!image.Ok && bestIm.Ok && (rampColor ? bestScore >= 0 : bestScore > -4)) image = bestIm;
             }
             // before 2.8 (Blender Internal): the material's first image texture slot
             if (!image.Ok && ma.Has("mtex"))
@@ -716,12 +837,64 @@ namespace Vrc
         }
 
 
+        // how much a picture's name says it's the colour one (Body_D, albedo...) or data (Body_N, roughness, ramp...)
+        static int ImageScore(string name, string colorspace)
+        {
+            int sc = colorspace.Contains("Non-Color") ? -6 : 0;
+            string n = System.IO.Path.GetFileNameWithoutExtension(name.Replace(".png.", ".").Replace(".jpg.", ".")).ToLowerInvariant();
+            n = Regex.Replace(n, @"[\s.]*\(\d+\)$|\.\d{3}$", "");
+            var words = Regex.Split(n, @"[^a-z0-9]+").Where(w => w.Length > 0).ToList();
+            string last = words.Count > 0 ? words[words.Count - 1] : "";
+            if (new[] { "d", "c", "col", "color", "colour", "diffuse", "diff", "albedo", "basecolor", "base", "bc", "dif", "alb" }.Contains(last)) sc += 3;
+            if (new[] { "n", "nrm", "normal", "nor", "norm", "m", "mask", "a", "ao", "s", "spec", "specular", "r", "rough", "roughness", "metal", "metallic", "mt", "ilm", "lightmap", "light", "shadow", "ramp", "sdf", "height", "disp", "bump", "e", "emi", "emission", "orm", "rma", "mra", "op", "opacity", "matcap" }.Contains(last)) sc -= 3;
+            foreach (string w in words)
+                if (w == "normal" || w == "ramp" || w == "shadow" || w == "lightmap" || w == "sdf" || w == "matcap" || w == "roughness" || w == "metallic") sc -= 2;
+                else if (w == "diffuse" || w == "albedo" || w == "basecolor") sc += 2;
+            return sc;
+        }
+
+        // a mix's factor (a mask), not a colour
+        static bool IsFactor(BRef link)
+        {
+            string n = link.Go("tosock").Str("name");
+            return n == "Fac" || n == "Factor";
+        }
+
+        // the mean colour of a colour ramp feeding a node (through mixes...), null: none
+        float[] RampColor(BRef node, List<BRef> links, int depth)
+        {
+            if (!node.Ok || depth > 8) return null;
+            if (node.Str("idname") == "ShaderNodeTexImage") return null;
+            if (node.Str("idname") == "ShaderNodeValToRGB")
+            {
+                var band = node.Go("storage");
+                if (!band.Ok || band.Type != "ColorBand") band = f.Deref(node.P("storage"), "ColorBand", node.K);
+                int tot = band.In("tot");
+                var cbT = f.StructOf("CBData");
+                if (!band.Ok || tot <= 0 || cbT == null || !band.Has("data")) return null;
+                var c = new float[3];
+                long at = band.At + band.S.Fields["data"].Offset;
+                for (int i = 0; i < tot && i < 32; i++)
+                {
+                    var d = new BRef(f, cbT, at + i * cbT.Size, band.K);
+                    c[0] += d.Fl("r") / tot; c[1] += d.Fl("g") / tot; c[2] += d.Fl("b") / tot;
+                }
+                return c;
+            }
+            foreach (var l in links.Where(l => l.Go("tonode").At == node.At && !IsFactor(l)))
+            {
+                var r = RampColor(l.Go("fromnode"), links, depth + 1);
+                if (r != null) return r;
+            }
+            return null;
+        }
+
         // the picture feeding a node, through mixes, hue / gamma tweaks...
         BRef Upstream(BRef node, List<BRef> links, int depth)
         {
             if (!node.Ok || depth > 8) return default(BRef);
             if (node.Str("idname") == "ShaderNodeTexImage") return node.Go("id");
-            foreach (var l in links.Where(l => l.Go("tonode").At == node.At))
+            foreach (var l in links.Where(l => l.Go("tonode").At == node.At && !IsFactor(l)))
             {
                 var r = Upstream(l.Go("fromnode"), links, depth + 1);
                 if (r.Ok) return r;
@@ -748,7 +921,7 @@ namespace Vrc
             {
                 string path = im.Has("filepath") ? im.Str("filepath") : im.Str("name");
                 file = FindNear(path);
-                if (file == null) { Notes.Add("texture " + Path.GetFileName(path.Replace('\\', '/')) + " isn't packed in the file nor next to it"); return -1; }
+                if (file == null) { Notes.Add("texture " + Path.GetFileName(path.Replace('\\', '/')) + " isn't packed in the file nor next to it (pick its textures' .zip with the model)"); return -1; }
             }
             var job = new TexJob { Guid = id, File = file, Bytes = data, Alpha = alpha, Ext = file != null ? Path.GetExtension(file).ToLowerInvariant() : Magic(data) };
             if (job.Ext != ".png" && job.Ext != ".jpg" && job.Ext != ".jpeg" && job.Ext != ".tga") { Notes.Add("texture " + id + ": a " + job.Ext + " isn't read (PNG, JPEG, TGA are)"); return -1; }
