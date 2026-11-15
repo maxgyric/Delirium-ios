@@ -23,6 +23,7 @@ namespace Vrc
     {
         public string Guid, File, Ext;
         public bool Alpha;          // a cut-out or see-through material uses it: kept as PNG
+        public byte[] Bytes;        // the picture's file itself, when it isn't a file (packed in a .blend)
         public byte[] Out;          // the encoded picture for the .glb (null: left out)
         public string Mime = "image/png";
         public int Max = 2048;      // its longest side at most

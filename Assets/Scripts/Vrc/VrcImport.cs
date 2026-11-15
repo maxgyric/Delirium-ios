@@ -32,13 +32,118 @@ public partial class Game
     void OnPickedPackage(string path)
     {
         if (string.IsNullOrEmpty(path)) return;
-        if (!path.EndsWith(".unitypackage", StringComparison.OrdinalIgnoreCase))
+        string ext = Path.GetExtension(path).ToLowerInvariant();
+        if (ext == ".blend" || ext == ".zip") { StartCoroutine(ImportBlend(path, true)); return; }
+        if (ext != ".unitypackage")
         {
-            filesNote = Path.GetFileName(path) + " isn't a .unitypackage";
+            filesNote = Path.GetFileName(path) + ": a .unitypackage, a .blend or a .zip with a .blend in it, please";
             TryDelete(path);
             return;
         }
         StartCoroutine(ImportPackage(path, true));
+    }
+
+    List<string> blendChoices;   // a .zip's .blend files, while you pick one
+    string blendRoot = "";
+
+    // A Blender file (or a .zip with one and its textures) made into a character: mods/models/<name>.glb + its wheel.
+    IEnumerator ImportBlend(string file, bool deleteAfter)
+    {
+        if (vrcBusy != "" || vrcChoices != null || blendChoices != null) yield break;
+        vrcBusy = "Opening " + Path.GetFileName(file) + "...";
+        vrcProgress = -1f;
+        filesNote = "";
+        string work = Path.Combine(Application.temporaryCachePath, "blendimport");
+        string blend = file, texDir = Path.GetDirectoryName(file);
+        Exception err = null;
+        List<string> found = null;
+        if (file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            var th0 = new Thread(() =>
+            {
+                try
+                {
+                    if (Directory.Exists(work)) Directory.Delete(work, true);
+                    System.IO.Compression.ZipFile.ExtractToDirectory(file, work);
+                    found = new List<string>(Directory.GetFiles(work, "*.blend", SearchOption.AllDirectories));
+                    found.Sort((a, b) => new FileInfo(b).Length.CompareTo(new FileInfo(a).Length));
+                    if (found.Count == 0) throw new Exception("no .blend in it");
+                }
+                catch (Exception e) { err = e; }
+            }) { IsBackground = true };
+            th0.Start();
+            while (th0.IsAlive) yield return null;
+            if (err == null)
+            {
+                blend = found[0];
+                if (found.Count > 1)
+                {
+                    blendRoot = work;
+                    blendChoices = found;
+                    vrcPick = -1;
+                    vrcBusy = "";
+                    while (vrcPick == -1) yield return null;
+                    blendChoices = null;
+                    if (vrcPick < 0) err = new Exception("cancelled");
+                    else blend = found[vrcPick];
+                }
+                texDir = work;
+            }
+        }
+        BlendModel model = null;
+        if (err == null)
+        {
+            vrcBusy = "Reading " + Path.GetFileName(blend) + "...";
+            var th = new Thread(() =>
+            {
+                try { model = BlendModel.Build(blend, texDir, st => vrcBusy = Path.GetFileName(blend) + ": " + st + "..."); }
+                catch (Exception e) { err = e; }
+            }) { IsBackground = true };
+            th.Start();
+            while (th.IsAlive) yield return null;
+        }
+        if (err == null)
+            for (int i = 0; i < model.Textures.Count; i++)
+            {
+                vrcBusy = model.Name + ": textures " + (i + 1) + "/" + model.Textures.Count;
+                try { Encode(model.Textures[i]); }
+                catch (Exception e) { model.Notes.Add(model.Textures[i].Guid + ": " + e.Message); }
+                yield return null;
+            }
+        string glb = "";
+        if (err == null)
+        {
+            vrcBusy = model.Name + ": writing...";
+            string dir = Path.Combine(ModsDir(), "models");
+            string name = Safe(model.Name);
+            glb = Path.Combine(dir, name + ".glb");
+            var th = new Thread(() =>
+            {
+                try
+                {
+                    Directory.CreateDirectory(dir);
+                    File.WriteAllBytes(glb, model.Glb());
+                    File.WriteAllText(Path.Combine(dir, name + ".vrc.json"), model.Sidecar());
+                }
+                catch (Exception e) { err = e; }
+            }) { IsBackground = true };
+            th.Start();
+            while (th.IsAlive) yield return null;
+        }
+        try { if (Directory.Exists(work)) Directory.Delete(work, true); } catch (Exception) { }
+        if (deleteAfter) TryDelete(file);
+        vrcBusy = "";
+        if (err != null)
+        {
+            filesNote = "The import failed: " + err.Message;
+            Debug.LogWarning("[Sandbox] .blend import: " + err);
+            yield break;
+        }
+        RefreshFiles();
+        Debug.Log("[Sandbox] .blend import: " + glb + "\n  " + string.Join("\n  ", model.Notes.ToArray()));
+        Use(glb, 0);
+        filesNote = model.Name + " imported (" + model.Triangles + " triangles, " + model.Meshes + " meshes, " + model.Shapes + " shape keys): mods/models/" +
+                    Path.GetFileName(glb) + ". " + (model.Notes.Count > 0 ? string.Join("; ", model.Notes.ToArray()) + ". " : "") + filesNote;
     }
 
     static void TryDelete(string path)
@@ -170,7 +275,7 @@ public partial class Game
     // encoded again (PNG where its alpha cuts the material out, else JPEG).
     static void Encode(TexJob job)
     {
-        byte[] bytes = File.ReadAllBytes(job.File);
+        byte[] bytes = job.Bytes ?? File.ReadAllBytes(job.File);
         bool png = bytes.Length > 8 && bytes[0] == 0x89 && bytes[1] == 'P', jpg = bytes.Length > 3 && bytes[0] == 0xFF && bytes[1] == 0xD8;
         int w = 0, h = 0;
         if (png && bytes.Length > 24) { w = Be(bytes, 16); h = Be(bytes, 20); }
@@ -271,9 +376,18 @@ public partial class Game
     // ------------------------------------------------------------------ the Files tab's part
     void VrcImportUi()
     {
-        Head("VRChat avatars");
+        Head("Import");
         Info("A VRChat avatar's .unitypackage (your own or one you bought) made into a character here: its meshes, " +
-             "textures, PhysBones and menu toggles (objects and blend shapes; no gestures).");
+             "textures, PhysBones and menu toggles (objects and blend shapes; no gestures). Or a Blender file (.blend, " +
+             "or a .zip with one and its textures): its meshes, armature, shape keys (on the Expr. wheel) and textures.");
+        if (blendChoices != null)
+        {
+            Info("It has " + blendChoices.Count + " .blend files. Which one?");
+            for (int i = 0; i < blendChoices.Count; i++)
+                if (GUILayout.Button(blendChoices[i].Substring(blendRoot.Length).TrimStart('/', '\\'), btn, GUILayout.Height(34f))) vrcPick = i;
+            if (GUILayout.Button("Cancel", btn, GUILayout.Height(30f))) vrcPick = -2;
+            return;
+        }
         if (vrcChoices != null)
         {
             Info("This package has " + vrcChoices.Count + " avatars. Which one?");
@@ -291,7 +405,7 @@ public partial class Game
             GUILayout.Label(vrcBusy + (vrcProgress >= 0f ? " " + Mathf.RoundToInt(vrcProgress * 100f) + "%" : ""), lab);
             return;
         }
-        if (CanPick && GUILayout.Button("Import VRChat avatar (.unitypackage)...", btn, GUILayout.Height(36f))) PickPackage();
+        if (CanPick && GUILayout.Button("Import model (.unitypackage, .blend, .zip)...", btn, GUILayout.Height(36f))) PickPackage();
         foreach (string p in packages)
         {
             GUILayout.BeginHorizontal();
