@@ -649,9 +649,8 @@ namespace Vrc
                     var ignore = new HashSet<int>();
                     foreach (var x in b.L("ignoreTransforms")) { int ig = Index(mb.File.Node(x)); if (ig >= 0) ignore.Add(ig); }
                     // VRChat's pull / spring (momentum) / stiffness / gravity as VRM's stiffness, drag, gravity
-                    // (VRM's pull back to rest is a distance a second, VRChat's a share of the way: firmer than a straight copy)
                     float pull = b.F("pull", 0.2f), spring = b.F("spring", 0.2f), stiff = b.F("stiffness", 0.2f), grav = b.F("gravity", 0f);
-                    double vStiff = 1.0 + pull * 4.0 + stiff * 2.0, vDrag = Math.Max(0.35, Math.Min(0.95, 0.4 + (1.0 - spring) * 0.5)), vGrav = grav * 1.0;
+                    double vStiff = 0.3 + pull * 2.5 + stiff * 1.0, vDrag = Math.Max(0.1, Math.Min(0.95, 1.0 - spring * 0.7)), vGrav = grav * 1.5;
                     // its limit (angle, hinge, polar); none: 75 degrees, so nothing folds through the body
                     int limitType = b.I("limitType");
                     double maxAngle = limitType == 0 ? 75.0 : limitType == 3 ? Math.Max(b.F("maxAngleX", 45f), b.F("maxAngleZ", 45f)) : b.F("maxAngleX", 45f);
@@ -683,8 +682,7 @@ namespace Vrc
                             js.Add(new Dictionary<string, object> { { "node", j }, { "stiffness", vStiff }, { "dragForce", vDrag }, { "gravityPower", vGrav },
                                                                     { "gravityDir", new List<object> { 0.0, -1.0, 0.0 } }, { "hitRadius", radius }, { "maxAngle", maxAngle } });
                         var sp = new Dictionary<string, object> { { "name", nodes[root].Name }, { "joints", js } };
-                        // swinging in the hips' own space: walking and running don't leave it trailing behind
-                        if (hips >= 0 && hips != root) sp["center"] = hips;
+
                         if (group >= 0) sp["colliderGroups"] = new List<object> { group };
                         springs.Add(sp);
                     }
