@@ -682,6 +682,9 @@ namespace Vrc
                             js.Add(new Dictionary<string, object> { { "node", j }, { "stiffness", vStiff }, { "dragForce", vDrag }, { "gravityPower", vGrav },
                                                                     { "gravityDir", new List<object> { 0.0, -1.0, 0.0 } }, { "hitRadius", radius }, { "maxAngle", maxAngle } });
                         var sp = new Dictionary<string, object> { { "name", nodes[root].Name }, { "joints", js } };
+                        // VRChat's immobile: that share of the body's own motion (walking, running) left out of the swing
+                        float immobile = b.F("immobile", 0f);
+                        if (hips >= 0 && hips != root && immobile > 0.01f) { sp["center"] = hips; sp["immobile"] = (double)Math.Min(1f, immobile); }
 
                         if (group >= 0) sp["colliderGroups"] = new List<object> { group };
                         springs.Add(sp);

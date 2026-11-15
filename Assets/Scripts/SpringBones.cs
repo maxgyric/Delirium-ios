@@ -32,9 +32,10 @@ public class SpringBones : MonoBehaviour
         public Vector3 GravityDir;      // in the world
         public float Radius;            // the tip's own radius, in the bone's units (scaled by it)
         public Transform Center;        // its swing measured in this bone's space (VRM's "center"); null: the world
+        public float Immobile = 1f;     // how much of Center's own motion it ignores (VRChat's immobile; VRM: all)
         public float MaxAngle;          // how far from its rest it may swing, degrees (0: any way; a VRChat PhysBone's limit)
         public int[] Colliders = new int[0];
-        [NonSerialized] public Vector3 Prev, Curr; // the tip now and a frame ago (in Center's space when it has one)
+        [NonSerialized] public Vector3 Prev, Curr; // the tip now and a frame ago, in the world
     }
 
     [Serializable]
@@ -57,15 +58,18 @@ public class SpringBones : MonoBehaviour
 
     void OnEnable() => running = false;
 
+    readonly Dictionary<Transform, Matrix4x4> centerLast = new Dictionary<Transform, Matrix4x4>(), centerMove = new Dictionary<Transform, Matrix4x4>();
+
     void Restart()
     {
         foreach (var j in Joints)
         {
             if (j.Bone == null) continue;
             Vector3 tip = j.Bone.TransformPoint(j.Tip);
-            j.Prev = j.Curr = j.Center != null ? j.Center.InverseTransformPoint(tip) : tip;
+            j.Prev = j.Curr = tip;
         }
         if (Joints.Count > 0 && Joints[0].Bone != null) lastAnchor = Joints[0].Bone.position;
+        centerLast.Clear();
         running = true;
     }
 
@@ -94,6 +98,15 @@ public class SpringBones : MonoBehaviour
         if (anchor == null) return;
         if (!running || (anchor.position - lastAnchor).sqrMagnitude > 4f) Restart();
         lastAnchor = anchor.position;
+        // how each centre moved since the last frame (a joint takes its Immobile share of that with it)
+        centerMove.Clear();
+        foreach (var j in Joints)
+        {
+            if (j.Center == null || centerMove.ContainsKey(j.Center)) continue;
+            var now = j.Center.localToWorldMatrix;
+            centerMove[j.Center] = centerLast.TryGetValue(j.Center, out var last) ? now * last.inverse : Matrix4x4.identity;
+            centerLast[j.Center] = now;
+        }
 
         foreach (var j in Joints)
         {
@@ -109,8 +122,12 @@ public class SpringBones : MonoBehaviour
             if (length < 1e-6f) continue;
             restDir /= length;
 
-            Vector3 curr = j.Center != null ? j.Center.TransformPoint(j.Curr) : j.Curr;
-            Vector3 prev = j.Center != null ? j.Center.TransformPoint(j.Prev) : j.Prev;
+            Vector3 curr = j.Curr, prev = j.Prev;
+            if (j.Center != null && centerMove.TryGetValue(j.Center, out var move))
+            {
+                curr = Vector3.Lerp(curr, move.MultiplyPoint3x4(curr), j.Immobile);
+                prev = Vector3.Lerp(prev, move.MultiplyPoint3x4(prev), j.Immobile);
+            }
             Vector3 next = curr + (curr - prev) * (1f - j.Drag) + restDir * (j.Stiffness * dt) + j.GravityDir * (j.Gravity * dt);
             next = head + (next - head).normalized * length;
 
@@ -149,7 +166,7 @@ public class SpringBones : MonoBehaviour
             }
 
             j.Prev = j.Curr;
-            j.Curr = j.Center != null ? j.Center.InverseTransformPoint(next) : next;
+            j.Curr = next;
             bone.rotation = Quaternion.FromToRotation(restDir, (next - head).normalized) * rest;
         }
     }
@@ -247,7 +264,11 @@ public class SpringBones : MonoBehaviour
                 Vector3 g = Json.Has(p, "gravityDir") ? V(p, "gravityDir") : Vector3.down;
                 Add(bone, bone.InverseTransformPoint(next.position), Json.Num(p, "stiffness", 1f), Json.Num(p, "dragForce", 0.5f),
                     Json.Num(p, "gravityPower", 0f), g, Json.Num(p, "hitRadius", 0f), center, cols.ToArray(), taken);
-                if (Joints.Count > 0 && Joints[Joints.Count - 1].Bone == bone) Joints[Joints.Count - 1].MaxAngle = Json.Num(p, "maxAngle", 0f);
+                if (Joints.Count > 0 && Joints[Joints.Count - 1].Bone == bone)
+                {
+                    Joints[Joints.Count - 1].MaxAngle = Json.Num(p, "maxAngle", 0f);
+                    Joints[Joints.Count - 1].Immobile = Mathf.Clamp01(Json.Num(spring, "immobile", 1f));
+                }
             }
         }
     }
