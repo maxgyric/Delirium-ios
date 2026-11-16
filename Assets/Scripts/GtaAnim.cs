@@ -33,6 +33,7 @@ public static class GtaAnim
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_pose_seat(int c, float phase, float[] o, int[] moved);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int dv_open(byte[] dir);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int dv_clip(byte[] name);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int dv_clip_data(int c, int what, float[] o, int cap);
 
     static byte[] Z(string s) => Encoding.UTF8.GetBytes(s + "\0");
 
@@ -42,6 +43,9 @@ public static class GtaAnim
         public float Dur = 1f, Speed, Sync;
         public bool Cycle;
         public bool Ok => Id >= 0;
+        // (GTA V's) its root's way over the clip (x forward, y left m, turn left deg; samples evenly over it) and
+        // its marks (kind, phase pairs: 1 left heel down, 2 right heel down, 3 where it blends out)
+        public float[] Curve, Tags;
     }
 
     /// 0 not started, 1 loading, 2 ready, -1 failed (Error says why).
@@ -62,6 +66,51 @@ public static class GtaAnim
     public static bool V;
     public static string VError = "";
     public static Clip VLaunch = new Clip(), VFall = new Clip();
+    // starts from standing (walk / run): left foot first straight, turning left 90, 180; right foot first straight,
+    // turning right 90, 180
+    public static readonly Clip[] VWStart = new Clip[6], VRStart = new Clip[6];
+    // stops (walk / run): on the left foot, on the right; the run's 180 turn left, right
+    public static readonly Clip[] VWStop = new Clip[2], VRStop = new Clip[2], VRunTurn = new Clip[2];
+
+    /// Where a GTA V clip has carried its root by `phase`: x forward, y left (m), z its turn left (degrees), from
+    /// where it started.
+    public static Vector3 Motion(Clip c, float phase)
+    {
+        var k = c?.Curve;
+        if (k == null || k.Length < 3) return Vector3.zero;
+        int n = k.Length / 3;
+        float x = Mathf.Clamp01(phase) * (n - 1);
+        int i = Mathf.Min((int)x, n - 1), j = Mathf.Min(i + 1, n - 1);
+        float f = x - i;
+        return new Vector3(Mathf.Lerp(k[i * 3], k[j * 3], f), Mathf.Lerp(k[i * 3 + 1], k[j * 3 + 1], f), Mathf.Lerp(k[i * 3 + 2], k[j * 3 + 2], f));
+    }
+
+    /// A GTA V clip's first mark of `kind` (1 left heel, 2 right heel, 3 blend-out), or -1
+    public static float Mark(Clip c, int kind, float after = -1f)
+    {
+        var t = c?.Tags;
+        if (t == null) return -1f;
+        for (int i = 0; i + 1 < t.Length; i += 2)
+            if ((int)t[i] == kind && t[i + 1] > after) return t[i + 1];
+        return -1f;
+    }
+
+    /// The last heel down at or before `phase` (1 left, 2 right) and its phase; 0 when none
+    public static int LastHeel(Clip c, float phase, out float at)
+    {
+        at = 0f;
+        var t = c?.Tags;
+        int side = 0;
+        float best = -1f;
+        if (t == null) return 0;
+        for (int i = 0; i + 1 < t.Length; i += 2)
+        {
+            int k = (int)t[i];
+            if ((k == 1 || k == 2) && t[i + 1] <= phase && t[i + 1] >= best) { best = t[i + 1]; side = k; }
+        }
+        at = Mathf.Max(0f, best);
+        return side;
+    }
     /// The game's unarmed blows (found by name among its melee dictionaries; none: the hero's punch is a plain jab).
     public static readonly List<Clip> Punches = new List<Clip>();
 
@@ -219,6 +268,11 @@ public static class GtaAnim
         da_clip_info(c.Id, out c.Dur, out c.Speed);
         c.Dur = Mathf.Max(c.Dur, 0.05f);
         if (cycle) c.Sync = Mathf.Max(0f, da_clip_sync(c.Id));
+        var buf = new float[4096];
+        int n = dv_clip_data(c.Id, 0, buf, buf.Length);
+        if (n > 0) { c.Curve = new float[n]; Array.Copy(buf, c.Curve, n); }
+        n = dv_clip_data(c.Id, 1, buf, buf.Length);
+        if (n > 0) { c.Tags = new float[n]; Array.Copy(buf, c.Tags, n); }
         return c;
     }
 
@@ -249,6 +303,18 @@ public static class GtaAnim
         VLaunch = GetV("gtgl_male_move_jump_launch_l", false);
         VFall = GetV("gtgl_male_move_fall_med", true);
         if (VFall.Ok) Jump[1] = VFall;
+        string[] starts = { "l_0", "l_m90", "l_m180", "r_0", "r_90", "r_180" };
+        for (int i = 0; i < 6; i++)
+        {
+            VWStart[i] = GetV("gtgl_male_move_wstart_" + starts[i], false);
+            VRStart[i] = GetV("gtgl_male_move_rstart_" + starts[i], false);
+        }
+        VWStop[0] = GetV("gtgl_male_move_wstop_l_0", false);
+        VWStop[1] = GetV("gtgl_male_move_wstop_r_0", false);
+        VRStop[0] = GetV("gtgl_male_move_rstop_l", false);
+        VRStop[1] = GetV("gtgl_male_move_rstop_r", false);
+        VRunTurn[0] = GetV("gtgl_male_move_run_turn_180_l", false);
+        VRunTurn[1] = GetV("gtgl_male_move_run_turn_180_r", false);
         Debug.Log($"[Hero] GTA V's moves: walk {Move[1].Speed:F2} m/s, run {Move[2].Speed:F2}, sprint {Move[3].Speed:F2}");
     }
 

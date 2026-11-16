@@ -20,6 +20,7 @@ struct Clip {
     anim: anim::Animation,
     // (Sandbox) a GTA V clip from Grand Theft Gmod's model: in place, its speed (m/s) from the addon's clip data
     speed: Option<f32>,
+    v: Option<Meta>,
     map: Vec<Option<usize>>, // track -> bone
     // where the clip stands: its hips' middle over the cycle (flat) and its lowest foot, in GTA model space. GTA IV's
     // clips carry the hips on the root bone, some from the ground, some from the hips, some off to a side (the
@@ -48,7 +49,7 @@ struct Target {
 struct Anim {
     // (Sandbox) GTA V's clips out of Grand Theft Gmod's model (Anim::open_mdl), not GTA IV's anim.img
     mdl: Option<mdl::Mdl>,
-    meta: HashMap<String, (f32, f32)>, // sequence -> (speed m/s, length s), the addon's clip data
+    meta: HashMap<String, Meta>, // sequence -> its clip data (the addon's)
     pc: bool,
     table: Vec<img::Entry>,
     file: std::fs::File,
@@ -286,18 +287,21 @@ impl Anim {
 
     fn clip(&mut self, dict: &str, name: &str) -> Result<usize, String> {
         let mut speed = None;
+        let mut vmeta = None;
         let a = if let Some(m) = &self.mdl {
             let seq = name.to_ascii_lowercase();
             let ai = *m.seqs.get(&seq).ok_or(format!("no sequence {name} in the model"))?;
-            speed = self.meta.get(&seq).map(|v| v.0);
+            speed = self.meta.get(&seq).map(|v| v.speed);
+            vmeta = self.meta.get(&seq).cloned();
             mdl_animation(m, ai)?
         } else {
             self.dict(dict)?.iter().find(|a| a.name.eq_ignore_ascii_case(name)).cloned().ok_or(format!("no {name} in {dict}"))?
         };
         let map = a.tracks.iter().map(|t| self.ids.iter().position(|&id| id == t.bone).filter(|&b| b != 0)).collect();
-        self.clips.push(Clip { anim: a, map, speed: None, mid: Vec3::ZERO, floor: 0.0, floor_end: 0.0 });
+        self.clips.push(Clip { anim: a, map, speed: None, v: None, mid: Vec3::ZERO, floor: 0.0, floor_end: 0.0 });
         let c = self.clips.len() - 1;
         self.clips[c].speed = speed;
+        self.clips[c].v = vmeta;
         let keys: Vec<String> = self.names.iter().map(|n| key(n)).collect();
         let pelvis = keys.iter().position(|k| k == "pelvis").unwrap_or(0);
         let feet: Vec<usize> = keys.iter().enumerate().filter(|(_, k)| ["lfoot", "rfoot", "ltoe0", "rtoe0"].contains(&k.as_str())).map(|(i, _)| i).collect();
@@ -604,24 +608,61 @@ fn mdl_animation(m: &mdl::Mdl, ai: usize) -> Result<anim::Animation, String> {
     Ok(anim::Animation { name: ad.name.trim_start_matches('@').to_string(), hash: 0, frames: ad.frames, duration: (ad.frames.max(2) - 1) as f32 / ad.fps.max(1.0), tracks, mover_rotation: None, events: vec![] })
 }
 
-/// (Sandbox) Grand Theft Gmod's clip data: `seq = "<sequence>"` ... `dur = <s>` ... `speed = <inches/s>` a clip
-fn lua_meta(text: &str, into: &mut HashMap<String, (f32, f32)>) {
-    let num = |line: &str, key: &str| -> Option<f32> {
-        let i = line.find(key)? + key.len();
-        let rest = line[i..].trim_start();
-        let end = rest.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).unwrap_or(rest.len());
+/// (Sandbox) A GTA V clip's data (Grand Theft Gmod's lua): its speed (m/s), length, its root's way over the clip
+/// (x forward, y left in metres, the turn left in degrees: evenly spaced samples), and its marks (phase pairs: 1 a
+/// left heel down, 2 a right heel down, 3 the clip's blend-out point, the MoveEvent "blend_out_*")
+#[derive(Clone, Default)]
+struct Meta {
+    speed: f32,
+    dur: f32,
+    curve: Vec<f32>,
+    tags: Vec<f32>,
+}
+
+fn lua_meta(text: &str, into: &mut HashMap<String, Meta>) {
+    let num_at = |rest: &str| -> Option<f32> {
+        let rest = rest.trim_start();
+        let end = rest.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == 'e')).unwrap_or(rest.len());
         rest[..end].parse().ok()
     };
+    let num = |line: &str, key: &str| -> Option<f32> { num_at(&line[line.find(key)? + key.len()..]) };
+    let braces = |line: &str, key: &str| -> Option<String> {
+        let i = line.find(key)? + key.len();
+        let r = &line[i..];
+        let (a, b) = (r.find('{')?, r.find('}')?);
+        Some(r[a + 1..b].to_string())
+    };
     let mut seq: Option<String> = None;
-    let mut dur = 0.0;
     for line in text.lines() {
         if let Some(i) = line.find("seq = \"") {
             let r = &line[i + 7..];
             seq = r.find('"').map(|e| r[..e].to_ascii_lowercase());
-            dur = num(line, "dur =").unwrap_or(0.0);
+            if let Some(s) = &seq {
+                into.insert(s.clone(), Meta { dur: num(line, "dur =").unwrap_or(0.0), ..Default::default() });
+            }
+            continue;
         }
-        if let (Some(s), Some(v)) = (&seq, num(line, "speed =")) {
-            into.insert(s.clone(), (v * 0.0254, dur)); // inches/s -> m/s
+        let Some(m) = seq.as_ref().and_then(|s| into.get_mut(s)) else { continue };
+        if let Some(v) = num(line, "speed =") { m.speed = v * 0.0254; } // inches/s -> m/s
+        if let Some(c) = braces(line, "curve =") {
+            let v: Vec<f32> = c.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            m.curve = v.chunks_exact(3).flat_map(|t| [t[0] * 0.0254, t[1] * 0.0254, t[2]]).collect();
+        }
+        if line.trim_start().starts_with("tags =") {
+            let mut rest = line;
+            while let Some(i) = rest.find("{ \"") {
+                rest = &rest[i + 3..];
+                let kind = &rest[..rest.find('"').unwrap_or(0)];
+                let after = &rest[kind.len() + 1..];
+                let Some(phase) = after.trim_start_matches(|c: char| c == ',' || c == ' ').split(',').next().and_then(|x| x.trim().parse::<f32>().ok()) else { continue };
+                let close = after.find("} }").unwrap_or(after.len());
+                let body = &after[..close];
+                if kind == "Foot" && body.contains("[\"Heel\"] = true") {
+                    m.tags.extend([if body.contains("[\"Right\"] = true") { 2.0 } else { 1.0 }, phase]);
+                } else if kind == "MoveEvent" && body.contains("\"blend_out") {
+                    m.tags.extend([3.0, phase]);
+                }
+            }
         }
     }
 }
@@ -668,6 +709,21 @@ pub unsafe extern "C" fn dv_clip(name: *const c_char) -> i32 {
     match a.clip("", n) {
         Ok(i) => V_BASE + i as i32,
         Err(e) => fail(format!("dv_clip: {e}")),
+    }
+}
+
+/// (Sandbox) A GTA V clip's data into `out` (`cap` floats): `what` 0 its root's way (x forward, y left m, turn
+/// left degrees, a triple a sample, evenly over the clip), 1 its marks (kind, phase pairs: 1 left heel, 2 right
+/// heel, 3 blend-out). How many floats; 0 for a clip without (GTA IV's), -1 on an error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dv_clip_data(c: i32, what: i32, out: *mut f32, cap: i32) -> i32 {
+    match with_clip(c, |a, i| Ok(a.clips[i].v.as_ref().map(|m| if what == 0 { m.curve.clone() } else { m.tags.clone() }).unwrap_or_default())) {
+        Ok(v) => {
+            let n = v.len().min(cap.max(0) as usize);
+            if !out.is_null() { unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), out, n) }; }
+            n as i32
+        }
+        Err(e) => fail(format!("dv_clip_data: {e}")),
     }
 }
 
@@ -915,5 +971,27 @@ mod cache_test {
         assert_eq!(b[1].rotation, [0.5, 0.5, 0.5, 0.5]);
         assert!(read_cache(&p, (124, 456)).is_none());
         assert_eq!(delirium_data::kv::export().unwrap(), vec![7u8; 1095 * 12]);
+    }
+}
+
+#[cfg(test)]
+mod lua_test {
+    // the shape of Grand Theft Gmod's clip data (a start clip of lib_male_move_p2.lua as written)
+    const T: &str = r#"GTG.RegisterClips("lib_male_move", {
+	["wstart_l_-180"] = { seq = "gtgl_male_move_wstart_l_m180", from = "move_m@generic.ycd", dur = 2, frames = 61, loop = false,
+		move = { -102.4, 0, 179.7 }, speed = 51.2,
+		curve = { 0,0,0, -0.4,0,28.4, -2.1,0,56.8, -5.2,0,85.2, -7.8,0,113.5, -11.5,0,141.9, -16,0,170.3, -20.5,0,179.8, -25.2,0,179.8, -30.1,0,179.9, -35.5,0,180, -41.5,0,180, -49.1,0,180, -56.5,0,180, -63,0,180, -69.2,0,180, -75.3,0,179.9, -81.8,0,179.9, -88.6,0,179.8, -95.5,0,179.8, -102.4,0,179.7 },
+		tags = { { "Foot", 0, 0, { ["Heel"] = true, ["Right"] = true } }, { "MoveEvent", 0, 1, { ["MoveEvent"] = "0x7E1C8464" } }, { "MoveEvent", 0.032, 0.331, { ["MoveEvent"] = "0xC9AF24C2" } }, { "MoveEvent", 0.281, 0.316, { ["MoveEvent"] = "0x70ABE2B4" } }, { "Foot", 0.316, 0.316, { ["Heel"] = true, ["Right"] = false } }, { "MoveEvent", 0.354, 1, { ["MoveEvent"] = "0x47A803B7" } }, { "MoveEvent", 0.592, 0.627, { ["MoveEvent"] = "0x70ABE2B4" } }, { "Foot", 0.627, 0.627, { ["Heel"] = true, ["Right"] = true } }, { "MoveEvent", 0.651, 0.864, { ["MoveEvent"] = "0xC9AF24C2" } }, { "MoveEvent", 0.658, 1, { ["MoveEvent"] = "blend_out_start" } }, { "MoveEvent", 0.832, 0.867, { ["MoveEvent"] = "0x70ABE2B4" } }, { "Foot", 0.867, 0.867, { ["Heel"] = true, ["Right"] = false } } },
+		lplant = { 0, 16, 50 }, rplant = { 0, 35 } },
+"#;
+    #[test]
+    fn parse() {
+        let mut m = std::collections::HashMap::new();
+        super::lua_meta(T, &mut m);
+        let c = &m["gtgl_male_move_wstart_l_m180"];
+        assert!((c.speed - 51.2 * 0.0254).abs() < 1e-4 && c.dur == 2.0);
+        assert_eq!(c.curve.len(), 63);
+        assert!((c.curve[60] + 102.4 * 0.0254).abs() < 1e-4 && (c.curve[62] - 179.7).abs() < 1e-4);
+        assert_eq!(c.tags, vec![2.0, 0.0, 1.0, 0.316, 2.0, 0.627, 3.0, 0.658, 1.0, 0.867]);
     }
 }

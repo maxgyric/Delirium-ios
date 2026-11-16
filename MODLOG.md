@@ -385,3 +385,10 @@ files (default.xex, the three exported files, the archives) are picked by the la
 - GtaAnim.LoadV after GTA IV's clips: Move[0..3] = gtgl_male_move_idle/walk/run/sprint, Jump[1] = fall_med, and a
   jump's take-off held by jump_launch_l (Hero PickClip, heroJumped). Next: starts/stops/turns from the clip data.
 - Phone: male_move.mdl and lib_male_move*.lua beside default.xex (or the addon's folder as grandtheftgmod_0899).
+- (19:50) GTA V's starts, stops, 180s and its own footsteps. The clip data parsed in full (lua_meta -> Meta: speed,
+  dur, curve as x fwd / y left m / turn left deg samples evenly over the clip, heel marks L/R, the blend_out_*
+  MoveEvent), dv_clip_data. Hero.VAct: from standing the stick's way picks wstart/rstart {l_0, l_m90, l_m180, r_0,
+  r_90, r_180} (its turn bent to the exact angle over the clip), letting go wstop_{l,r}_0 / rstop_{l,r} (the foot
+  after the last heel down), pulling back at a run run_turn_180_{l,r}; the clip moves him (its curve through the
+  usual capsule slide) to its blend-out mark, then the walk/run loop starts on the same foot (the last heel mark,
+  the loop's own heel mark for that side). Footsteps on GTA V clips' heel marks, not at phase 0 / 0.5.

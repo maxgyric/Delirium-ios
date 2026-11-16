@@ -128,6 +128,7 @@ public partial class Game
     {
         if (riding) { riding = false; Unseat(); }
         heroMode = 0;
+        act = null;
         heroDrunk = heroLeaning = heroDrunkPending = false;
         heroPos = at;
         heroYaw = yaw;
@@ -372,11 +373,14 @@ public partial class Game
         if (heroAim && GtaAnim.Strafe[1, 0].Ok) target = Mathf.Min(target, GtaAnim.Strafe[1, 0].Speed);
         Vector3 want = wish.sqrMagnitude > 1e-6f ? wish.normalized * target : Vector3.zero;
         if (Time.time < heroSpotUntil) want = Vector3.zero;
-        heroVel = Vector3.MoveTowards(heroVel, want, (heroGround ? 14f : 3f) * dt);
-
-        float wantYaw = heroAim ? hCamYaw : heroVel.magnitude > 0.3f ? Mathf.Atan2(heroVel.x, heroVel.z) * Mathf.Rad2Deg : heroYaw;
-        if (Time.time < heroFaceUntil) wantYaw = heroFaceYaw; // a punch: at the man he's hitting
-        heroYaw = Mathf.MoveTowardsAngle(heroYaw, wantYaw, (heroAim ? 720f : 540f) * dt);
+        if (hJumpReq) act = null;
+        if (!VAct(dt, mag, wish, walk, run))
+        {
+            heroVel = Vector3.MoveTowards(heroVel, want, (heroGround ? 14f : 3f) * dt);
+            float wantYaw = heroAim ? hCamYaw : heroVel.magnitude > 0.3f ? Mathf.Atan2(heroVel.x, heroVel.z) * Mathf.Rad2Deg : heroYaw;
+            if (Time.time < heroFaceUntil) wantYaw = heroFaceYaw; // a punch: at the man he's hitting
+            heroYaw = Mathf.MoveTowardsAngle(heroYaw, wantYaw, (heroAim ? 720f : 540f) * dt);
+        }
 
         if (heroSpotLand > 0f && Time.time >= heroSpotLand)
         {
@@ -458,6 +462,7 @@ public partial class Game
     void Knock(bool highFall)
     {
         if (heroMode != 0) return;
+        act = null;
         var owner = hero.Body.transform;
         if (!HeroRagdoll()) return;
         if (highFall && Tumble(owner, new Vector3(heroVel.x, heroVy, heroVel.z))) hero.HighFalling = true;
@@ -489,6 +494,8 @@ public partial class Game
             if (!heroAim) { rate = 1f / move[0].Dur; return move[0]; }
             speed = new Vector3(heroVel.x, 0f, heroVel.z).magnitude;
         }
+        // GTA V's start, stop or turn: its own clip, its own clock (VAct)
+        if (act != null) { hPhaseSet = Mathf.Clamp01(actT / act.Dur); rate = 0f; return act; }
         // a jump on the spot is its clip from start to end (the clip itself lifts him and lands him)
         if (Time.time < heroSpotUntil && j[3].Ok) { rate = 1f / j[3].Dur; return j[3]; }
         // in the air: the one clip; take-offs and landings are cross-fades (their own clips carry him along the
@@ -537,17 +544,19 @@ public partial class Game
             bool cyclic = c != null && hCur != null && !OneShot(c) && !OneShot(hCur);
             if (!cyclic) hPhase = 0f;
         }
+        if (hNextPhase >= 0f && c != null && c.Cycle) { hPhase = hNextPhase; hNextPhase = -1f; }
         hCur = c; hCurB = b; hCurW = w; hRate = rate;
         if (hPhaseSet >= 0f) hPhase = hPhaseSet;
         else
         {
             float before = hPhase;
             hPhase += dt * rate;
-            // a foot down twice a cycle
-            if (heroGround && c != null && c.Cycle && heroVel.magnitude > 0.3f && Mathf.Floor(before * 2f) != Mathf.Floor(hPhase * 2f))
+            // a foot down twice a cycle (GTA IV's clips; GTA V's have their heels marked: FootSteps below)
+            if (heroGround && c != null && c.Cycle && c.Tags == null && heroVel.magnitude > 0.3f && Mathf.Floor(before * 2f) != Mathf.Floor(hPhase * 2f))
                 Play(Sfx.Step, heroPos, heroTier == 3 ? 0.9f : heroTier == 2 ? 0.7f : 0.45f);
             hPhase = OneShot(c) ? Mathf.Min(hPhase, 1f) : hPhase - Mathf.Floor(hPhase);
         }
+        FootSteps(c);
         hPrevPhase += dt * hPrevRate;
         hPrevPhase -= Mathf.Floor(hPrevPhase);
         hFade = Mathf.Max(0f, hFade - dt / 0.2f);
@@ -1028,5 +1037,143 @@ public partial class Game
         GUI.DrawTexture(new Rect(r.x + 1f, r.y + 1f, (r.width - 2f) * f, r.height - 2f), Texture2D.whiteTexture);
         GUI.color = back;
         GUI.Label(new Rect(r.x, r.y + 11f, r.width, 18f), forever ? "HP ∞" : "HP " + Mathf.CeilToInt(m.Health), new GUIStyle(chip) { alignment = TextAnchor.MiddleCenter, fontSize = 11 });
+    }
+
+    // ------------------------------------------------------------------ GTA V's starts, stops and turns
+    // (GtaAnim.V: Grand Theft Gmod's clips) Pushing off from standing plays the start for the way he's to go (left
+    // or right foot, straight, 90 or 180 degrees round), letting go while walking or running the stop, pulling
+    // back at a run the 180 turn: each clip moves and turns him itself (its root's way from the clip data, its
+    // turn bent to the stick's way), up to its blend-out mark; then the loop takes over on the same foot.
+    GtaAnim.Clip act;
+    int actKind;              // 1 start, 2 stop, 3 turn
+    float actT, actYaw, actWarp, actEnd, hNextPhase = -1f;
+    Vector3 actPos;
+    bool actRun, startLeft;
+    float hStepPhase = -1f;
+    GtaAnim.Clip hStepClip;
+
+    bool VAct(float dt, float mag, Vector3 wish, float walkSp, float runSp)
+    {
+        if (!GtaAnim.V || heroAim || !heroGround || heroNoclip || Time.time < heroSpotUntil || Time.time < heroFaceUntil)
+        {
+            act = null;
+            return false;
+        }
+        Vector3 flat = new Vector3(heroVel.x, 0f, heroVel.z);
+        float speed = flat.magnitude;
+        bool push = mag >= 0.12f;
+        Vector3 fwd = Quaternion.Euler(0f, heroYaw, 0f) * Vector3.forward;
+        if (act == null)
+        {
+            if (push && speed < 0.4f)
+            {
+                // the way to go from the way he faces (right +), and the start that turns most like it
+                float a = Vector3.SignedAngle(fwd, wish, Vector3.up);
+                bool run = heroTier >= 2;
+                var set = run ? GtaAnim.VRStart : GtaAnim.VWStart;
+                int i = Mathf.Abs(a) < 45f ? ((startLeft = !startLeft) ? 0 : 3) : a < 0f ? (a > -135f ? 1 : 2) : (a < 135f ? 4 : 5);
+                if (!Begin(set[i], 1, -a)) return false;
+                actRun = run;
+            }
+            else if (!push && speed > 1f && hCur != null && hCur.Cycle && hCur.Tags != null)
+            {
+                // on the foot that's next down: the last heel down was the other one
+                bool run = speed > (walkSp + runSp) * 0.5f;
+                int side = GtaAnim.LastHeel(hCur, GtaAnim.At(hCur, hPhase), out _);
+                var set = run ? GtaAnim.VRStop : GtaAnim.VWStop;
+                if (!Begin(set[side == 2 ? 0 : 1], 2, 0f)) return false;
+            }
+            else if (push && speed > runSp * 0.75f && Vector3.Angle(flat, wish) > 150f)
+            {
+                float a = Vector3.SignedAngle(flat, wish, Vector3.up);
+                if (!Begin(GtaAnim.VRunTurn[a < 0f ? 0 : 1], 3, -a)) return false;
+                actRun = true;
+            }
+            else return false;
+        }
+        // let go of a start, pushed during a stop: back to the plain moves
+        if ((actKind == 1 && !push) || (actKind == 2 && push)) { act = null; return false; }
+        actT += dt;
+        float ph = actT / act.Dur;
+        if (ph >= actEnd)
+        {
+            Finish();
+            return false;
+        }
+        var m = GtaAnim.Motion(act, ph);
+        float turn = m.z + actWarp * Mathf.Clamp01(ph / actEnd);
+        Vector3 to = actPos + Quaternion.Euler(0f, actYaw, 0f) * new Vector3(-m.y, 0f, m.x);
+        Vector3 v = new Vector3(to.x - heroPos.x, 0f, to.z - heroPos.z) / Mathf.Max(dt, 1e-3f);
+        heroVel = Vector3.ClampMagnitude(v, 9f);
+        heroYaw = actYaw - turn;
+        return true;
+    }
+
+    bool Begin(GtaAnim.Clip c, int kind, float leftTurn)
+    {
+        if (c == null || !c.Ok || c.Curve == null) return false;
+        act = c;
+        actKind = kind;
+        actT = 0f;
+        actPos = heroPos;
+        actYaw = heroYaw;
+        float clipTurn = GtaAnim.Motion(c, 1f).z;
+        actWarp = kind == 2 ? 0f : Mathf.DeltaAngle(clipTurn, leftTurn);
+        float b = GtaAnim.Mark(c, 3);
+        actEnd = b > 0.05f ? b : 1f;
+        return true;
+    }
+
+    // its end: a stop stands him still; a start or a turn hands over to the walk or run on the foot it's on
+    void Finish()
+    {
+        var done = act;
+        act = null;
+        float ph = actEnd;
+        if (actKind == 2)
+        {
+            heroVel = Vector3.zero;
+            return;
+        }
+        var loop = GtaAnim.Move[actRun ? 2 : 1];
+        if (loop == null || !loop.Ok) return;
+        int side = GtaAnim.LastHeel(done, ph, out float at);
+        float since = (ph - at) * done.Dur;
+        float heel = side > 0 ? GtaAnim.Mark(loop, side) : -1f;
+        if (heel >= 0f)
+        {
+            float lp = heel + since / loop.Dur;
+            lp -= loop.Sync; // Step's phase is the clip's less its sync (GtaAnim.At)
+            hNextPhase = lp - Mathf.Floor(lp);
+        }
+        // on at the loop's own pace, the way he faces
+        Vector3 f = Quaternion.Euler(0f, heroYaw, 0f) * Vector3.forward;
+        heroVel = f * Mathf.Max(heroVel.magnitude, loop.Speed * 0.8f);
+    }
+
+    // A footstep as a GTA V clip's heel comes down (its marks), whatever clip it is
+    void FootSteps(GtaAnim.Clip c)
+    {
+        if (c == null || c.Tags == null || !heroGround) { hStepClip = null; return; }
+        float p = GtaAnim.At(c, hPhase);
+        if (c == hStepClip && hStepPhase >= 0f && p != hStepPhase)
+        {
+            float a = hStepPhase, b = p;
+            bool wrapped = b < a;
+            for (int i = 0; i + 1 < c.Tags.Length; i += 2)
+            {
+                int k = (int)c.Tags[i];
+                if (k != 1 && k != 2) continue;
+                float t = c.Tags[i + 1];
+                bool crossed = wrapped ? (t > a || t <= b) : (t > a && t <= b);
+                if (crossed && (c.Cycle ? heroVel.magnitude > 0.3f : true))
+                {
+                    Play(Sfx.Step, heroPos, heroTier == 3 ? 0.9f : heroTier == 2 ? 0.7f : 0.45f);
+                    break;
+                }
+            }
+        }
+        hStepClip = c;
+        hStepPhase = p;
     }
 }
