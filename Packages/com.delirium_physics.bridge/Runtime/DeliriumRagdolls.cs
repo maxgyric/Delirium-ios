@@ -118,6 +118,15 @@ namespace Delirium.Ragdoll
         /// (Sandbox) The height of a floor under everything when the level was read (the sandbox's ground): nothing
         /// falls through the level's big triangles; null: no such floor.
         public static float? SandboxFloor;
+        /// (Sandbox) Things that move under the game's own control (a bike): never read into a ragdoll's level (it
+        /// keeps what it read: a static copy left where the thing was). They meet ragdolls as movers instead.
+        public static readonly HashSet<Transform> SandboxNotLevel = new HashSet<Transform>();
+        internal static bool NotLevel(Transform t)
+        {
+            if (SandboxNotLevel.Count == 0) return false;
+            for (; t != null; t = t.parent) if (SandboxNotLevel.Contains(t)) return true;
+            return false;
+        }
         /// (Sandbox) A map's mesh collider read into the level cache now (as it loads), not at the first ragdoll.
         public static void SandboxWarm(Collider col) => global::Delirium.Ragdoll.Doll.Warm(col); // ("Doll" here is a method of this class)
         /// (Sandbox) A bone's place in the world in its character's bind pose, when the game knows it better than the
@@ -1633,6 +1642,7 @@ namespace Delirium.Ragdoll
             foreach (var col in Physics.OverlapSphere(c, R))
             {
                 if (col.isTrigger || col.transform.IsChildOf(owner) || col.attachedRigidbody != null && !col.attachedRigidbody.isKinematic) continue;
+                if (Plugin.NotLevel(col.transform)) continue; // (Sandbox: a bike)
                 int cid = col.GetInstanceID();
                 bool cellular = col is BoxCollider || col is MeshCollider mcol && mcol.sharedMesh != null && mcol.sharedMesh.isReadable;
                 if (!cellular && !has.Add((cid, long.MinValue))) continue; // a box, a terrain: given whole, once

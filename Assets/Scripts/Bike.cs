@@ -232,6 +232,8 @@ public partial class Game
         }
         bikeOwn.Clear();
         bikeOwn.AddRange(bikeGo.GetComponentsInChildren<Collider>(true));
+        // never part of the map to Delirium (a ragdoll keeps the level it read: a copy would stay where it was parked)
+        DeliriumRagdolls.SandboxNotLevel.Add(bikeGo.transform);
         // to Delirium a car: whoever it runs into gets GTA IV's hit by a vehicle
         try { nm.RegisterMover(bikeGo.transform, DeliriumRagdolls.MoverKind.Car, Vector3.zero, true); } catch (Exception) { }
         // in front of the hero, facing his way
@@ -246,7 +248,7 @@ public partial class Game
     void BikeRemove()
     {
         if (riding) BikeOff(false);
-        if (bikeGo != null) { try { nm.UnregisterCar(bikeGo.transform); nm.NotMovers.Remove(bikeGo.transform); } catch (Exception) { } Destroy(bikeGo); }
+        if (bikeGo != null) { try { nm.UnregisterCar(bikeGo.transform); nm.NotMovers.Remove(bikeGo.transform); DeliriumRagdolls.SandboxNotLevel.Remove(bikeGo.transform); } catch (Exception) { } Destroy(bikeGo); }
         bikeGo = null;
         bikeWreck = null;
         if (bikeH >= 0) { try { db_drop(bikeH); } catch (Exception) { } }
@@ -531,22 +533,21 @@ public partial class Game
     {
         // not a car to Delirium any more before the rider is its ragdoll (its box would be in his world)
         try { nm.UnregisterCar(bikeGo.transform); } catch (Exception) { }
+        float speed = velIn.magnitude;
+        // the bike first: a loose body (and kept out of his ragdoll's world till he's clear of it), then him
+        var bt = bikeGo.transform;
+        nm.NotMovers.Add(bt);
+        bikeClearAt = Time.time + 1.5f;
         BikeOff(true);
+        BikeFall(vel * 0.6f + hitNormal * 1.5f + Vector3.up * Mathf.Clamp(speed * 0.08f, 0.5f, 2.5f), bt.right * Mathf.Clamp(speed * 0.25f, 1f, 6f));
         heroMode = 0;
         heroGround = false;
-        float speed = velIn.magnitude;
         Vector3 fly = velIn * 0.7f + Vector3.up * Mathf.Clamp(speed * 0.15f, 1.5f, 3.5f);
         heroVel = new Vector3(fly.x, 0f, fly.z);
         heroVy = fly.y;
         heroPos = hero.Body.Hips.position;
         Knock(speed > 12f);
         if (heroRb != null && !heroRb.isKinematic) heroRb.linearVelocity = fly;
-        // the bike: what the wall left it, a little up, its nose going down and over
-        var bt = bikeGo.transform;
-        BikeFall(vel * 0.6f + hitNormal * 1.5f + Vector3.up * Mathf.Clamp(speed * 0.08f, 0.5f, 2.5f), bt.right * Mathf.Clamp(speed * 0.25f, 1f, 6f));
-        // his legs are round it as he goes: the bike isn't in his ragdoll's world till he's clear of it
-        nm.NotMovers.Add(bt);
-        bikeClearAt = Time.time + 1.5f;
         Play(Sfx.Punch, bikeGo.transform.position, 1f);
     }
 

@@ -275,3 +275,9 @@ files (default.xex, the three exported files, the archives) are picked by the la
 - Video 3 (into the platform at 50 km/h): thrown ~30 m, upright in mid-air. The wreck (a dynamic Rigidbody) became a
   Delirium Object mover at once (MoversNear: loose bodies within 5 m), its box round his legs: NM shoved them out.
   Bridge: NotMovers (a set MoversNear skips); the wreck is in it 1.5 s after a crash. Throw: velIn*0.7 + up 1.5-3.5.
+- Video 4: floating ragdoll by the bike lane after a crash; on the bridge, clinging outside the parapet; lying on the
+  sea. A new ragdoll reads the level once (static colliders within R, non-kinematic bodies skipped): the bike's
+  BoxCollider was still static at the crash (BikeFall came after Knock) and a parked bike was static too, so a copy
+  stayed in the world where it was. Bridge: DeliriumRagdolls.SandboxNotLevel (never read as level; the bike's root,
+  always); the crash makes the bike a loose body before the rider's ragdoll. The sea: maps' meshes all get colliders,
+  water too: solid for ragdolls (left as is: passable water needs swimming or a respawn; asked the user).
