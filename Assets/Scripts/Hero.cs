@@ -21,6 +21,7 @@ public partial class Game
     // the clips: the legs' one (and its gait partner), cross-faded from the one before
     GtaAnim.Clip hCur, hCurB, hPrev, hPrevB;
     float hCurW, hPrevW, hPhase, hPrevPhase, hRate, hPrevRate, hFade, hUpper, hPhaseSet = -1f;
+    float hFadeLen = 0.3f, hNextFade;     // this cross-fade's length; the next one's when it isn't the usual
     GtaAnim.Frame[] fA, fB, fC;
     int[] upperBones, bendBones;
     // from a ragdoll back onto the clips: the pose he was in, faded out
@@ -132,6 +133,7 @@ public partial class Game
         if (riding) { riding = false; Unseat(); }
         heroMode = 0;
         act = null;
+        ClimbStop();
         heroDrunk = heroLeaning = heroDrunkPending = false;
         heroPos = at;
         heroYaw = yaw;
@@ -237,6 +239,7 @@ public partial class Game
             {
                 // from the pose his clip has him in, going the way he was going
                 if (!HeroRagdoll()) heroDrunk = false;
+                else ClimbStop();
             }
             if (heroDrunk) heroMode = 2;
             heroAim = false;
@@ -289,6 +292,7 @@ public partial class Game
         heroYaw = Yaw(hero);
         if (nm.State(body.transform).Ragdolled) nm.GetUp(body.transform, 0.001f);
         heroMode = 0;
+        ClimbStop();
         heroVel = Vector3.ProjectOnPlane(velocity, Vector3.up);
         if (heroVel.magnitude > 4f) heroVel = heroVel.normalized * 4f;
         heroVy = 0f;
@@ -365,6 +369,12 @@ public partial class Game
 
     void Walk(float dt)
     {
+        if (climbing)
+        {
+            ClimbUpdate(dt);
+            Step(dt);
+            return;
+        }
         float walk = GtaAnim.Move[1].Ok ? GtaAnim.Move[1].Speed : 1.5f, run = GtaAnim.Move[2].Ok ? GtaAnim.Move[2].Speed : 3.6f;
         float mag = Mathf.Clamp01(hStick.magnitude);
         Vector3 wish = Quaternion.Euler(0f, hCamYaw, 0f) * new Vector3(hStick.x, 0f, hStick.y);
@@ -378,8 +388,16 @@ public partial class Game
         if (heroAim && GtaAnim.Strafe[1, 0].Ok) target = Mathf.Min(target, GtaAnim.Strafe[1, 0].Speed);
         Vector3 want = wish.sqrMagnitude > 1e-6f ? wish.normalized * target : Vector3.zero;
         if (Time.time < heroSpotUntil) want = Vector3.zero;
+        if (hJumpReq && heroGround && Time.time >= heroSpotUntil && !heroNoclip && TryClimb())
+        {
+            // a ledge he can reach in front of him: GTA V's climb (or vault) instead of a jump
+            hJumpReq = false;
+            Step(dt);
+            return;
+        }
         if (hJumpReq) act = null;
-        if (!VAct(dt, mag, wish, walk, run))
+        if (clAir != null) ClimbAir(dt); // off the far side of what he vaulted
+        else if (!VAct(dt, mag, wish, walk, run))
         {
             if (heroAim || heroNoclip)
                 heroVel = Vector3.MoveTowards(heroVel, want, (heroGround ? 14f : 3f) * dt);
@@ -449,7 +467,7 @@ public partial class Game
         // the ground under him: steps up and down a stair's height, falls off anything higher
         bool was = heroGround;
         float reach = heroGround ? 0.7f + 0.45f : 0.7f + Mathf.Max(0.03f, -heroVy * dt);
-        if (heroVy <= 0f && Physics.Raycast(heroPos + Vector3.up * 0.7f, Vector3.down, out var floor, reach))
+        if (heroVy <= 0f && Physics.Raycast(heroPos + Vector3.up * 0.7f, Vector3.down, out var floor, reach) && !VaultedTop(floor.point.y))
         {
             heroGround = true;
             heroVy = 0f;
@@ -462,7 +480,8 @@ public partial class Game
             if (was && heroVy <= 0f) { heroAir = 0f; heroJumpStill = false; }
             heroGround = false;
         }
-        if (!heroGround)
+        if (!heroGround && clAir != null && clAir.Rise != null) heroAir += dt; // the vault's own drop (ClimbAir)
+        else if (!heroGround)
         {
             heroAir += dt;
             heroVy -= 14f * dt;
@@ -489,6 +508,7 @@ public partial class Game
     {
         if (heroMode != 0) return;
         act = null;
+        ClimbStop();
         var owner = hero.Body.transform;
         if (!HeroRagdoll()) return;
         if (highFall && Tumble(owner, new Vector3(heroVel.x, heroVy, heroVel.z))) hero.HighFalling = true;
@@ -520,6 +540,9 @@ public partial class Game
             if (!heroAim) { rate = 1f / move[0].Dur; return move[0]; }
             speed = new Vector3(heroVel.x, 0f, heroVel.z).magnitude;
         }
+        // GTA V's climb (two of its heights blended) or the vault's way down
+        if (climbing) { hPhaseSet = Mathf.Clamp01(clT / clA.Dur); rate = 0f; b = clB; w = clB != null ? clW : 0f; return clA; }
+        if (clAir != null) { hPhaseSet = Mathf.Clamp01(clAirT / clAir.Dur); rate = 0f; return clAir; }
         // GTA V's start, stop or turn: its own clip, its own clock (VAct)
         if (act != null) { hPhaseSet = Mathf.Clamp01(actT / act.Dur); rate = 0f; return act; }
         // a jump on the spot is its clip from start to end (the clip itself lifts him and lands him)
@@ -573,6 +596,8 @@ public partial class Game
         {
             hPrev = hCur; hPrevB = hCurB; hPrevW = hCurW; hPrevPhase = hPhase; hPrevRate = hRate;
             hFade = hPrev != null ? 1f : 0f;
+            hFadeLen = hNextFade > 0f ? hNextFade : GtaAnim.V ? 0.3f : 0.2f;
+            hNextFade = 0f;
             bool cyclic = c != null && hCur != null && !OneShot(c) && !OneShot(hCur);
             if (!cyclic) hPhase = 0f;
         }
@@ -591,8 +616,10 @@ public partial class Game
         FootSteps(c);
         hPrevPhase += dt * hPrevRate;
         hPrevPhase -= Mathf.Floor(hPrevPhase);
-        hFade = Mathf.Max(0f, hFade - dt / (GtaAnim.V ? 0.3f : 0.2f));
-        hUpper = Mathf.MoveTowards(hUpper, heroAim ? 1f : 0f, dt / 0.18f);
+        hFade = Mathf.Max(0f, hFade - dt / Mathf.Max(hFadeLen, 0.01f));
+        bool gunV = VGun() != null;
+        hUpper = Mathf.MoveTowards(hUpper, heroAim ? 1f : 0f, dt / (gunV && heroAim ? 0.1f : 0.18f));
+        AimClock(dt);
     }
 
     // After the frame's moves: his pose from the clips onto the bones (LateUpdate, before the camera).
@@ -611,7 +638,8 @@ public partial class Game
         }
         body.Apply(fA, heroPos, heroYaw);
         // the upper body: the gun's aim (its clip's last frame) over the legs' clip, bent up and down with the camera
-        if (hUpper > 0f)
+        if (hUpper > 0f && AimPoseV(body)) { }
+        else if (hUpper > 0f)
         {
             int ac = kGuns[weapon % kGuns.Length].AimClip;
             var aim = GtaAnim.Aim[ac >= 0 && ac < GtaAnim.Aim.Length ? ac : 0];
@@ -768,6 +796,7 @@ public partial class Game
         var ray = new Ray(cam.transform.position, cam.transform.forward);
         var m = Pick(ray, out Vector3 point);
         hCamPitch -= gun.Between < 0.2f ? 0.1f : gun.Long ? 0.5f : 0.3f; // the kick
+        Shot(gun);
         Vector3 muzzle = gunModel != null ? gunModel.transform.TransformPoint(gunMuzzle) : hero.Body.Hips.position;
         Flash(muzzle, 0.14f);
         PlayGun(muzzle);
@@ -1082,7 +1111,7 @@ public partial class Game
     int actKind;              // 1 start, 2 stop, 3 turn
     float actT, actYaw, actWarp, actEnd, hNextPhase = -1f;
     Vector3 actPos;
-    bool actRun, startLeft;
+    bool actRun, startLeft, actStill;   // actStill: a climb's end that leaves him standing
     float actNextAt, actSpeed;
     float hStepPhase = -1f;
     GtaAnim.Clip hStepClip;
@@ -1139,7 +1168,7 @@ public partial class Game
             else return false;
         }
         // let go of a start, pushed during a stop: back to the plain moves
-        if ((actKind == 1 && !push) || (actKind == 2 && push)) { act = null; actNextAt = Time.time + 0.25f; return false; }
+        if ((actKind == 1 && !push) || (actKind == 2 && push) || (actKind == 5 && actStill && push && actT / act.Dur > 0.45f)) { act = null; actNextAt = Time.time + 0.25f; return false; }
         actT += dt;
         float ph = actT / act.Dur;
         if (ph >= actEnd)
@@ -1172,7 +1201,7 @@ public partial class Game
         actPos = heroPos;
         actYaw = heroYaw;
         float clipTurn = GtaAnim.Motion(c, 1f).z;
-        actWarp = kind == 2 || kind == 4 ? 0f : Mathf.DeltaAngle(clipTurn, leftTurn);
+        actWarp = kind == 2 || kind >= 4 ? 0f : Mathf.DeltaAngle(clipTurn, leftTurn);
         float b = GtaAnim.Mark(c, 3);
         actEnd = b > 0.05f ? b : 1f;
         return true;
@@ -1184,7 +1213,7 @@ public partial class Game
         var done = act;
         act = null;
         float ph = actEnd;
-        if (actKind == 2)
+        if (actKind == 2 || (actKind == 5 && actStill))
         {
             heroVel = Vector3.zero;
             return;

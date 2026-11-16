@@ -49,6 +49,8 @@ struct Target {
 struct Anim {
     // (Sandbox) GTA V's clips out of Grand Theft Gmod's model (Anim::open_mdl), not GTA IV's anim.img
     mdl: Option<mdl::Mdl>,
+    // (Sandbox) the addon's other models (male_guns.mdl: the guns' aims and shots), the same skeleton
+    extra: Vec<mdl::Mdl>,
     meta: HashMap<String, Meta>, // sequence -> its clip data (the addon's)
     pc: bool,
     table: Vec<img::Entry>,
@@ -260,6 +262,7 @@ impl Anim {
         (&mut file).take(delirium_data::kv!(1 int) << delirium_data::kv!(127 int)).read_to_end(&mut head).map_err(|e| e.to_string())?;
         let table = img::read_table(&head, Some(&key))?;
         Ok(Anim {
+            extra: vec![],
             mdl: None,
             meta: HashMap::new(),
             pc,
@@ -290,10 +293,20 @@ impl Anim {
         let mut vmeta = None;
         let a = if let Some(m) = &self.mdl {
             let seq = name.to_ascii_lowercase();
-            let ai = *m.seqs.get(&seq).ok_or(format!("no sequence {name} in the model"))?;
             speed = self.meta.get(&seq).map(|v| v.speed);
             vmeta = self.meta.get(&seq).cloned();
-            mdl_animation(m, ai)?
+            if let Some(&ai) = m.seqs.get(&seq) {
+                mdl_animation(m, ai)?
+            } else {
+                // another of the addon's models: its bones put onto the first one's by name
+                let (x, ai) = self.extra.iter().find_map(|x| x.seqs.get(&seq).map(|&ai| (x, ai))).ok_or(format!("no sequence {name} in the models"))?;
+                let mut a = mdl_animation(x, ai)?;
+                a.tracks.retain_mut(|t| match m.bones.iter().position(|b| b.name.eq_ignore_ascii_case(&x.bones[t.bone as usize].name)) {
+                    Some(b) => { t.bone = b as u16; true }
+                    None => false,
+                });
+                a
+            }
         } else {
             self.dict(dict)?.iter().find(|a| a.name.eq_ignore_ascii_case(name)).cloned().ok_or(format!("no {name} in {dict}"))?
         };
@@ -378,9 +391,14 @@ impl Anim {
         let a = &self.clips[c].anim;
         let mut way = self.travel(c).with_z(0.0);
         if self.clips[c].speed.is_some_and(|v| v > 0.2) && way.length() / a.duration.max(0.01) < 0.2 {
-            // (Sandbox) in place (GTA V's, the addon's), going the way the body faces
+            // (Sandbox) in place (GTA V's, the addon's): the way its clip data has it go (a strafe's sideways), or
+            // the way the body faces
             let keys: Vec<String> = self.names.iter().map(|n| key(n)).collect();
-            way = facing(&world(&self.parents, &self.bind), &keys).unwrap_or(Vec3::X).with_z(0.0);
+            let data = self.clips[c].v.as_ref().and_then(|m| m.curve.len().checked_sub(3).map(|k| Vec3::new(m.curve[k], m.curve[k + 1], 0.0)));
+            way = match data {
+                Some(d) if d.length() > 0.05 => d,
+                _ => facing(&world(&self.parents, &self.bind), &keys).unwrap_or(Vec3::X).with_z(0.0),
+            };
         } else if way.length() / a.duration.max(0.01) < 0.2 {
             return 0.0;
         }
@@ -504,6 +522,9 @@ impl Anim {
                 f.0 += m;
             }
             (Vec3::ZERO, 0.0)
+        } else if mode == 3 {
+            // (Sandbox) as the clip has it about the model's ground (GTA V's climbs: their rise is the clip data's)
+            (Vec3::ZERO, self.target.as_ref().map_or(0.0, |t| t.gta_floor))
         } else if travel {
             let m = self.mover(c, phase);
             for f in gw.iter_mut() {
@@ -562,14 +583,23 @@ impl Anim {
             if let Ok(rd) = std::fs::read_dir(&folder) {
                 for e in rd.flatten() {
                     let n = e.file_name().to_string_lossy().to_ascii_lowercase();
-                    if n.starts_with("lib_male_move") && n.ends_with(".lua") {
+                    if (n.starts_with("lib_male_move") || n.starts_with("lib_male_guns")) && n.ends_with(".lua") {
                         if let Ok(t) = std::fs::read_to_string(e.path()) { lua_meta(&t, &mut meta); }
                     }
                 }
             }
         }
+        // the guns' model beside it, when it's there (its aims, shots, reloads)
+        let mut extra = vec![];
+        if let Some(g) = path.parent().map(|d| d.join("male_guns.mdl")).filter(|g| g.is_file()) {
+            match std::fs::read(&g).map_err(|e| e.to_string()).and_then(mdl::Mdl::read) {
+                Ok(x) => extra.push(x),
+                Err(e) => eprintln!("male_guns.mdl: {e}"),
+            }
+        }
         let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
         Ok(Anim {
+            extra,
             parents: m.bones.iter().map(|b| b.parent).collect(),
             bind: m.bones.iter().map(|b| (b.pos, b.quat)).collect(),
             names: m.bones.iter().map(|b| b.name.clone()).collect(),
@@ -617,6 +647,8 @@ struct Meta {
     dur: f32,
     curve: Vec<f32>,
     tags: Vec<f32>,
+    // (climbs) its root's height over the clip (m), sampled as `curve`
+    zcurve: Vec<f32>,
 }
 
 fn lua_meta(text: &str, into: &mut HashMap<String, Meta>) {
@@ -644,7 +676,9 @@ fn lua_meta(text: &str, into: &mut HashMap<String, Meta>) {
         }
         let Some(m) = seq.as_ref().and_then(|s| into.get_mut(s)) else { continue };
         if let Some(v) = num(line, "speed =") { m.speed = v * 0.0254; } // inches/s -> m/s
-        if let Some(c) = braces(line, "curve =") {
+        if let Some(c) = braces(line, "zcurve =") {
+            m.zcurve = c.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).map(|v| v * 0.0254).collect();
+        } else if let Some(c) = braces(line, "curve =") {
             let v: Vec<f32> = c.split(',').filter_map(|x| x.trim().parse().ok()).collect();
             m.curve = v.chunks_exact(3).flat_map(|t| [t[0] * 0.0254, t[1] * 0.0254, t[2]]).collect();
         }
@@ -717,7 +751,7 @@ pub unsafe extern "C" fn dv_clip(name: *const c_char) -> i32 {
 /// heel, 3 blend-out). How many floats; 0 for a clip without (GTA IV's), -1 on an error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dv_clip_data(c: i32, what: i32, out: *mut f32, cap: i32) -> i32 {
-    match with_clip(c, |a, i| Ok(a.clips[i].v.as_ref().map(|m| if what == 0 { m.curve.clone() } else { m.tags.clone() }).unwrap_or_default())) {
+    match with_clip(c, |a, i| Ok(a.clips[i].v.as_ref().map(|m| match what { 0 => m.curve.clone(), 1 => m.tags.clone(), _ => m.zcurve.clone() }).unwrap_or_default())) {
         Ok(v) => {
             let n = v.len().min(cap.max(0) as usize);
             if !out.is_null() { unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), out, n) }; }
@@ -895,6 +929,23 @@ pub unsafe extern "C" fn da_pose_seat(c: i32, phase: f32, out: *mut f32, moved: 
     }) {
         Ok(()) => 0,
         Err(e) => fail(format!("da_pose_seat: {e}")),
+    }
+}
+
+/// (Sandbox) As `da_pose`, the clip about the model's own ground, where the clip has it (not stood on its feet, not
+/// put back over its middle): GTA V's climbs and vaults, whose rise and way along are the clip data's.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn da_pose_ground(c: i32, phase: f32, out: *mut f32, moved: *mut i32) -> i32 {
+    if out.is_null() || moved.is_null() {
+        return fail("da_pose_ground: no output");
+    }
+    match with_clip(c, |a, i| {
+        let n = a.target.as_ref().ok_or("no target skeleton")?.parents.len();
+        let (o, m) = unsafe { (std::slice::from_raw_parts_mut(out, n * 7), std::slice::from_raw_parts_mut(moved, n)) };
+        a.pose_mode(i, phase, o, m, 3)
+    }) {
+        Ok(()) => 0,
+        Err(e) => fail(format!("da_pose_ground: {e}")),
     }
 }
 

@@ -31,6 +31,7 @@ public static class GtaAnim
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_pose(int c, float phase, float[] o, int[] moved);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_pose_root(int c, float phase, float[] o, int[] moved);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_pose_seat(int c, float phase, float[] o, int[] moved);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_pose_ground(int c, float phase, float[] o, int[] moved);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int dv_open(byte[] dir);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int dv_clip(byte[] name);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int dv_clip_data(int c, int what, float[] o, int cap);
@@ -46,6 +47,11 @@ public static class GtaAnim
         // (GTA V's) its root's way over the clip (x forward, y left m, turn left deg; samples evenly over it) and
         // its marks (kind, phase pairs: 1 left heel down, 2 right heel down, 3 where it blends out)
         public float[] Curve, Tags;
+        // (GTA V's climbs) its root's rise over the clip (m, sampled as Curve); posed about the model's ground (the
+        // rise and the way along are the clip data's: Hero moves him by them)
+        public float[] Rise;
+        public bool Ground;
+        public int Frames => Mathf.RoundToInt(Dur * 30f) + 1;
     }
 
     /// 0 not started, 1 loading, 2 ready, -1 failed (Error says why).
@@ -81,11 +87,34 @@ public static class GtaAnim
         var k = c?.Curve;
         if (k == null || k.Length < 3) return Vector3.zero;
         int n = k.Length / 3;
-        float x = Mathf.Clamp01(phase) * (n - 1);
+        // a sample every third frame (the addon's clip data; the last one may fall short of the end)
+        float x = Mathf.Min(Mathf.Clamp01(phase) * (c.Frames - 1) / 3f, n - 1);
         int i = Mathf.Min((int)x, n - 1), j = Mathf.Min(i + 1, n - 1);
         float f = x - i;
         return new Vector3(Mathf.Lerp(k[i * 3], k[j * 3], f), Mathf.Lerp(k[i * 3 + 1], k[j * 3 + 1], f), Mathf.Lerp(k[i * 3 + 2], k[j * 3 + 2], f));
     }
+
+    /// How high a GTA V climb has lifted its root by `phase` (m)
+    public static float Rise(Clip c, float phase)
+    {
+        var k = c?.Rise;
+        if (k == null || k.Length == 0) return 0f;
+        float x = Mathf.Min(Mathf.Clamp01(phase) * (c.Frames - 1) / 3f, k.Length - 1);
+        int i = Mathf.Min((int)x, k.Length - 1), j = Mathf.Min(i + 1, k.Length - 1);
+        return Mathf.Lerp(k[i], k[j], x - i);
+    }
+
+    /// GTA V's climbs, vaults and their ends, by the addon's name ("standclimbup_80", "clamberpose_stand")
+    public static readonly Dictionary<string, Clip> VClimb = new Dictionary<string, Clip>();
+    public static Clip Climb(string name) => name != null && VClimb.TryGetValue(name, out var c) && c.Ok ? c : null;
+
+    /// A gun's GTA V clips (male_guns.mdl): its aim, its shot (the kick) and its raise, each looking up, ahead and
+    /// down [0 high, 1 med, 2 low]
+    public class GunSet
+    {
+        public readonly Clip[] Aim = new Clip[3], Fire = new Clip[3], Raise = new Clip[3];
+    }
+    public static readonly Dictionary<string, GunSet> VGuns = new Dictionary<string, GunSet>();
 
     /// A GTA V clip's first mark of `kind` (1 left heel, 2 right heel, 3 blend-out), or -1
     public static float Mark(Clip c, int kind, float after = -1f)
@@ -275,6 +304,8 @@ public static class GtaAnim
         if (n > 0) { c.Curve = new float[n]; Array.Copy(buf, c.Curve, n); }
         n = dv_clip_data(c.Id, 1, buf, buf.Length);
         if (n > 0) { c.Tags = new float[n]; Array.Copy(buf, c.Tags, n); }
+        n = dv_clip_data(c.Id, 2, buf, buf.Length);
+        if (n > 0) { c.Rise = new float[n]; Array.Copy(buf, c.Rise, n); }
         return c;
     }
 
@@ -325,7 +356,57 @@ public static class GtaAnim
         if (!VLandStop[1].Ok) VLandStop[1] = VLandStop[0];
                 VRunTurn[0] = GetV("gtgl_male_move_run_turn_180_l", false);
         VRunTurn[1] = GetV("gtgl_male_move_run_turn_180_r", false);
-        Debug.Log($"[Hero] GTA V's moves: walk {Move[1].Speed:F2} m/s, run {Move[2].Speed:F2}, sprint {Move[3].Speed:F2}");
+        // the strafes while aiming (8 ways from ahead turning left, walk and run) and the stance
+        string[] ways = { "fwd_0", "fwd_m45", "bwd_m90", "bwd_m135", "bwd_180", "bwd_135", "fwd_90", "fwd_45" };
+        var sw = new Clip[2, 8];
+        bool strafes = true;
+        for (int g = 0; g < 2; g++)
+            for (int k = 0; k < 8; k++)
+            {
+                sw[g, k] = GetV("gtgl_male_move_mstrafe_" + (g == 0 ? "walk_" : "run_") + ways[k] + "_loop", true);
+                strafes &= sw[g, k].Ok;
+            }
+        var si = GetV("gtgl_male_move_mstrafe_idle", true);
+        if (strafes && si.Ok)
+        {
+            for (int g = 0; g < 2; g++) for (int k = 0; k < 8; k++) Strafe[g, k] = sw[g, k];
+            StrafeIdle = si;
+        }
+        // climbs and vaults, and how they end (Hero's climb)
+        string[] climbs =
+        {
+            "standclimbup_20", "standclimbup_80", "standclimbup_80_low", "standclimbup_140_low", "standclimbup_140_high", "standclimbup_180_low",
+            "standclimbup_180_high", "standclimbup_220", "standclimbup_220_high", "standclimbup_295_low", "standclimbupclose_20", "standclimbupclose_80_low",
+            "runclimbup_80", "runclimbup_140_low", "runclimbup_140_high", "runclimbup_180_low", "runclimbup_180_high", "runclimbup_220",
+            "runclimbup_220_high", "runclimbup_295_low",
+            "run_climbup_20_l", "run_climbup_80_l", "run_climbup_20_r", "run_climbup_80_r",
+            "run_climbup_20_l_close", "run_climbup_80_l_close", "run_climbup_20_r_close", "run_climbup_80_r_close",
+            "standvault_20", "standvault_80", "standvaultclose_20", "standvaultclose_80",
+            "standclimbup_exit", "standclimbup_exit_walk", "run_climbup_exit_l", "run_climbup_exit_r",
+            "standvault_exit", "run_vault_exit_l", "run_vault_exit_r",
+            "clamberpose_stand", "clamberpose_walk", "clamberpose_run",
+            "clamberpose_fall", "clamberpose_fall_wide", "clamberpose_fall_xtrawide", "clamberpose_fall_low",
+        };
+        foreach (var n in climbs)
+        {
+            var c = GetV("gtgl_male_move_" + n, false);
+            c.Ground = true;
+            if (c.Ok) VClimb[n] = c;
+        }
+        // the guns' aims and shots (male_guns.mdl beside male_move.mdl)
+        foreach (var g in new[] { "wpi", "wp5", "wsm", "war", "wpu", "wsr" })
+        {
+            var set = new GunSet();
+            string[] pitch = { "high", "med", "low" };
+            for (int k = 0; k < 3; k++)
+            {
+                set.Aim[k] = GetV("gtgl_male_guns_" + g + "_aim_" + pitch[k] + "_loop", false);
+                set.Fire[k] = GetV("gtgl_male_guns_" + g + "_fire_" + pitch[k], false);
+                set.Raise[k] = GetV("gtgl_male_guns_" + g + "_idle_2_aim_fwd_" + pitch[k], false);
+            }
+            if (set.Aim[1].Ok) VGuns[g] = set;
+        }
+        Debug.Log($"[Hero] GTA V's moves: walk {Move[1].Speed:F2} m/s, run {Move[2].Speed:F2}, sprint {Move[3].Speed:F2}; strafes {(strafes && si.Ok ? "yes" : "no")}, {VClimb.Count} climb clips, guns: {string.Join(",", VGuns.Keys)}");
     }
 
     /// One bone's frame in the model's space (Unity's axes, the model facing +X).
@@ -349,7 +430,13 @@ public static class GtaAnim
             moved = new int[Bones];
         }
         phase = Mathf.Clamp01(phase);
-        int r = root ? da_pose_root(c.Id, phase, raw, moved) : da_pose(c.Id, phase, raw, moved);
+        int r;
+        if (c.Ground && !noGround)
+        {
+            try { r = da_pose_ground(c.Id, phase, raw, moved); }
+            catch (EntryPointNotFoundException) { noGround = true; r = da_pose(c.Id, phase, raw, moved); }
+        }
+        else r = root ? da_pose_root(c.Id, phase, raw, moved) : da_pose(c.Id, phase, raw, moved);
         if (r < 0) return false;
         for (int b = 0; b < Bones && b < into.Length; b++)
         {
@@ -372,7 +459,7 @@ public static class GtaAnim
     }
 
     static readonly Dictionary<string, Clip> vehicleClips = new Dictionary<string, Clip>();
-    static bool noSeat;
+    static bool noSeat, noGround;
 
     /// As Pose, about the clip's own root (in a vehicle: its seat) and not stood on its feet: the pelvis where the
     /// clip has it from the seat. A library without it (an old desktop build): false.

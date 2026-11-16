@@ -25,6 +25,9 @@ fn main() {
         let moving = delirium_anim::da_target(23, ptrs.as_ptr(), parents.as_ptr(), local.as_ptr(), rep.as_mut_ptr(), 1024);
         println!("target: {moving} moving: {}", std::ffi::CStr::from_ptr(rep.as_ptr()).to_string_lossy());
         for s in &a[2..] {
+            // "+name": about the model's ground (da_pose_ground: climbs), its rise (the clip data's) printed
+            let ground = s.starts_with('+');
+            let s = &s.trim_start_matches('+').to_string();
             let n = CString::new(s.clone()).unwrap();
             let c = delirium_anim::dv_clip(n.as_ptr());
             let (mut d, mut v) = (0.0, 0.0);
@@ -32,15 +35,18 @@ fn main() {
             let sync = delirium_anim::da_clip_sync(c);
             let mut out = vec![0f32; 23 * 7];
             let mut moved = vec![0i32; 23];
-            print!("{s}: clip {c} dur {d:.2} speed {v:.2} sync {sync:.2} |");
+            let mut zc = vec![0f32; 256];
+            let nz = delirium_anim::dv_clip_data(c, 2, zc.as_mut_ptr(), 256);
+            print!("{s}: clip {c} dur {d:.2} speed {v:.2} sync {sync:.2} rise {:?} |", &zc[..nz.max(0) as usize]);
+            let pose = |c, p, o: *mut f32, m: *mut i32| if ground { delirium_anim::da_pose_ground(c, p, o, m) } else { delirium_anim::da_pose(c, p, o, m) };
             for k in 0..5 {
-                delirium_anim::da_pose(c, k as f32 / 4.0, out.as_mut_ptr(), moved.as_mut_ptr());
+                pose(c, k as f32 / 4.0, out.as_mut_ptr(), moved.as_mut_ptr());
                 let z = |b: usize| out[b * 7 + 2];
                 print!(" pelvis {:.2} feet {:.2}/{:.2} head {:.2} lfoot x {:.2};", z(0), z(3), z(7), z(14), out[3 * 7]);
             }
             println!();
             for k in 0..8 {
-                delirium_anim::da_pose(c, k as f32 / 8.0, out.as_mut_ptr(), moved.as_mut_ptr());
+                pose(c, k as f32 / 8.0, out.as_mut_ptr(), moved.as_mut_ptr());
                 println!("P {s} {k} {}", (0..23).map(|b| format!("{:.3},{:.3},{:.3}", out[b * 7], out[b * 7 + 1], out[b * 7 + 2])).collect::<Vec<_>>().join(" "));
             }
         }

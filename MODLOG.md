@@ -403,3 +403,21 @@ files (default.xex, the three exported files, the archives) are picked by the la
   520-200 deg/s; SmoothDamp speed 0.28/0.38/0.55 s up by gait, 0.22-0.35 down), facing 0.09 s. Landings: after
   > 0.3 s in the air, GTA V's jump_land_{l,r} running on (act kind 4: its curve, or on at the landing speed) or
   land_stop_{l,r} when stopped, then the loop on the same foot.
+- (23:40) GTA V's climbs and vaults, aims and shots. The anim library: the addon's male_guns.mdl read beside
+  male_move.mdl (Anim.extra; its tracks put on the first model's bones by name), lib_male_guns*.lua parsed too,
+  zcurve (a climb's root height, inches -> m) as dv_clip_data what=2, pose mode 3 / da_pose_ground (the clip about
+  the model's ground: no re-grounding, no centring; a climb's last frame then matches its exit's first exactly), a
+  strafe's sync from its own way (curve). GtaAnim.Motion/Rise sample the clip data as the addon does (a sample every
+  third frame). HeroClimb.cs: Jump in front of a ledge 0.48-2.95 m up runs Grand Theft Gmod's FindLedge (probes at
+  0.5/0.91/1.37 m, range 0.61 or 1.12 m by speed, face within 50 deg, the top from above, depth to 1.02 m with a
+  drop > 0.46 m: a vault, head room, room at the end) and pick_climb (low: standclimbup_20/80_low or close, at a run
+  run_climbup_20/80_{l,r}[_close], vaults standvault_20/80; high: standclimbup_/runclimbup_ bands 80/140_low,
+  140_high/180_low, 180_high/220, 220_high/295_low blended by height, the pair whose reach fits best). The climb:
+  its curve plus the shift to the wall (smoothed over 30%), its zcurve scaled to the real height, the facing turned
+  onto the wall; then clamberpose_stand/walk/run (room 1.0/2.0 m) or standclimbup_exit[_walk] / run_climbup_exit_*
+  as act kind 5, or after a vault standvault_exit / run_vault_exit_* / clamberpose_fall* down the far side (its own
+  drop, the vaulted top not ground). Aiming: GTA V's strafes (mstrafe_{walk,run}_* 8 ways, mstrafe_idle) for the legs,
+  the gun's aim_{high,med,low}_loop blended by the camera's pitch (47 up / 66 down) on the upper body, the raise
+  (idle_2_aim_fwd_*) when he starts, each shot its fire_* clip (an automatic's looping while held) plus a kick on a
+  spring (pistol 7 deg ... sniper 15). Guns: pistol wpi, deagle wp5, SMG wsm, AK war, shotgun wpu, sniper wsr.
+- Phone: male_guns.mdl beside male_move.mdl, and lib_male_guns*.lua beside lib_male_move*.lua.
