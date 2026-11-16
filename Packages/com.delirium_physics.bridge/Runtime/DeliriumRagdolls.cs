@@ -756,6 +756,18 @@ namespace Delirium.Ragdoll
             return true;
         }
 
+        /// Dead (Sandbox): no euphoria any more, a plain ragdoll: its behaviours stopped, every joint let go (relaxed all
+        /// the way: only the joints' limits hold it), and it never gets up by itself.
+        public bool Die(Transform owner)
+        {
+            var d = Doll(owner, Vector3.zero, false);
+            if (d == null) return false;
+            d.Run(x => nm_agent_set_dead(x.agent, 1));
+            d.Run(x => nm_msg_send_text(x.agent, x.world, "stopAllBehaviours"));
+            d.Run(x => nm_agent_task_relax(x.agent, 0f, -1f));
+            return true;
+        }
+
         /// Any reaction, written as the Playroom console's line: its NM message name, then name=value params ("rollUp start=true", "bodyWrithe start=true armStiffness=12", "stopAllBehaviours"): ragdolls it first
         /// if it isn't one. Vectors are x,y,z in NM's space (Z up, metres from the world's origin). False when NM refuses the line.
         public bool React(Transform owner, string line)

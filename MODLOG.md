@@ -362,3 +362,8 @@ files (default.xex, the three exported files, the archives) are picked by the la
 - A long fall landed on its feet every time: highFall's pdStrength torque turns the pelvis to land feet first
   (nmhf.rs). Game.Tumble: "highFall start=true pdStrength=0 orientateBodyToFallDirection=false" and a starting spin
   (Doll.Spin: each part's mass times w x r about the centre of mass), 1.5-4.5 rad/s, mostly a somersault.
+- (17:44) Health from the world's hits: Game.Impacts, a ragdoll's centre losing > 7 m/s in a frame while touching the
+  world: (lost - 7)^1.4 * 12 + 4 off 200 (3 m drop starts hurting, 10 m about all, more kills). Hero's bar under his
+  status (HeroGui HealthBar); Menu > Automatic > "Hero can't die" (heroImmortal; "Unlimited health" stays for all).
+  Any death (hits, fire, a head shot, the Kill tool): DeliriumRagdolls.Die = dead + stopAllBehaviours + relax at
+  stiffness 0 (relaxation 100: only joint limits), once (Man.Limp), till Reset.

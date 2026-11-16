@@ -237,7 +237,7 @@ public partial class Game
             m.Body = MakeBody(name, at, yaw, heroPart);
             m.Health = 200f;
             m.Down = m.FireLeft = 0f;
-            m.Killed = m.Rising = m.Broken = m.Cut = m.Curled = false;
+            m.Killed = m.Rising = m.Broken = m.Cut = m.Curled = m.Limp = m.VelSet = false;
             m.Touch = null;
             foreach (var e in paramEdits)
             {

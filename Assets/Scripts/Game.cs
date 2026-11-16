@@ -251,6 +251,10 @@ public partial class Game : MonoBehaviour
         public bool Cut;             // a limb cut off: he stays down till he's reset
         public bool Broken;          // Delirium wouldn't take him (the Console says why)
         public bool Killed;
+        public bool Limp;            // dead: a plain ragdoll now (DeliriumRagdolls.Die)
+        public Vector3 LastVel;      // his centre's speed last frame, for a hit's damage
+        public bool VelSet;
+        public float HurtAt;         // the last hit's time (the health bar flashes)
         // standing up: from where he lay to the standing pose
         public bool Rising;
         public float RiseT;
@@ -536,7 +540,7 @@ public partial class Game : MonoBehaviour
             m.Body.Stand(m.Home, m.Yaw);
             m.Health = 200f;
             m.Down = m.FireLeft = 0f;
-            m.Killed = m.Rising = m.Broken = m.Cut = false;
+            m.Killed = m.Rising = m.Broken = m.Cut = m.Limp = m.VelSet = false;
             if (m.Hero) HeroPlace(m.Home, m.Yaw);
         }
     }
@@ -569,13 +573,12 @@ public partial class Game : MonoBehaviour
     // One man's upkeep: on Delirium whenever he isn't standing up; up again once he has lain still.
     void Mind(Man m, float dt)
     {
-        if (m.Rising || m.Broken) return;
-        if (m.Hero && riding) return; // on the bike: his pose is the bike's (Bike.cs), not a ragdoll's
+        if (m.Rising || m.Broken || (m.Hero && riding)) { m.VelSet = false; return; } // (riding: his pose is the bike's)
         var owner = m.Body.transform;
         var st = nm.State(owner);
         if (m.Hero && heroMode == 0)
         {
-            if (!st.Ragdolled) return;       // on his clips
+            if (!st.Ragdolled) { m.VelSet = false; return; } // on his clips
             heroMode = 1;                    // something took him (a blast, a reaction from the menu)
             heroNoclip = false;
             heroAim = false;
@@ -589,10 +592,11 @@ public partial class Game : MonoBehaviour
             m.Down = 0f;
             return;
         }
+        Impacts(m, st, dt);
         if (m.FireLeft > 0f)
         {
             m.FireLeft -= dt;
-            if (!god) m.Health = Mathf.Max(m.Health - 12f * dt, 0f);
+            if (!Immortal(m)) m.Health = Mathf.Max(m.Health - 12f * dt, 0f);
             if (m.Health <= 0f)
             {
                 nm.OnFire(owner, false, 0f);
@@ -631,7 +635,12 @@ public partial class Game : MonoBehaviour
                 nm.SetAttacker(owner, hero.Body.transform, false); // where he is now
             }
         }
-        if (m.Killed || st.Dead) return;
+        if (m.Killed || st.Dead)
+        {
+            // dead, whatever killed him: a plain ragdoll from now on, not euphoria
+            if (!m.Limp) { nm.Die(owner); m.Limp = true; m.Killed = true; m.Health = 0f; }
+            return;
+        }
         m.Down = st.Fallen ? m.Down + dt : 0f;
         bool still = st.LyingFor > 0.5f || (m.Down > 4.5f && st.Velocity.magnitude < 0.6f);
         if (autoGetUp && !m.Cut && m.Down > 1.6f && still && m.FireLeft <= 0f && held != m)
@@ -681,6 +690,32 @@ public partial class Game : MonoBehaviour
         float rate = Mathf.Clamp(vel.magnitude * 0.3f, 1.5f, 4.5f) * UnityEngine.Random.Range(0.7f, 1.2f);
         nm.Spin(owner, axis * rate);
         return true;
+    }
+
+    bool Immortal(Man m) => god || (m.Hero && heroImmortal);
+
+    // The world hitting him: GTA IV's way of hurting a ragdoll by how hard it's stopped. His centre's speed lost in a
+    // frame while touching something (a fall's landing, a wall at speed off the bike, a blast's throw into it): from
+    // 7 m/s lost (about a 3 m drop) it hurts, a 10 m drop is about all of a man's 200, more kills.
+    void Impacts(Man m, DeliriumRagdolls.DollState st, float dt)
+    {
+        Vector3 v = st.Velocity;
+        if (!m.VelSet || dt <= 0f) { m.LastVel = v; m.VelSet = true; return; }
+        float lost = (v - m.LastVel).magnitude;
+        m.LastVel = v;
+        if (lost < 7f || m.Killed || st.Contacts == null) return;
+        bool touching = false;
+        foreach (int c in st.Contacts) if (c != 0) { touching = true; break; }
+        if (!touching) return;
+        float damage = Mathf.Pow(lost - 7f, 1.4f) * 12f + 4f;
+        m.HurtAt = Time.time;
+        if (Immortal(m)) return;
+        m.Health = Mathf.Max(0f, m.Health - damage);
+        if (m.Health <= 0f)
+        {
+            m.Killed = true;
+            Debug.Log($"[Sandbox] {m.Body.name}: killed by a hit ({lost:F1} m/s lost)");
+        }
     }
 
     void BeginRise(Man m)

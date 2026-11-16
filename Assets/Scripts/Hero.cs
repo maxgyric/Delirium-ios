@@ -1000,5 +1000,24 @@ public partial class Game
         RadialGui(w, h);
         string what = hero.Killed ? "dead (Reset)" : hero.Rising ? "getting up" : heroMode == 2 ? "drunk" : heroMode == 1 ? "knocked" : kGuns[weapon % kGuns.Length].Label;
         if (what != "") GUI.Label(new Rect(w * 0.5f - 90f, 60f, 180f, 24f), what, new GUIStyle(chip) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold });
+        HealthBar(w, hero);
+    }
+
+    // His health under the status: green to red, white for a moment when he's hurt; "∞" when he can't die
+    void HealthBar(float w, Man m)
+    {
+        if (m == null) return;
+        var r = new Rect(w * 0.5f - 90f, 88f, 180f, 12f);
+        var back = GUI.color;
+        GUI.color = new Color(0f, 0f, 0f, 0.45f);
+        GUI.DrawTexture(r, Texture2D.whiteTexture);
+        bool forever = Immortal(m);
+        float f = forever ? 1f : Mathf.Clamp01(m.Health / 200f);
+        var c = forever ? new Color(0.35f, 0.75f, 1f, 0.9f) : Color.Lerp(new Color(0.9f, 0.2f, 0.15f, 0.9f), new Color(0.3f, 0.85f, 0.35f, 0.9f), f);
+        if (Time.time - m.HurtAt < 0.15f) c = Color.white;
+        GUI.color = c;
+        GUI.DrawTexture(new Rect(r.x + 1f, r.y + 1f, (r.width - 2f) * f, r.height - 2f), Texture2D.whiteTexture);
+        GUI.color = back;
+        GUI.Label(new Rect(r.x, r.y + 11f, r.width, 18f), forever ? "HP ∞" : "HP " + Mathf.CeilToInt(m.Health), new GUIStyle(chip) { alignment = TextAnchor.MiddleCenter, fontSize = 11 });
     }
 }

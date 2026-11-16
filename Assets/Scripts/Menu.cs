@@ -13,6 +13,7 @@ public partial class Game
     bool menuOpen;
     int tab = 2;
     Vector2 scroll;
+    bool heroImmortal;
     bool god, weak, autoGetUp = true, ice, stepLimit = true, fireReact = true, headshots = true, dive;
     bool paused;
     float gunPush = 1f;
@@ -86,7 +87,7 @@ public partial class Game
         m.Body.Stand(at, yaw);
         m.Health = 200f;
         m.Down = m.FireLeft = 0f;
-        m.Killed = m.Rising = m.Broken = m.Cut = false;
+        m.Killed = m.Rising = m.Broken = m.Cut = m.Limp = m.VelSet = false;
         if (m.Hero) HeroPlace(at, yaw);
     }
 
@@ -372,6 +373,8 @@ public partial class Game
             god = gd;
             Delirium.Native.nm_set_headshot_kills(headshots && !god ? 1 : 0);
         }
+        heroImmortal = Tick(heroImmortal, "Hero can't die");
+        Info("Hits from the world (falls, crashes, blasts) take health away: a 10 m fall is about all of it. Dead: a plain ragdoll (no euphoria) till Reset.");
         bool wk = Tick(weak, "Weaken muscles");
         if (wk != weak) { weak = wk; OutfitAll(); }
         bool hs = Tick(headshots, "A head shot kills");
