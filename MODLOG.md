@@ -313,3 +313,13 @@ files (default.xex, the three exported files, the archives) are picked by the la
   outer ones once, widest piece 4.0 m. Level's SplitNear prunes pieces out of reach but cuts the same.
 - Bike.cs LiftOutOfGround: before the rider is ragdolled, the body lifted by its deepest bone's depth under the
   ground under it (+0.1 m): a leg started under a one-sided surface stays under it.
+- Still the same on the phone (16 Nov, 14:18). Looked for why NM's ground could be wrong where the map's isn't:
+  - NM resolves a limb sunk into a triangle along the triangle's face and edge normals only (gjk.rs Pen::Tri): a
+    triangle facing down pushes it further down. The map's materials are often glTF doubleSided (drawn Cull Off), so
+    a road made facing down looks right and was given to NM facing down. A mirrored node (negative scale) turns every
+    face of its mesh round in world space too. Cached now orients (Facing): mirrored -> all turned; two-sided
+    material -> faces pointing more than 60 degrees down turned up (walls left as made). Boxes in a mirrored space too.
+  - SizeKey rounded the ragdoll's size to 0.05: a world built for 1.0 served a ragdoll of 1.02 (2% off, metres far
+    from the origin). Now the exact size.
+  - Menu > Physics view: NM's ground under a grid of rays round each ragdoll (green up / red down / yellow wall, drawn
+    through everything) and its parts (blue, pink touching). New nm_world_raycast_face (the triangle's own face).

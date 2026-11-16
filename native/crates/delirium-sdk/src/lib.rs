@@ -374,6 +374,26 @@ pub unsafe extern "C" fn nm_world_triangle_count(w: *const NmWorld) -> i32 {
     unsafe { w.as_ref() }.map_or_else(|| fail(NM_E_ARG, "null world"), |w| w.0.len() as i32)
 }
 
+/// (Sandbox debug) As nm_world_raycast, `normal` the hit triangle's own face (as made), not turned to the ray.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nm_world_raycast_face(w: *const NmWorld, from: *const f32, dir: *const f32, len: f32, dist: *mut f32, normal: *mut f32) -> i32 {
+    let Some(w) = (unsafe { w.as_ref() }) else { return fail(NM_E_ARG, "null world") };
+    if from.is_null() || dir.is_null() {
+        return fail(NM_E_ARG, "null vector");
+    }
+    let s = w.2.len();
+    match w.0.cast_face(unsafe { v3(from) } / s, unsafe { v3(dir) }.normalize_or_zero(), len / s) {
+        Some((t, n)) => {
+            if !dist.is_null() {
+                unsafe { *dist = t * s };
+            }
+            unsafe { put3(normal, n) };
+            1
+        }
+        None => 0,
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn nm_world_raycast(w: *const NmWorld, from: *const f32, dir: *const f32, len: f32, dist: *mut f32, normal: *mut f32) -> i32 {
     let Some(w) = (unsafe { w.as_ref() }) else { return fail(NM_E_ARG, "null world") };

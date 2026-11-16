@@ -625,6 +625,33 @@ namespace Delirium.Ragdoll
         /// Where the ragdoll under `owner` has its head (NM's head part, in the game's world); null when it isn't one.
         public Vector3? Head(Transform owner) => dolls.FirstOrDefault(x => x.Owner == owner)?.Part(12);
 
+        /// (Sandbox debug) What Delirium's own copy of the world is round `owner`'s ragdoll, to draw over the game's:
+        /// a ray down every `step` m within `reach` m of its hips, where it met NM's ground and which way that
+        /// triangle faces (as made: down-facing ones pull a limb in); and its parts where NM has them, touching or not.
+        public bool SandboxView(Transform owner, float reach, float step, List<Vector3> ground, List<Vector3> faces,
+            List<Vector3> parts, List<bool> touching)
+        {
+            ground.Clear(); faces.Clear(); parts.Clear(); touching.Clear();
+            var d = dolls.FirstOrDefault(x => x.Owner == owner);
+            if (d == null || d.world == IntPtr.Zero || d.Hips == null) return false;
+            var c = d.Hips.position;
+            float[] down = { 0f, 0f, -1f }, dist = new float[1], n = new float[3];
+            for (float x = -reach; x <= reach + 1e-3f; x += step)
+                for (float z = -reach; z <= reach + 1e-3f; z += step)
+                {
+                    var from = new Vector3(c.x + x, c.y + 3f, c.z + z);
+                    if (nm_world_raycast_face(d.world, new[] { from.x, from.z, from.y }, down, 12f, dist, n) != 1) continue;
+                    ground.Add(from + Vector3.down * dist[0]);
+                    faces.Add(new Vector3(n[0], n[2], n[1]));
+                }
+            for (int i = 0, k = nm_agent_part_count(d.agent); i < k; i++)
+            {
+                parts.Add(d.Part(i));
+                touching.Add(nm_agent_get_part_contact(d.agent, i) != 0);
+            }
+            return true;
+        }
+
         /// An explosion at `at` reaching `owner` (call it for each character in range): thrown out and up at up to `speed`
         /// m/s, less with distance, then the game's explosion reaction for 6 s. Take its health yourself.
         public bool Explode(Transform owner, Vector3 at, float radius = 5f, float speed = 15f)
@@ -1219,7 +1246,8 @@ namespace Delirium.Ragdoll
         static Bounds wholeBounds;
         static int wholeScene;
         WholeWorld inWhole;
-        static int SizeKey(float s) => Mathf.RoundToInt(s * 20f);
+        // the exact size: a world built for 1.0 given to a ragdoll of 1.02 is 2% off, metres off far from the middle
+        static int SizeKey(float s) => BitConverter.SingleToInt32Bits(s);
 
         internal static void Whole(IList<Collider> level, float? floorY)
         {
@@ -1252,9 +1280,11 @@ namespace Delirium.Ragdoll
                         for (int i = 0; i < 8; i++)
                             k[i] = t.TransformPoint(box.center + Vector3.Scale(box.size / 2, new Vector3((i & 1) * 2 - 1, (i & 2) - 1, (i >> 1 & 2) - 1)));
                         var bix = new int[36];
+                        bool inward = t.localToWorldMatrix.determinant < 0; // mirrored: faces turned round, as Level's
                         for (int fi = 0; fi < 6; fi++)
                         {
                             var fc = faces[fi];
+                            if (inward) fc = new[] { fc[0], fc[3], fc[2], fc[1] };
                             new[] { fc[0], fc[1], fc[2], fc[0], fc[2], fc[3] }.CopyTo(bix, fi * 6);
                         }
                         parts.Add((k, bix, mat));
@@ -1749,7 +1779,7 @@ namespace Delirium.Ragdoll
             var local = m.sharedMesh.vertices;
             c.v = new Vector3[local.Length];
             for (int i = 0; i < local.Length; i++) c.v[i] = mat.MultiplyPoint3x4(local[i]);
-            c.ix = m.sharedMesh.triangles;
+            c.ix = Facing(m, c.v, mat);
             for (int t = 0; t * 3 + 2 < c.ix.Length; t++)
             {
                 Vector3 a = c.v[c.ix[t * 3]], b = c.v[c.ix[t * 3 + 1]], d = c.v[c.ix[t * 3 + 2]];
@@ -1762,6 +1792,44 @@ namespace Delirium.Ragdoll
             }
             meshCache[m] = c;
             return c;
+        }
+
+        /// (Sandbox) A mesh collider's triangles as NM needs them: each facing the way the player sees it. NM pushes a
+        /// limb sunk into a triangle out along the triangle's face, so one facing the wrong way pulls it in: a ragdoll
+        /// went waist-deep into a path and slid along under it. Two causes: a mirrored transform (a negative scale:
+        /// drawn right, its corners' order turned round in the world), and the file's two-sided materials (glTF
+        /// doubleSided, drawn from both sides: nothing shows which way a face was made; maps' roads and paths often
+        /// face down). Those are turned to face up, unless they're walls (left as made).
+        static int[] Facing(MeshCollider m, Vector3[] world, Matrix4x4 at)
+        {
+            var mesh = m.sharedMesh;
+            bool mirrored = at.determinant < 0;
+            var r = m.GetComponent<Renderer>();
+            var mats = r != null ? r.sharedMaterials : null;
+            var ix = new List<int>();
+            int flippedUp = 0;
+            for (int sm = 0; sm < mesh.subMeshCount; sm++)
+            {
+                if (mesh.GetTopology(sm) != MeshTopology.Triangles) continue;
+                var tri = mesh.GetTriangles(sm);
+                var mat = mats != null && mats.Length > 0 ? mats[Mathf.Min(sm, mats.Length - 1)] : null;
+                bool twoSided = mat != null && mat.HasProperty("_Cull") && mat.GetFloat("_Cull") < 0.5f;
+                for (int i = 0; i + 2 < tri.Length; i += 3)
+                {
+                    int a = tri[i], b = tri[i + 1], d = tri[i + 2];
+                    if (mirrored) (b, d) = (d, b);
+                    if (twoSided)
+                    {
+                        var n = Vector3.Cross(world[b] - world[a], world[d] - world[a]);
+                        float len = n.magnitude;
+                        if (len > 1e-12f && n.y / len < -0.5f) { (b, d) = (d, b); flippedUp++; }
+                    }
+                    ix.Add(a); ix.Add(b); ix.Add(d);
+                }
+            }
+            if (mirrored || flippedUp > 0)
+                Debug.Log($"[NM] {m.name}: {(mirrored ? "mirrored, its faces turned round; " : "")}{flippedUp} two-sided faces turned to face up");
+            return ix.ToArray();
         }
 
         // Triangle t of a cached mesh, when it's within reach of `c`.
@@ -1932,11 +2000,14 @@ namespace Delirium.Ragdoll
                         var k = new Vector3[8];
                         for (int i = 0; i < 8; i++)
                             k[i] = t.TransformPoint(box.center + Vector3.Scale(box.size / 2, new Vector3((i & 1) * 2 - 1, (i & 2) - 1, (i >> 1 & 2) - 1)));
-                        // The 6 faces as corner bits (x 1, y 2, z 4), each wound outward in Unity.
+                        // The 6 faces as corner bits (x 1, y 2, z 4), each wound outward in Unity (turned round in a
+                        // mirrored space, where they'd face in)
                         int[][] faces = { new[] { 0, 2, 3, 1 }, new[] { 4, 5, 7, 6 }, new[] { 0, 1, 5, 4 }, new[] { 2, 6, 7, 3 }, new[] { 0, 4, 6, 2 }, new[] { 1, 3, 7, 5 } };
+                        bool inward = t.localToWorldMatrix.determinant < 0;
                         for (int fi = 0; fi < 6; fi++) // (Sandbox: its faces in pieces NM keeps, those near it, each once)
                         {
                             var f = faces[fi];
+                            if (inward) f = new[] { f[0], f[3], f[2], f[1] };
                             SplitNear(cid, fi * 2, k[f[0]], k[f[1]], k[f[2]]);
                             SplitNear(cid, fi * 2 + 1, k[f[0]], k[f[2]], k[f[3]]);
                         }

@@ -300,6 +300,9 @@ public partial class Game
             foreach (var x in men) Restand(x, Feet(x), Yaw(x));
         }
 
+        if (GUILayout.Button("Physics view: " + (physView ? "On" : "Off"), physView ? btnOn : btn, GUILayout.Height(34f))) physView = !physView;
+        Info("Delirium's own ground (green up, red facing down) and body (blue) over the game's, round a ragdoll");
+
         Head("People");
         GUILayout.BeginHorizontal();
         if (GUILayout.Button("Add one", btn, GUILayout.Height(34f))) AddMan();

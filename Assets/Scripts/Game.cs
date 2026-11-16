@@ -749,6 +749,7 @@ public partial class Game : MonoBehaviour
     void LateUpdate()
     {
         if (!running || nm == null) return;
+        PhysViewGather();
         foreach (var m in men)
         {
             if (!m.Rising) continue;

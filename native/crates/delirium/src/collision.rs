@@ -504,6 +504,14 @@ impl Collision {
         best.map(|(_, _, at, n)| (at, n))
     }
 
+    /// (Sandbox debug) A ray's first triangle and that triangle's own face (which way it was made to face), not
+    /// the side the ray met.
+    pub fn cast_face(&self, from: Vec3, dir: Vec3, len: f32) -> Option<(f32, Vec3)> {
+        let (t, _, (slot, id)) = self.hit(from, dir, len, false)?;
+        let [a, b, c] = self.chunks[slot as usize].as_ref()?.triangles[id as usize];
+        Some((t, (b - a).cross(c - a).normalize_or_zero()))
+    }
+
     pub fn cast(&self, from: Vec3, dir: Vec3, len: f32) -> Option<(f32, Vec3)> {
         self.hit(from, dir, len, false).map(|(t, n, _)| (t, n))
     }

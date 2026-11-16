@@ -97,6 +97,9 @@ namespace Delirium
         /// <summary>A ray from `from` along `dir` for `len` m: 1 and the hit's distance and normal, or 0.</summary>
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern int nm_world_raycast(IntPtr w, float[] from, float[] dir, float len, float[] dist, float[] normal);
+        /// <summary>(Sandbox debug) As nm_world_raycast; `normal` the hit triangle's own face, as made.</summary>
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int nm_world_raycast_face(IntPtr w, float[] from, float[] dir, float len, float[] dist, float[] normal);
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern IntPtr nm_build_from_text([MarshalAs(UnmanagedType.LPUTF8Str)] string t);
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
