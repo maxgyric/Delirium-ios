@@ -36,6 +36,7 @@ public partial class Game
     Vector2 hStick;
     int hStickId = kNone, hDragId = kNone, hFireId = kNone, hSprintId = kNone;
     bool heroSprint;
+    float sprintPower, heroYawVel;
     int heroTier = 1;              // 1 walk, 2 run, 3 sprint: each its own clip
     GameObject gunModel;
     int gunShown = -1;
@@ -365,21 +366,42 @@ public partial class Game
         float walk = GtaAnim.Move[1].Ok ? GtaAnim.Move[1].Speed : 1.5f, run = GtaAnim.Move[2].Ok ? GtaAnim.Move[2].Speed : 3.6f;
         float mag = Mathf.Clamp01(hStick.magnitude);
         Vector3 wish = Quaternion.Euler(0f, hCamYaw, 0f) * new Vector3(hStick.x, 0f, hStick.y);
-        // walk, run and sprint are three gaits, each its own clip at its own pace: a light push of the stick
-        // walks, a full one runs, Sprint held sprints
+        // GTA V's: the stick walks (slower pushed lightly), Sprint held jogs, Sprint tapped quickly sprints (each tap
+        // tops up the sprint, which runs down by itself: keep tapping to keep it)
         float sprint = GtaAnim.Move[3].Ok ? GtaAnim.Move[3].Speed : run * 1.5f;
-        heroTier = heroSprint && mag > 0.12f && !heroAim ? 3 : mag > (heroTier >= 2 ? 0.6f : 0.75f) ? 2 : 1;
-        float target = mag < 0.12f ? 0f : heroTier == 3 ? sprint : heroTier == 2 ? run : walk * Mathf.Clamp(mag / 0.6f, 0.6f, 1f);
+        sprintPower = Mathf.Max(0f, sprintPower - dt * 0.55f);
+        bool sprinting = sprintPower > (heroTier == 3 ? 0.2f : 0.5f);
+        heroTier = heroAim ? 1 : sprinting ? 3 : heroSprint ? 2 : 1;
+        float target = mag < 0.12f ? 0f : heroTier == 3 ? sprint : heroTier == 2 ? run : walk * Mathf.Clamp(mag / 0.7f, 0.5f, 1f);
         if (heroAim && GtaAnim.Strafe[1, 0].Ok) target = Mathf.Min(target, GtaAnim.Strafe[1, 0].Speed);
         Vector3 want = wish.sqrMagnitude > 1e-6f ? wish.normalized * target : Vector3.zero;
         if (Time.time < heroSpotUntil) want = Vector3.zero;
         if (hJumpReq) act = null;
         if (!VAct(dt, mag, wish, walk, run))
         {
-            heroVel = Vector3.MoveTowards(heroVel, want, (heroGround ? 14f : 3f) * dt);
+            if (heroAim || heroNoclip)
+                heroVel = Vector3.MoveTowards(heroVel, want, (heroGround ? 14f : 3f) * dt);
+            else
+            {
+                // his speed and his heading apart: the speed eases up and down (a run takes a moment to reach,
+                // longer at the top), the heading swings round, slower the faster he goes (a wide arc at a sprint,
+                // not a snap), as GTA V's
+                float cur = heroVel.magnitude;
+                Vector3 dir = cur > 0.05f ? heroVel / cur : Quaternion.Euler(0f, heroYaw, 0f) * Vector3.forward;
+                if (want.sqrMagnitude > 1e-6f)
+                {
+                    Vector3 wd = want.normalized;
+                    float turn = Mathf.Lerp(480f, 150f, Mathf.InverseLerp(walk, sprint, cur));
+                    dir = cur < 0.3f ? wd : Vector3.RotateTowards(dir, wd, turn * Mathf.Deg2Rad * dt, 0f);
+                }
+                float accel = !heroGround ? 2f : target > cur ? (cur < walk ? 4.5f : cur < run ? 3.2f : 2.4f) : (target < 0.1f ? 6f : 4f);
+                cur = Mathf.MoveTowards(cur, want.magnitude, accel * dt);
+                heroVel = dir * cur;
+            }
             float wantYaw = heroAim ? hCamYaw : heroVel.magnitude > 0.3f ? Mathf.Atan2(heroVel.x, heroVel.z) * Mathf.Rad2Deg : heroYaw;
             if (Time.time < heroFaceUntil) wantYaw = heroFaceYaw; // a punch: at the man he's hitting
-            heroYaw = Mathf.MoveTowardsAngle(heroYaw, wantYaw, (heroAim ? 720f : 540f) * dt);
+            if (heroAim || Time.time < heroFaceUntil) heroYaw = Mathf.MoveTowardsAngle(heroYaw, wantYaw, 720f * dt);
+            else heroYaw = Mathf.SmoothDampAngle(heroYaw, wantYaw, ref heroYawVel, 0.12f, 600f, dt);
         }
 
         if (heroSpotLand > 0f && Time.time >= heroSpotLand)
@@ -517,6 +539,12 @@ public partial class Game
             var c = GtaAnim.Gait(new[] { GtaAnim.Strafe[0, sector], GtaAnim.Strafe[1, sector] }, speed, out rate, out b, out w);
             if (c != null) return c;
         }
+        if (speed >= 0.3f && GtaAnim.V)
+        {
+            // GTA V's gaits blended by his speed (walk into jog into sprint, one stride carried through)
+            var g = GtaAnim.Gait(new[] { move[1], move[2], move[3] }, speed, out rate, out b, out w);
+            if (g != null) return g;
+        }
         if (speed >= 0.3f)
         {
             // the gait's own clip, its stride matched to his speed within 0.45-1.25 of its own
@@ -559,7 +587,7 @@ public partial class Game
         FootSteps(c);
         hPrevPhase += dt * hPrevRate;
         hPrevPhase -= Mathf.Floor(hPrevPhase);
-        hFade = Mathf.Max(0f, hFade - dt / 0.2f);
+        hFade = Mathf.Max(0f, hFade - dt / (GtaAnim.V ? 0.3f : 0.2f));
         hUpper = Mathf.MoveTowards(hUpper, heroAim ? 1f : 0f, dt / 0.18f);
     }
 
@@ -959,7 +987,9 @@ public partial class Game
         if (Input.GetKeyDown(KeyCode.E)) { if (riding) BikeOff(false); else if (NearBike()) BikeOn(); }
         // the right mouse button aims (on a phone Unity calls a second finger the right button: not that)
         if (Input.touchCount == 0 && Input.GetMouseButtonDown(1) && heroMode == 0 && !kGuns[weapon % kGuns.Length].Fists) heroAim = !heroAim;
+        bool sprintWas = heroSprint;
         heroSprint = hSprintId != kNone || Input.GetKey(KeyCode.LeftShift);
+        if (heroSprint && !sprintWas) sprintPower = Mathf.Min(sprintPower + 0.4f, 1.2f); // a tap
         hCamPitch = Mathf.Clamp(hCamPitch, -40f, 65f);
         if (heroMode != 0) heroAim = false;
     }

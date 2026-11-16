@@ -392,3 +392,8 @@ files (default.xex, the three exported files, the archives) are picked by the la
   after the last heel down), pulling back at a run run_turn_180_{l,r}; the clip moves him (its curve through the
   usual capsule slide) to its blend-out mark, then the walk/run loop starts on the same foot (the last heel mark,
   the loop's own heel mark for that side). Footsteps on GTA V clips' heel marks, not at phase 0 / 0.5.
+- (21:15) Controls as GTA V's: the stick walks (lighter push slower), Sprint held jogs (the run), Sprint tapped
+  sprints (each tap +0.4 to sprintPower, running down 0.55/s; sprint over 0.5, kept down to 0.2). Smoother: speed
+  and heading apart (speed eased 4.5/3.2/2.4 m/s2 up by gait, 4-6 down; heading turning 480 deg/s at a walk down to
+  150 at a sprint), the facing smoothed (SmoothDampAngle 0.12 s), GTA V's gaits blended by speed (Gait: walk/run/
+  sprint pairs, one stride), clip cross-fades 0.3 s.
