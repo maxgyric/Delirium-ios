@@ -736,7 +736,7 @@ public partial class Game
     // GTA V's camera: behind him and a little over, eased (never snapped) to the aim's over-the-shoulder and back,
     // further out the faster he goes (a little wider at a sprint), swinging round behind him by itself while he
     // runs and you leave it alone, pulled in from walls at once and let out slowly.
-    float camDist = 3.4f, camDistV, camSide = 0.2f, camSideV, camHigh = 1.4f, camHighV, camOut = -1f, camFov, camFovBase;
+    float hcDist = 3.4f, hcDistV, camSide = 0.2f, camSideV, camHigh = 1.4f, camHighV, camOut = -1f, camFov, camFovBase;
     Vector3 camPivotV;
     float hLookAt;
 
@@ -749,7 +749,7 @@ public partial class Game
         bool onFeet = heroMode == 0 && !hero.Rising;
         bool aiming = heroAim && onFeet;
         float sp = onFeet ? new Vector3(heroVel.x, 0f, heroVel.z).magnitude : 0f;
-        camDist = Mathf.SmoothDamp(camDist, aiming ? 1.75f : 3.3f + Mathf.InverseLerp(2f, 7f, sp) * 0.8f, ref camDistV, aiming ? 0.12f : 0.4f, Mathf.Infinity, dt);
+        hcDist = Mathf.SmoothDamp(hcDist, aiming ? 1.75f : 3.3f + Mathf.InverseLerp(2f, 7f, sp) * 0.8f, ref hcDistV, aiming ? 0.12f : 0.4f, Mathf.Infinity, dt);
         camSide = Mathf.SmoothDamp(camSide, aiming ? 0.55f : 0.2f, ref camSideV, 0.12f, Mathf.Infinity, dt);
         camHigh = Mathf.SmoothDamp(camHigh, aiming ? 1.55f : 1.4f, ref camHighV, 0.15f, Mathf.Infinity, dt);
         // behind him by itself: on the move, a moment after you last turned it (not when he runs at you)
@@ -772,7 +772,7 @@ public partial class Game
         Vector3 focus = hPivot + turn * Vector3.right * camSide;
         if (Physics.Linecast(hPivot, focus, out var side)) focus = side.point - (focus - hPivot).normalized * 0.12f;
         // not through a wall: pulled in at once, let out slowly
-        float room = Physics.SphereCast(focus, 0.18f, back, out var hit, camDist) ? Mathf.Max(0.3f, hit.distance) : camDist;
+        float room = Physics.SphereCast(focus, 0.18f, back, out var hit, hcDist) ? Mathf.Max(0.3f, hit.distance) : hcDist;
         camOut = camOut < 0f || room < camOut ? room : Mathf.MoveTowards(camOut, room, 2.5f * dt);
         cam.transform.SetPositionAndRotation(focus + back * camOut, turn);
         // a touch wider at a sprint, closer in when aiming
