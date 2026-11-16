@@ -285,6 +285,7 @@ public partial class Game
         float rs = r * 0.7f;
         // the wheel's place in the bike's frame (GTA's), the spring's top above it
         Vector3 top = t.TransformPoint(new Vector3(bikeInfo[w], bikeInfo[w + 2] + bikeInfo[10], bikeInfo[w + 1]));
+        Vector3 centre = t.TransformPoint(new Vector3(bikeInfo[w], bikeInfo[w + 2], bikeInfo[w + 1]));
         Vector3 down = -t.up;
         float reach = bikeInfo[8] + 0.6f;
         Vector3 from = top - down * 0.3f;
@@ -298,6 +299,9 @@ public partial class Game
             if (hero != null && c.transform.IsChildOf(hero.Body.transform)) continue;
             if (c.attachedRigidbody != null && !c.attachedRigidbody.isKinematic) continue; // a ragdoll's part, a crate
             if (bikeHits[i].distance <= 0f) continue; // the ball already in something at its start: not under it
+            // higher than most of the wheel (a wall, a raised bed's side): not something it rolls up; the body meets it
+            float rise = Vector3.Dot(from + down * (bikeHits[i].distance + rs) - centre, -down);
+            if (rise > -0.15f * r) continue;
             if (bikeHits[i].distance < best) { best = bikeHits[i].distance; pick = i; }
         }
         if (pick < 0) { bikeGround[k] = 0f; return; }
@@ -352,6 +356,7 @@ public partial class Game
             BikePlace(before, beforeRot, Vector3.zero);
             return;
         }
+        Vector3 velIn = vel; // before what it hits takes any of it
         bikeSpeed = bikeOut[16];
         bikeGear = (int)bikeOut[17];
         bool fallen = bikeOut[25] > 0.5f;
@@ -408,7 +413,7 @@ public partial class Game
         }
         t.SetPositionAndRotation(pos, rot);
         BikeLook();
-        if (riding && rideBlend >= 1f && (fallen || hitSpeed > 7f)) BikeCrash(vel, hitNormal);
+        if (riding && rideBlend >= 1f && (fallen || hitSpeed > 7f)) BikeCrash(velIn, vel, hitNormal);
         else if (fallen) BikeFall(vel);
     }
 
@@ -438,14 +443,16 @@ public partial class Game
     }
 
     // Over on its side with nobody on it: Unity's physics has it.
-    void BikeFall(Vector3 vel)
+    void BikeFall(Vector3 vel) => BikeFall(vel, Vector3.zero);
+
+    void BikeFall(Vector3 vel, Vector3 spin)
     {
         if (bikeWreck != null) return;
         try { nm.UnregisterCar(bikeGo.transform); } catch (Exception) { }
         bikeWreck = bikeGo.AddComponent<Rigidbody>();
         bikeWreck.mass = Mathf.Max(80f, bikeInfo[11]);
         bikeWreck.linearVelocity = vel;
-        bikeWreck.angularVelocity = new Vector3(bikeOut[10], bikeOut[12], bikeOut[11]) * -1f;
+        bikeWreck.angularVelocity = new Vector3(bikeOut[10], bikeOut[12], bikeOut[11]) * -1f + spin;
         bikeWreck.interpolation = RigidbodyInterpolation.Interpolate;
     }
 
@@ -516,18 +523,23 @@ public partial class Game
     }
 
     // A hard hit or a spill: the rider onto Delirium's ragdoll going the way the bike was, the bike onto Unity's.
-    void BikeCrash(Vector3 vel, Vector3 hitNormal)
+    // `velIn`: how it was going before the hit (the rider keeps it: over the bars, GTA IV's way); `vel`: the bike's
+    // after the wall took its share
+    void BikeCrash(Vector3 velIn, Vector3 vel, Vector3 hitNormal)
     {
         BikeOff(true);
         heroMode = 0;
         heroGround = false;
-        Vector3 fly = vel + Vector3.up * Mathf.Clamp(vel.magnitude * 0.25f, 1f, 4f);
+        float speed = velIn.magnitude;
+        Vector3 fly = velIn * 0.85f + Vector3.up * Mathf.Clamp(speed * 0.3f, 2f, 6f);
         heroVel = new Vector3(fly.x, 0f, fly.z);
         heroVy = fly.y;
         heroPos = hero.Body.Hips.position;
-        Knock(vel.magnitude > 12f);
+        Knock(speed > 12f);
         if (heroRb != null && !heroRb.isKinematic) heroRb.linearVelocity = fly;
-        BikeFall(vel * 0.6f + hitNormal * 1.5f);
+        // the bike: what the wall left it, a little up, its nose going down and over
+        var bt = bikeGo.transform;
+        BikeFall(vel * 0.6f + hitNormal * 1.5f + Vector3.up * Mathf.Clamp(speed * 0.08f, 0.5f, 2.5f), bt.right * Mathf.Clamp(speed * 0.25f, 1f, 6f));
         Play(Sfx.Punch, bikeGo.transform.position, 1f);
     }
 

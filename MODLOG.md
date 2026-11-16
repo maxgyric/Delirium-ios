@@ -265,3 +265,6 @@ files (default.xex, the three exported files, the archives) are picked by the la
 - Wheels: a sphere cast (0.7 r) per wheel, the contact at the ball's bottom, edge normals leaned toward up: rolls over
   step edges instead of popping.
 - Arrow icons: one texture a direction (GUIUtility.RotateAroundPivot misplaces under the scaled GUI matrix).
+- Video (crash into a raised bed at 68 km/h): the ball wheel climbed the 0.6 m wall; ground hits higher than 0.85 r
+  above the wheel's lowest point are skipped now (the body's box meets them). The rider flew back with the bike: the
+  crash used the speed after the push-out; now velIn * 0.85 + up (over the bars), the bike tumbles nose-down.
