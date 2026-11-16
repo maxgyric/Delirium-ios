@@ -306,15 +306,24 @@ public partial class Game
             if (rise > -0.15f * r) continue;
             if (bikeHits[i].distance < best) { best = bikeHits[i].distance; pick = i; }
         }
-        if (pick < 0) { bikeGround[k] = 0f; return; }
+        if (pick < 0) { bikeGround[k] = 0f; bikeNrmSet[k == 0 ? 0 : 1] = false; return; }
         // the wheel's lowest point where the ball stopped; the ground's slope there, a step's edge leaned toward up
         Vector3 contact = from + down * (best + rs);
         Vector3 nrm = bikeHits[pick].normal;
         if (Vector3.Dot(nrm, -down) < 0.5f) nrm = (nrm - down).normalized;
+        // the ball's normal on a seam between two triangles, a kerb's corner, is the edge's, tilted any way; the tyre
+        // took it as the ground's slope and was pushed sideways (the bike stepped out of line on a flat road).
+        // Eased in over a few frames: a real slope stays, a seam's kick doesn't.
+        int wi = k == 0 ? 0 : 1;
+        if (bikeNrmSet[wi]) nrm = Vector3.Slerp(bikeNrm[wi], nrm, 0.3f).normalized;
+        bikeNrm[wi] = nrm; bikeNrmSet[wi] = true;
         bikeGround[k] = 1f;
         ToGta(contact, bikeGround, k + 1);
         ToGta(nrm, bikeGround, k + 4);
     }
+
+    readonly Vector3[] bikeNrm = new Vector3[2];
+    readonly bool[] bikeNrmSet = new bool[2];
 
     // ------------------------------------------------------------------ every frame
     void BikeUpdate(float dt)
@@ -478,6 +487,7 @@ public partial class Game
         }
         try { nm.RegisterMover(bikeGo.transform, DeliriumRagdolls.MoverKind.Car, Vector3.zero, true); } catch (Exception) { }
         riding = true;
+        EngineStart();
         rideBlend = 0f;
         // on the bike, part of it: Delirium's car knocks down whoever's in its way but its own
         heroParentWas = hero.Body.transform.parent;
@@ -507,6 +517,7 @@ public partial class Game
 
     void BikeOff(bool thrown)
     {
+        EngineStop();
         if (!riding) return;
         riding = false;
         Unseat();
@@ -547,9 +558,12 @@ public partial class Game
         heroVy = fly.y;
         LiftOutOfGround();
         heroPos = hero.Body.Hips.position;
-        Knock(speed > 12f);
+        // not GTA IV's high fall (arms wheeling, legs pedalling hard: his legs thrashed all the way through the air);
+        // the plain knock's, as a shot man's
+        Knock(false);
         if (heroRb != null && !heroRb.isKinematic) heroRb.linearVelocity = fly;
-        Play(Sfx.Punch, bikeGo.transform.position, 1f);
+        if (GtaReady && gtaBikeCrash != null) PlayGtaAt(gtaBikeCrash, bikeGo.transform.position, Mathf.Clamp(speed / 10f, 0.4f, 1f));
+        else Play(Sfx.Punch, bikeGo.transform.position, 1f);
     }
 
     // The thrown rider wholly above the ground before Delirium takes him: leaned over with the bike, his feet on the
@@ -673,11 +687,13 @@ public partial class Game
     Vector2 BtnRide(float w, float h) => new Vector2(w - 190f, h - 275f);
     Vector2 BkLeft(float w, float h) => new Vector2(85f, h - 105f);
     Vector2 BkRight(float w, float h) => new Vector2(215f, h - 105f);
-    Vector2 BkGas(float w, float h) => new Vector2(w - 90f, h - 100f);
-    Vector2 BkBrake(float w, float h) => new Vector2(w - 215f, h - 85f);
-    Vector2 BkFwd(float w, float h) => new Vector2(w - 90f, h - 225f);
-    Vector2 BkBack(float w, float h) => new Vector2(w - 205f, h - 205f);
-    Vector2 BkOff(float w, float h) => new Vector2(w - 70f, 120f);
+    // the right thumb's: Gas in the corner, Brake beside it, the rider's lean (wheelie up, stoppie down) up the
+    // screen's right edge over Gas; Off out of the way at the top
+    Vector2 BkGas(float w, float h) => new Vector2(w - 85f, h - 95f);
+    Vector2 BkBrake(float w, float h) => new Vector2(w - 205f, h - 75f);
+    Vector2 BkFwd(float w, float h) => new Vector2(w - 60f, h - 300f);
+    Vector2 BkBack(float w, float h) => new Vector2(w - 60f, h - 205f);
+    Vector2 BkOff(float w, float h) => new Vector2(w - 190f, h - 300f);
     const float kBigR = 52f;
 
     readonly Texture2D[] arrowTexs = new Texture2D[4];

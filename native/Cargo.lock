@@ -568,6 +568,7 @@ dependencies = [
  "delirium-anim",
  "delirium-bike",
  "delirium-sdk",
+ "delirium-sound",
 ]
 
 [[package]]
@@ -579,6 +580,14 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "delirium-sound"
+version = "0.1.0"
+dependencies = [
+ "delirium-anim",
+ "delirium-data",
 ]
 
 [[package]]

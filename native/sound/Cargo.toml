@@ -1,0 +1,15 @@
+# GTA IV's sounds in Delirium Sandbox, read from your own audio .rpf files. On iOS: inside libdelirium_ios.a.
+[package]
+name = "delirium-sound"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "delirium_sound"
+crate-type = ["rlib"]
+
+[dependencies]
+delirium-data = { path = "../crates/delirium-data" }
+delirium-anim = { path = "../anim" }

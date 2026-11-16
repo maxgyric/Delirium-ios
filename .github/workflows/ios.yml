@@ -110,6 +110,26 @@ jobs:
           proj=$(dirname "$(find iOS -maxdepth 3 -name Unity-iPhone.xcodeproj | head -1)")
           echo "PROJ=$proj" >> "$GITHUB_ENV"
           echo "Xcode project: $proj"; xcodebuild -version
+      # GTA IV's sounds are XMA (the Xbox's): FFmpeg's decoder for them, built once (cached) and put into
+      # libdelirium_ios.a beside native/sound, which calls it (ci/xma.c)
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+          sparse-checkout: ci
+      - uses: actions/cache@v4
+        id: ffcache
+        with:
+          path: ffmpeg-ios
+          key: ffmpeg-7.1-xma-ios13-${{ hashFiles('repo/ci/ffmpeg-ios.sh', 'repo/ci/xma.c') }}
+      - name: FFmpeg's XMA decoder for the iPhone
+        if: steps.ffcache.outputs.cache-hit != 'true'
+        run: bash repo/ci/ffmpeg-ios.sh "$GITHUB_WORKSPACE/ffmpeg-ios"
+      - name: Into libdelirium_ios.a
+        run: |
+          lib=$(find "$PROJ" -name libdelirium_ios.a | head -1)
+          echo "$lib"; [ -n "$lib" ]
+          xcrun libtool -static -o "$lib.new" "$lib" ffmpeg-ios/libxma.a ffmpeg-ios/lib/libavcodec.a ffmpeg-ios/lib/libavutil.a
+          mv "$lib.new" "$lib"; ls -la "$lib"
       - name: Build (unsigned; Sideloadly signs it)
         run: |
           cd "$PROJ"

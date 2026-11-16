@@ -330,3 +330,27 @@ files (default.xex, the three exported files, the archives) are picked by the la
   under the hips, not a leg's length: every tie got that gap, NM's body ~0.5 m over the drawn one for the whole
   ragdoll: the drawn body sank into the path (waist-deep), and stopped short of walls NM's body met. Now the agent is
   made at the bind pose's own lowest bone (At(b)), whatever pose he's in.
+
+## GTA IV's sounds; bike handling; buttons; the thrown rider's legs (2026-11-16)
+- The Xbox audio: audio.rpf (RPF2: config/sounds.dat15, game.dat16, curves...), xbox360/audio/sfx/*.rpf (RPF3, names
+  hashed: <joaat(rpf)>/<joaat(bank)>; resident.rpf's 19 banks = joaat of AMB_RESIDENT, COLLISIONS, DOORS,
+  ENGINE_RESIDENT, EXPLOSIONS, EXTRAS, FEET_RESIDENT, FRONTEND_GAME/MENU, HELICOPTER, HORNS, MELEE, RAIN,
+  SCANNER_RESIDENT, SPEECH_RELATED, TRAIN, WATER, WEAPONS, WHEEL_LOOPS; waveslots.xml lists them). The RPF3s take
+  audio.rpf's key (find_by_trial only knows RPF2's root).
+- A bank (big-endian): u64 table, u64 ?, u32 count, u32 0, u32 data base; table entries {u64 info offset, u32 wave
+  hash, u32 info size}; info {u64 data offset, u32 hash, u32 bytes, u32 samples, i32 loop start (-1 once), u16 rate,
+  i16 headroom, then XMA: 0, 0, 56, loop bits.., packets, 0, seek table; or one word: 16-bit BE PCM}. XMA2 in
+  2048-byte packets: ffmpeg's xma2 decodes them given XMA2WAVEFORMATEX extradata (34 bytes); counts exact.
+- sounds.dat15 (Metadata, v15): 18470 objects with names; type byte, u32, u32 2-bit flags, u32, u16 field mask (bit0
+  volume s16 in 1/100 dB, bit2 pitch s16 cents), ... Children by joaat(name), a wave by its hash. Types: 12 simple,
+  13 multitrack, 14 randomized, 11 stereo pair, 10 crossfade (first = near), 6 wrapper, 2 envelope, 7 sequential...
+  game.dat16 (v16, 2129 objects): W_GLOCK/W_UZI/W_AK47/W_PUMPSHOT/W_SHOTGUN/W_RIFLE (fire @10), PCJ/NRG900/SANCHEZ/
+  FAGGIO/BOBBER... (@18 engine low, 22 high, 26/30 exhaust, 34 revs off, 146/150 idle, 206 start, 298 land, 310
+  ignition), MELEE_COMBAT_JAB (@14 knuckle, 18 fist), FOOTSTEPS_CONCRETE_CLEAN (@32 LT heel, 40 scuff, 48 land).
+- native/sound (delirium-sound, ds_* FFI); ci/xma.c + ci/ffmpeg-ios.sh: FFmpeg n7.1 with only the XMA decoders,
+  built on the macOS runner (cached), merged into libdelirium_ios.a before xcodebuild. Checked here: the ffmpeg CLI
+  standing in for the decoder (sound/examples/play.rs): 59 waves of 7 sounds decoded, sane levels and shapes.
+- Phone files: audio.rpf next to default.xex; xbox360/audio/sfx/resident.rpf, streamed_vehicles.rpf (bike engines).
+- Bike: turning at 100 km/h 13 -> 26 deg/s (grip limit 0.7 -> 1.0 g, bars 2.5 -> 4/s), a yaw toward the bars'
+  bicycle rate and the sideways speed damped (sim.rs), the rear's spin taking gas off; ground normals eased (a seam's
+  kick). Buttons: lean up/down up the right edge over Gas. Thrown rider: the plain knock (no high fall's pedalling).

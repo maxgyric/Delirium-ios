@@ -547,6 +547,8 @@ public partial class Game : MonoBehaviour
         foreach (var m in men) Mind(m, dt);
         if (heroOn) { HeroUpdate(dt); BikeUpdate(dt); }
         else Pointer();
+        GtaSoundsUpdate();
+        BikeAudio(dt);
         for (int i = flashes.Count - 1; i >= 0; i--)
         {
             Transform t = flashes[i].t;

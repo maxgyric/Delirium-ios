@@ -2,6 +2,7 @@
 //! for the iPhone build. Unity calls them through [DllImport("__Internal")].
 pub use delirium_anim;
 pub use delirium_bike;
+pub use delirium_sound;
 pub use delirium_physics;
 
 /// Keeps both libraries' exported functions in the archive whatever the linker decides is used.

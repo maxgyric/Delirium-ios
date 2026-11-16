@@ -152,11 +152,11 @@ impl Bike {
         // steering: the bars eased toward the arrows (an arrow is all or nothing), and never more lock than the
         // tyres can hold at this speed (the turn's pull v^2 tan(a) / wheelbase within the grip): no sliding round
         let target = input.steer.clamp(-1.0, 1.0);
-        let rate = if target.abs() < self.steer_in.abs() || target * self.steer_in < 0.0 { 5.0 } else { 2.5 };
+        let rate = if target.abs() < self.steer_in.abs() || target * self.steer_in < 0.0 { 7.0 } else { 4.0 };
         self.steer_in += (target - self.steer_in).clamp(-rate * dt, rate * dt);
         let speed = len(self.vel);
         let base = (self.wheels[0].at[1] - self.wheels[1].at[1]).abs().max(0.8);
-        let grip = G * self.h.traction_max.clamp(0.8, 2.0) * 0.7;
+        let grip = G * self.h.traction_max.clamp(0.8, 2.0) * 1.0;
         let hold = (base * grip / speed.max(0.1).powi(2)).atan();
         let lock = self.h.steering_lock.min(hold);
         let want = self.steer_in * lock;
@@ -253,7 +253,9 @@ impl Bike {
             // too light on the ground for grip (a wheel brushing a step's edge): no tyre force, as the game's own
             // wheel step skips it (its load is the divisor of the tyre's sums)
             if !(w.load > self.mass * G * delirium_data::kv!(51)) { w.slip = 0.0; continue; }
-            let drive_n = if w.front { 0.0 } else { self.drive * self.mass * G };
+            // (a rider's throttle hand: the rear wheel spinning up past grip takes gas off it, not a donut on the spot)
+            let hand = (1.0 - (w.slip.abs() - 0.15).max(0.0) * 3.0).clamp(0.25, 1.0);
+            let drive_n = if w.front { 0.0 } else { self.drive * self.mass * G * hand };
             let bias = self.h.brake_bias[if w.front { 0 } else { 1 }];
             let mut brake_n = brake * self.h.brake_force * bias * 0.5 * self.mass * G;
             if input.handbrake && !w.front { brake_n += self.h.handbrake * self.mass * G; }
@@ -306,6 +308,20 @@ impl Bike {
             if on > 0 && brake > 0.0 {
                 let y_acc = -yaw_rate * brake * b.brake_stabil.abs() * 6.0;
                 torque = add(torque, mulv(up, y_acc * self.inertia[2]));
+            }
+            // the rider holding the line (CBike's arcade side): the heading turns at the rate the bars ask for (a
+            // bicycle's: v tan(steer) / wheelbase) and the bike goes where it points, not sideways; without it the
+            // rear tyre let go under gas or over a seam in the road (the ground's normal kicking it) and the bike
+            // slid round, and at speed the turn came late and wide
+            if on > 0 {
+                let grip_on = on as f32 / 2.0;
+                let base = (self.wheels[0].at[1] - self.wheels[1].at[1]).abs().max(0.8);
+                let want_yaw = -along * self.steer.tan() / base;
+                let y_acc = (want_yaw - yaw_rate) * 7.0 * grip_on;
+                torque = add(torque, mulv(up, y_acc * self.inertia[2]));
+                let side_h = unit([right[0], right[1], 0.0]);
+                let v_side = dot(self.vel, side_h);
+                force = add(force, mulv(side_h, -v_side * self.mass * 4.0 * grip_on));
             }
             // standing still: a foot down keeps it up and it doesn't creep
             if on > 0 && along.abs() < 0.5 && input.throttle < 0.05 { force = add(force, mulv(self.vel, -self.mass * 2.0)); }

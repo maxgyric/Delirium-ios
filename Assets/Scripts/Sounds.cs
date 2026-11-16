@@ -1,5 +1,6 @@
 // The sandbox's sounds, made in code (no sound files): steps, a jump, a landing, a body hitting something, each
 // gun's shot, a punch, a blast. Played flat (2D) through a few sources, quieter with distance from the camera.
+// GTA IV's own take their place once your game's audio files are read (GtaSounds.cs).
 using System;
 using UnityEngine;
 
@@ -33,7 +34,7 @@ public partial class Game
         sfx[(int)Sfx.Jump] = Whoosh("jump", rng, 0.2f);
         var go = new GameObject("Sounds");
         DontDestroyOnLoad(go);
-        voices = new AudioSource[12];
+        voices = new AudioSource[32]; // a GTA IV gunshot is half a dozen waves at once
         for (int i = 0; i < voices.Length; i++)
         {
             voices[i] = go.AddComponent<AudioSource>();
@@ -90,7 +91,9 @@ public partial class Game
         var s = voices[voice];
         voice = (voice + 1) % voices.Length;
         // a little off in pitch each time; lower in slow motion
-        s.pitch = UnityEngine.Random.Range(0.92f, 1.08f) * (Time.timeScale < 0.99f ? Mathf.Lerp(0.55f, 1f, Time.timeScale) : 1f);
+        float pitch = UnityEngine.Random.Range(0.96f, 1.04f) * (Time.timeScale < 0.99f ? Mathf.Lerp(0.55f, 1f, Time.timeScale) : 1f);
+        if (PlayGta(what, v, pitch)) return; // the game's own, when your GTA IV's audio files are there
+        s.pitch = pitch * UnityEngine.Random.Range(0.96f, 1.04f);
         s.PlayOneShot(sfx[(int)what], Mathf.Clamp01(v));
     }
 
