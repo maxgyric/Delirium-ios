@@ -386,6 +386,8 @@ public partial class Game
         heroTier = heroAim ? 1 : sprinting ? 3 : heroSprint ? 2 : 1;
         float target = mag < 0.12f ? 0f : heroTier == 3 ? sprint : heroTier == 2 ? run : walk * Mathf.Clamp(mag / 0.7f, 0.5f, 1f);
         if (heroAim && GtaAnim.Strafe[1, 0].Ok) target = Mathf.Min(target, GtaAnim.Strafe[1, 0].Speed);
+        // GTA V's: aiming he walks (strafes), Sprint held he runs
+        if (heroAim && GtaAnim.V && GtaAnim.Strafe[0, 0].Ok && !heroSprint) target = Mathf.Min(target, GtaAnim.Strafe[0, 0].Speed * Mathf.Clamp(mag / 0.7f, 0.5f, 1f));
         Vector3 want = wish.sqrMagnitude > 1e-6f ? wish.normalized * target : Vector3.zero;
         if (Time.time < heroSpotUntil) want = Vector3.zero;
         if (hJumpReq && heroGround && Time.time >= heroSpotUntil && !heroNoclip && TryClimb())
