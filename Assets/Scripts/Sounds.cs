@@ -112,36 +112,48 @@ public partial class Game
         Play(s, at, 1f);
     }
 
-    // A ragdoll's body meeting the ground, a wall, a step: a part that touched nothing now touches something.
-    // A foot while he's on his feet is a step.
-    void Contacts(Man m, int[] now, bool fallen, float speed)
+    // A ragdoll's body meeting the world (not its own parts: an arm swinging onto its chest in the air is no hit),
+    // from its parts' own speeds: a step is a foot coming down while he's on his feet (staggering, balancing); a
+    // hit is a part that was off the world a moment landing on it fast. Not every touch: rolling and sliding keep
+    // parts flickering on and off the ground, so a part sounds only after a fifth of a second off it, and the body
+    // at most every quarter second, louder the faster the part came in.
+    void Contacts(Man m, DeliriumRagdolls.DollState st)
     {
-        if (now == null) return;
-        if (m.Touch == null || m.Touch.Length != now.Length)
+        var now = st.Contacts;
+        if (now == null || st.PartSpeed == null) return;
+        if (m.Touch == null || m.Touch.Length != now.Length || m.TouchedAt == null)
         {
             m.Touch = (int[])now.Clone(); // the first look: nothing new
+            m.TouchedAt = new float[now.Length];
+            for (int k = 0; k < now.Length; k++) m.TouchedAt[k] = Time.time;
             return;
         }
-        bool step = false, hit = false;
+        bool upright = !st.Fallen && (st.Balancing || st.Stance.HasValue);
+        float hit = 0f;
+        Vector3 at = m.Body.Hips.position;
         for (int k = 0; k < now.Length; k++)
         {
-            if (now[k] != 0 && m.Touch[k] == 0)
-            {
-                if ((k == 3 || k == 6) && !fallen) step = true;
-                else hit = true;
-            }
+            bool on = now[k] != 0, was = m.Touch[k] != 0;
+            float away = Time.time - m.TouchedAt[k];
+            if (on) m.TouchedAt[k] = Time.time;
             m.Touch[k] = now[k];
+            if (!on || was) continue;
+            float speed = k < st.PartSpeed.Length ? st.PartSpeed[k] : 0f;
+            bool foot = k == 3 || k == 6;
+            if (foot && upright)
+            {
+                if (away > 0.12f && Time.time - m.StepAt > 0.16f && speed > 0.3f)
+                {
+                    Play(Sfx.Step, at, Mathf.Clamp(speed / 3f, 0.35f, 0.8f));
+                    m.StepAt = Time.time;
+                }
+                continue;
+            }
+            if (away > 0.2f && speed > 2.2f) hit = Mathf.Max(hit, speed);
         }
-        if (Time.time - m.SfxAt < 0.11f) return;
-        Vector3 at = m.Body.Hips.position;
-        if (hit && speed > 0.7f)
+        if (hit > 0f && Time.time - m.SfxAt > 0.25f)
         {
-            Play(Sfx.Impact, at, Mathf.Clamp(speed / 5f, 0.2f, 1f));
-            m.SfxAt = Time.time;
-        }
-        else if (step)
-        {
-            Play(Sfx.Step, at, 0.6f);
+            Play(Sfx.Impact, at, Mathf.Clamp((hit - 1.5f) / 6f, 0.2f, 1f));
             m.SfxAt = Time.time;
         }
     }

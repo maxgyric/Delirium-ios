@@ -354,3 +354,11 @@ files (default.xex, the three exported files, the archives) are picked by the la
 - Bike: turning at 100 km/h 13 -> 26 deg/s (grip limit 0.7 -> 1.0 g, bars 2.5 -> 4/s), a yaw toward the bars'
   bicycle rate and the sideways speed damped (sim.rs), the rear's spin taking gas off; ground normals eased (a seam's
   kick). Buttons: lean up/down up the right edge over Gas. Thrown rider: the plain knock (no high fall's pedalling).
+- (17:17) Ragdoll sounds: a hit in mid-air, staggering heard as hits, too many while rolling. nm_agent_get_part_contact's
+  flags count a part touching its own body (ragdoll.rs: self touches |= kv95); new nm_agent_get_part_ground = the
+  game's `collided` (touch & kv95 == kv7: the world). Sounds.cs Contacts: per part, a foot coming down while upright
+  (balancing / a stance) is a step; any other part that was off the world 0.2 s landing at > 2.2 m/s a hit; a step
+  per 0.16 s, a hit per 0.25 s, loudness by the part's speed (DollState.PartSpeed).
+- A long fall landed on its feet every time: highFall's pdStrength torque turns the pelvis to land feet first
+  (nmhf.rs). Game.Tumble: "highFall start=true pdStrength=0 orientateBodyToFallDirection=false" and a starting spin
+  (Doll.Spin: each part's mass times w x r about the centre of mass), 1.5-4.5 rad/s, mostly a somersault.

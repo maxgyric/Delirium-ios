@@ -458,7 +458,7 @@ public partial class Game
         if (heroMode != 0) return;
         var owner = hero.Body.transform;
         if (!HeroRagdoll()) return;
-        if (highFall && nm.HighFall(owner, true)) hero.HighFalling = true;
+        if (highFall && Tumble(owner, new Vector3(heroVel.x, heroVy, heroVel.z))) hero.HighFalling = true;
         heroMode = 1;
         heroAim = false;
         heroKnocked = 0f;

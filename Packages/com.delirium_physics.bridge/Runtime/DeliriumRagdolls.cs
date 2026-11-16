@@ -195,8 +195,10 @@ namespace Delirium.Ragdoll
             public bool Settled, Awake, Jumping, TaskRunning, LearnedGetUp, Resting;
             /// Where the balancer stands (between its feet), null when it isn't balancing.
             public Vector3? Stance;
-            /// Each of the 21 parts' contact flags (0: touching nothing).
+            /// Each of the 21 parts touching the world (1) or not (0): not counting its own parts (an arm on its chest).
             public int[] Contacts;
+            /// Each of the 21 parts' speed (m/s).
+            public float[] PartSpeed;
         }
 
         /// What the ragdoll under `owner` is doing now.
@@ -217,7 +219,8 @@ namespace Delirium.Ragdoll
                 TaskRunning = nm_agent_task_running(d.agent) == 1, LearnedGetUp = nm_agent_learned_getup_running(d.agent) == 1,
                 Resting = nm_agent_is_resting(d.agent, d.world) == 1,
                 Stance = nm_agent_get_stance(d.agent, pos) == 1 ? new Vector3(pos[0], pos[2], pos[1]) : (Vector3?)null,
-                Contacts = Enumerable.Range(0, 21).Select(k => nm_agent_get_part_contact(d.agent, k)).ToArray(),
+                Contacts = Enumerable.Range(0, 21).Select(k => nm_agent_get_part_ground(d.agent, k)).ToArray(),
+                PartSpeed = Enumerable.Range(0, 21).Select(k => { var v = new float[3]; nm_agent_get_part_velocity(d.agent, k, v, null); return new Vector3(v[0], v[1], v[2]).magnitude; }).ToArray(),
             };
         }
         float clock;
@@ -964,6 +967,16 @@ namespace Delirium.Ragdoll
         }
 
         /// Falling from a height: arms out, legs ready (the game starts it when a character drops faster than 6 m/s).
+        /// The whole body turning at `angularVelocity` (rad/s, world) on top of what it does: each part pushed by its
+        /// mass times its speed about the centre of mass (a throw's tumble).
+        public bool Spin(Transform owner, Vector3 angularVelocity)
+        {
+            var d = dolls.FirstOrDefault(x => x.Owner == owner);
+            if (d == null) return false;
+            d.Spin(angularVelocity);
+            return true;
+        }
+
         public bool HighFall(Transform owner, bool player = false)
         {
             var d = Doll(owner, Vector3.zero, false);
@@ -2081,6 +2094,28 @@ namespace Delirium.Ragdoll
             int part = nm_agent_nearest_part(agent, P(point));
             Plugin.Check(nm_agent_apply_push(agent, P(point), Impulse(dir.normalized * force * Plugin.ShotForce)));
             Plugin.Check(nm_agent_task_shot(agent, world, set, Math.Max(part, 0), P(point), Nm(dir.normalized), health));
+        }
+
+        public void Spin(Vector3 w)
+        {
+            int n = nm_agent_part_count(agent);
+            var pos = new Vector3[n];
+            var mass = new float[n];
+            float[] m = new float[1], inertia = new float[3], box = new float[3];
+            float total = 0f;
+            Vector3 com = Vector3.zero;
+            for (int k = 0; k < n; k++)
+            {
+                if (nm_agent_get_part_body(agent, k, m, inertia, box) < 0) return;
+                mass[k] = m[0];
+                pos[k] = Part(k);
+                com += pos[k] * m[0];
+                total += m[0];
+            }
+            if (total <= 0f) return;
+            com /= total;
+            for (int k = 0; k < n; k++)
+                Plugin.Check(nm_agent_apply_impulse(agent, k, P(pos[k]), Impulse(Vector3.Cross(w, pos[k] - com) * mass[k])));
         }
 
         public void Push(Vector3 impulse)

@@ -242,6 +242,8 @@ public partial class Game : MonoBehaviour
         public bool Curled;          // curled up before this get-up already
         public int[] Touch;          // what each part touched last frame (Sounds.cs)
         public float SfxAt;
+        public float[] TouchedAt;    // when each part last touched the world (Sounds.cs)
+        public float StepAt;
         // getting up with GTA IV's own clip (when your game's clips are loaded)
         public GtaAnim.Clip RiseClip;
         public float RiseDur, ClipYaw, ClipDz;
@@ -605,7 +607,7 @@ public partial class Game : MonoBehaviour
                 nm.OnFire(owner, true, m.Health);
             }
         }
-        Contacts(m, st.Contacts, st.Fallen, st.Velocity.magnitude);
+        Contacts(m, st);
         Falling(m, st);
         if (m.FlinchUntil > 0f && Time.time >= m.FlinchUntil)
         {
@@ -658,11 +660,27 @@ public partial class Game : MonoBehaviour
         }
         if (m.Killed || st.Dead || st.Velocity.y > -5.5f) return;
         if (Physics.Raycast(m.Body.Hips.position, Vector3.down, 2.5f)) return; // nearly down already
-        if (nm.HighFall(m.Body.transform, m.Hero))
+        if (Tumble(m.Body.transform, st.Velocity))
         {
             m.HighFalling = true;
             Debug.Log("[Sandbox] " + m.Body.name + ": a high fall");
         }
+    }
+
+    // GTA IV's high fall, but turning over in the air: its arms wheeling and legs pedalling without the push that held
+    // him upright to land on his feet (pdStrength 0, not turned to the way he falls), and a turn to start with (a
+    // somersault, some of it sideways, faster the faster he's going)
+    bool Tumble(Transform owner, Vector3 vel)
+    {
+        if (!nm.React(owner, "highFall start=true pdStrength=0 orientateBodyToFallDirection=false"))
+            return nm.HighFall(owner, false);
+        Vector3 along = Vector3.ProjectOnPlane(vel, Vector3.up);
+        Vector3 fwd = along.sqrMagnitude > 0.25f ? along.normalized : Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f) * Vector3.forward;
+        Vector3 side = Vector3.Cross(Vector3.up, fwd);
+        Vector3 axis = (side * (UnityEngine.Random.value < 0.75f ? 1f : -1f) + fwd * UnityEngine.Random.Range(-0.6f, 0.6f)).normalized;
+        float rate = Mathf.Clamp(vel.magnitude * 0.3f, 1.5f, 4.5f) * UnityEngine.Random.Range(0.7f, 1.2f);
+        nm.Spin(owner, axis * rate);
+        return true;
     }
 
     void BeginRise(Man m)

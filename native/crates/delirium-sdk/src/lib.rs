@@ -1569,6 +1569,15 @@ pub unsafe extern "C" fn nm_agent_get_part_contact(a: *const NmAgent, i: i32) ->
     a.agent.doll.touch[k] as i32
 }
 
+/// 1 when part `i` touches the world (the game's own test, `collided`: not only another part of its own body, as
+/// nm_agent_get_part_contact's flags also count; an arm brushing the chest in the air is no hit).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nm_agent_get_part_ground(a: *const NmAgent, i: i32) -> i32 {
+    let a = agent_ref!(a);
+    let Some(k) = part(a, i) else { return fail(NM_E_ARG, "no such part") };
+    a.agent.doll.collided(&[k]) as i32
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn nm_agent_get_com(a: *const NmAgent, pos: *mut f32, vel: *mut f32) -> i32 {
     let a = agent_ref!(a);

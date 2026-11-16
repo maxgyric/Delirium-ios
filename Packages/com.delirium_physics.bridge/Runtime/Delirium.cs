@@ -203,6 +203,9 @@ namespace Delirium
         /// <summary>Part `i`'s contact flags this step (the original engine's: 0x04 touching last step, 0x08 touching, 0x40 the ground).</summary>
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern int nm_agent_get_part_contact(IntPtr a, int i);
+        /// <summary>1 when part i touches the world (not only another of its own parts).</summary>
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int nm_agent_get_part_ground(IntPtr a, int i);
         /// <summary>The whole body's centre of mass and its velocity.</summary>
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern int nm_agent_get_com(IntPtr a, float[] pos, float[] vel);
