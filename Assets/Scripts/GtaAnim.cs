@@ -31,6 +31,8 @@ public static class GtaAnim
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_pose(int c, float phase, float[] o, int[] moved);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_pose_root(int c, float phase, float[] o, int[] moved);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_pose_seat(int c, float phase, float[] o, int[] moved);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int dv_open(byte[] dir);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int dv_clip(byte[] name);
 
     static byte[] Z(string s) => Encoding.UTF8.GetBytes(s + "\0");
 
@@ -55,6 +57,11 @@ public static class GtaAnim
     public static readonly Clip[] Jump = new Clip[4], JumpRifle = new Clip[4];
     public static readonly Clip[] Aim = new Clip[6]; // handgun, deagle, mp5k, ak47, shotgun, rifle (the sniper's)
     public static Clip GetUpFront = new Clip(), GetUpBack = new Clip();
+    /// GTA V's moves (Grand Theft Gmod's male_move.mdl, made from your GTA V by its exporter, and its clip data) in
+    /// place of GTA IV's when they're on the phone: the idle, walk, run and sprint, the jump's take-off and the fall.
+    public static bool V;
+    public static string VError = "";
+    public static Clip VLaunch = new Clip(), VFall = new Clip();
     /// The game's unarmed blows (found by name among its melee dictionaries; none: the hero's punch is a plain jab).
     public static readonly List<Clip> Punches = new List<Clip>();
 
@@ -179,6 +186,7 @@ public static class GtaAnim
                 GetUpFront = Get("get_up", "get_up_fast");
                 GetUpBack = Get("get_up_back", "get_up_fast");
                 try { FindPunches(); } catch (Exception e) { Debug.LogWarning("[Hero] punches: " + e.Message); }
+                try { LoadV(folders); } catch (Exception e) { VError = e.Message; }
                 int n = Array.IndexOf(report, (byte)0);
                 Debug.Log("[Hero] GTA IV's clips ready: " + Encoding.UTF8.GetString(report, 0, n < 0 ? 0 : n));
                 State = Move[0].Ok && Move[1].Ok ? 2 : -1;
@@ -197,6 +205,51 @@ public static class GtaAnim
         });
         t.IsBackground = true;
         t.Start();
+    }
+
+    static Clip GetV(string seq, bool cycle)
+    {
+        var c = new Clip { Cycle = cycle };
+        c.Id = dv_clip(Z(seq));
+        if (c.Id < 0)
+        {
+            Debug.LogWarning("[Hero] GTA V: no " + seq + ": " + LastError());
+            return c;
+        }
+        da_clip_info(c.Id, out c.Dur, out c.Speed);
+        c.Dur = Mathf.Max(c.Dur, 0.05f);
+        if (cycle) c.Sync = Mathf.Max(0f, da_clip_sync(c.Id));
+        return c;
+    }
+
+    // Grand Theft Gmod's files: male_move.mdl and lib_male_move*.lua beside default.xex, or the addon's folder
+    // (grandtheftgmod or grandtheftgmod_0899) there as it is
+    static void LoadV(string[] folders)
+    {
+        string why = "";
+        foreach (var f in folders)
+        {
+            if (string.IsNullOrEmpty(f) || !Directory.Exists(f)) continue;
+            foreach (var d in new[] { f, Path.Combine(f, "grandtheftgmod_0899"), Path.Combine(f, "grandtheftgmod") })
+            {
+                if (!Directory.Exists(d)) continue;
+                try
+                {
+                    if (dv_open(Z(d)) >= 0) { V = true; break; }
+                }
+                catch (EntryPointNotFoundException) { VError = "this build's library has no GTA V clips"; return; }
+                why += d + ": " + LastError() + "\n";
+            }
+            if (V) break;
+        }
+        if (!V) { VError = why != "" ? why.Trim() : "no male_move.mdl"; return; }
+        var mv = new[] { GetV("gtgl_male_move_idle", false), GetV("gtgl_male_move_walk", true), GetV("gtgl_male_move_run", true), GetV("gtgl_male_move_sprint", true) };
+        if (!(mv[0].Ok && mv[1].Ok && mv[2].Ok)) { V = false; VError = "male_move.mdl: no idle / walk / run"; return; }
+        for (int g = 0; g < 4; g++) if (mv[g].Ok) Move[g] = mv[g];
+        VLaunch = GetV("gtgl_male_move_jump_launch_l", false);
+        VFall = GetV("gtgl_male_move_fall_med", true);
+        if (VFall.Ok) Jump[1] = VFall;
+        Debug.Log($"[Hero] GTA V's moves: walk {Move[1].Speed:F2} m/s, run {Move[2].Speed:F2}, sprint {Move[3].Speed:F2}");
     }
 
     /// One bone's frame in the model's space (Unity's axes, the model facing +X).

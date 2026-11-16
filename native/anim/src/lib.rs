@@ -6,6 +6,7 @@
 //! (its reference pose's) ground, in GoldSrc units; the host puts it where the player stands, turned his way.
 
 use bevy_math::{Quat, Vec3};
+pub mod mdl;
 use delirium_data::{anim, archive_key::ArchiveKey, img, model, resource, rpf, skeleton};
 use std::collections::HashMap;
 use std::ffi::{CStr, c_char};
@@ -17,6 +18,8 @@ type Frame = (Vec3, Quat);
 
 struct Clip {
     anim: anim::Animation,
+    // (Sandbox) a GTA V clip from Grand Theft Gmod's model: in place, its speed (m/s) from the addon's clip data
+    speed: Option<f32>,
     map: Vec<Option<usize>>, // track -> bone
     // where the clip stands: its hips' middle over the cycle (flat) and its lowest foot, in GTA model space. GTA IV's
     // clips carry the hips on the root bone, some from the ground, some from the hips, some off to a side (the
@@ -43,6 +46,9 @@ struct Target {
 }
 
 struct Anim {
+    // (Sandbox) GTA V's clips out of Grand Theft Gmod's model (Anim::open_mdl), not GTA IV's anim.img
+    mdl: Option<mdl::Mdl>,
+    meta: HashMap<String, (f32, f32)>, // sequence -> (speed m/s, length s), the addon's clip data
     pc: bool,
     table: Vec<img::Entry>,
     file: std::fs::File,
@@ -137,10 +143,11 @@ unsafe fn put(s: &str, buf: *mut c_char, len: i32) -> i32 {
 /// ("Char_L_UpperArm", "Bip01 L UpperArm" -> "lupperarm").
 fn key(name: &str) -> String {
     let k: String = name.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_lowercase()).collect();
-    for p in ["char", "bip01", "skel"] {
+    for p in ["valvebipedbip01", "char", "bip01", "skel"] {
         if let Some(r) = k.strip_prefix(p) {
             if !r.is_empty() {
-                return r.to_string();
+                // (Sandbox) Grand Theft Gmod's ValveBiped skeleton of GTA V's: Spine..Spine2, Spine4 (the top), Neck1, Head1
+                return match r { "spine4" => "spine3", "neck1" => "neck", "head1" => "head", _ => r }.to_string();
             }
         }
     }
@@ -252,6 +259,8 @@ impl Anim {
         (&mut file).take(delirium_data::kv!(1 int) << delirium_data::kv!(127 int)).read_to_end(&mut head).map_err(|e| e.to_string())?;
         let table = img::read_table(&head, Some(&key))?;
         Ok(Anim {
+            mdl: None,
+            meta: HashMap::new(),
             pc,
             table,
             file,
@@ -276,10 +285,19 @@ impl Anim {
     }
 
     fn clip(&mut self, dict: &str, name: &str) -> Result<usize, String> {
-        let a = self.dict(dict)?.iter().find(|a| a.name.eq_ignore_ascii_case(name)).cloned().ok_or(format!("no {name} in {dict}"))?;
+        let mut speed = None;
+        let a = if let Some(m) = &self.mdl {
+            let seq = name.to_ascii_lowercase();
+            let ai = *m.seqs.get(&seq).ok_or(format!("no sequence {name} in the model"))?;
+            speed = self.meta.get(&seq).map(|v| v.0);
+            mdl_animation(m, ai)?
+        } else {
+            self.dict(dict)?.iter().find(|a| a.name.eq_ignore_ascii_case(name)).cloned().ok_or(format!("no {name} in {dict}"))?
+        };
         let map = a.tracks.iter().map(|t| self.ids.iter().position(|&id| id == t.bone).filter(|&b| b != 0)).collect();
-        self.clips.push(Clip { anim: a, map, mid: Vec3::ZERO, floor: 0.0, floor_end: 0.0 });
+        self.clips.push(Clip { anim: a, map, speed: None, mid: Vec3::ZERO, floor: 0.0, floor_end: 0.0 });
         let c = self.clips.len() - 1;
+        self.clips[c].speed = speed;
         let keys: Vec<String> = self.names.iter().map(|n| key(n)).collect();
         let pelvis = keys.iter().position(|k| k == "pelvis").unwrap_or(0);
         let feet: Vec<usize> = keys.iter().enumerate().filter(|(_, k)| ["lfoot", "rfoot", "ltoe0", "rtoe0"].contains(&k.as_str())).map(|(i, _)| i).collect();
@@ -297,6 +315,11 @@ impl Anim {
         Ok(c)
     }
 
+    // a rotation track's value: GTA IV's order (its w where the game's numbers say), or x y z w (GTA V's, Source's)
+    fn q(&self, v: &[f32]) -> Quat {
+        if self.mdl.is_some() { Quat::from_xyzw(v[0], v[1], v[2], v[3]).normalize() } else { quat(v) }
+    }
+
     /// Clip `c` at `phase` (0..1): the GTA skeleton's local pose, its root where it stands at rest (in place).
     fn sample(&self, c: usize, phase: f32) -> Vec<Frame> {
         let Clip { anim: a, map, .. } = &self.clips[c];
@@ -307,7 +330,7 @@ impl Anim {
             let Some(&b) = bone.as_ref() else { continue };
             let (p, q) = (t.sample(i), t.sample(i + 1));
             match t.kind {
-                anim::BONE_ROTATION => out[b].1 = quat(&p).slerp(quat(&q), f),
+                anim::BONE_ROTATION => out[b].1 = self.q(&p).slerp(self.q(&q), f),
                 anim::BONE_TRANSLATION => out[b].0 = Vec3::from_slice(&p).lerp(Vec3::from_slice(&q), f),
                 _ => {}
             }
@@ -327,7 +350,7 @@ impl Anim {
         if !roots.iter().any(|t| still(t)) {
             for t in roots {
                 match t.kind {
-                    anim::BONE_ROTATION => out[0].1 = quat(&t.sample(i)).slerp(quat(&t.sample(i + 1)), f),
+                    anim::BONE_ROTATION => out[0].1 = self.q(&t.sample(i)).slerp(self.q(&t.sample(i + 1)), f),
                     anim::BONE_TRANSLATION => out[0].0 = Vec3::from_slice(&t.sample(i)).lerp(Vec3::from_slice(&t.sample(i + 1)), f),
                     _ => {}
                 }
@@ -349,8 +372,12 @@ impl Anim {
     /// for a clip that stays put): walk, run and sprint (and each strafe's) cycles lined up by it step together
     fn sync(&self, c: usize) -> f32 {
         let a = &self.clips[c].anim;
-        let way = self.travel(c).with_z(0.0);
-        if way.length() / a.duration.max(0.01) < 0.2 {
+        let mut way = self.travel(c).with_z(0.0);
+        if self.clips[c].speed.is_some_and(|v| v > 0.2) && way.length() / a.duration.max(0.01) < 0.2 {
+            // (Sandbox) in place (GTA V's, the addon's), going the way the body faces
+            let keys: Vec<String> = self.names.iter().map(|n| key(n)).collect();
+            way = facing(&world(&self.parents, &self.bind), &keys).unwrap_or(Vec3::X).with_z(0.0);
+        } else if way.length() / a.duration.max(0.01) < 0.2 {
             return 0.0;
         }
         let way = way.normalize();
@@ -388,6 +415,7 @@ impl Anim {
 
     /// How far the clip carries him (its root and mover tracks), flat, m/s
     fn speed(&self, c: usize) -> f32 {
+        if let Some(v) = self.clips[c].speed { return v; }
         let a = &self.clips[c].anim;
         let at = |phase: f32| {
             let x = phase * (a.frames.max(1) - 1) as f32;
@@ -512,6 +540,137 @@ impl Anim {
     }
 }
 
+impl Anim {
+    /// (Sandbox) GTA V's clips: Grand Theft Gmod's male_move.mdl (made by its exporter from your GTA V) and its clip
+    /// data (lib_male_move*.lua: each clip's speed), found in `dir` or the addon's folders under it.
+    fn open_mdl(dir: &Path) -> Result<Anim, String> {
+        let find = |name: &str, under: &[&str]| -> Option<PathBuf> {
+            let mut places = vec![dir.to_path_buf()];
+            for u in under { places.push(dir.join(u)); places.push(dir.join("grandtheftgmod").join(u)); }
+            places.into_iter().map(|p| p.join(name)).find(|p| p.is_file())
+        };
+        let path = find("male_move.mdl", &["models/grandtheftgmod/anims", "anims"]).ok_or("male_move.mdl isn't there (models/grandtheftgmod/anims of Grand Theft Gmod)")?;
+        let m = mdl::Mdl::read(std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?)?;
+        // the clip data: every lib_male_move*.lua beside the first one found
+        let mut meta = HashMap::new();
+        if let Some(first) = find("lib_male_move.lua", &["lua/grandtheftgmod/clips", "clips"]) {
+            let folder = first.parent().unwrap().to_path_buf();
+            if let Ok(rd) = std::fs::read_dir(&folder) {
+                for e in rd.flatten() {
+                    let n = e.file_name().to_string_lossy().to_ascii_lowercase();
+                    if n.starts_with("lib_male_move") && n.ends_with(".lua") {
+                        if let Ok(t) = std::fs::read_to_string(e.path()) { lua_meta(&t, &mut meta); }
+                    }
+                }
+            }
+        }
+        let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+        Ok(Anim {
+            parents: m.bones.iter().map(|b| b.parent).collect(),
+            bind: m.bones.iter().map(|b| (b.pos, b.quat)).collect(),
+            names: m.bones.iter().map(|b| b.name.clone()).collect(),
+            ids: (0..m.bones.len() as u16).collect(),
+            mdl: Some(m),
+            meta,
+            pc: false,
+            table: vec![],
+            file,
+            dicts: HashMap::new(),
+            clips: vec![],
+            target: None,
+        })
+    }
+}
+
+/// (Sandbox) A Source model's animation as a GTA IV one: a rotation and a position track a bone, every frame
+fn mdl_animation(m: &mdl::Mdl, ai: usize) -> Result<anim::Animation, String> {
+    let ad = &m.anims[ai];
+    let n = m.bones.len();
+    let mut rot = vec![vec![vec![]; 4]; n];
+    let mut pos = vec![vec![vec![]; 3]; n];
+    for f in 0..ad.frames {
+        let fr = m.frame(ai, f)?;
+        for b in 0..n {
+            let (p, q) = fr[b];
+            for (k, v) in [q.x, q.y, q.z, q.w].into_iter().enumerate() { rot[b][k].push(v); }
+            for (k, v) in [p.x, p.y, p.z].into_iter().enumerate() { pos[b][k].push(v); }
+        }
+    }
+    let mut tracks = vec![];
+    for b in 0..n {
+        tracks.push(anim::Track { kind: anim::BONE_ROTATION, bone: b as u16, values: std::mem::take(&mut rot[b]) });
+        tracks.push(anim::Track { kind: anim::BONE_TRANSLATION, bone: b as u16, values: std::mem::take(&mut pos[b]) });
+    }
+    Ok(anim::Animation { name: ad.name.trim_start_matches('@').to_string(), hash: 0, frames: ad.frames, duration: (ad.frames.max(2) - 1) as f32 / ad.fps.max(1.0), tracks, mover_rotation: None, events: vec![] })
+}
+
+/// (Sandbox) Grand Theft Gmod's clip data: `seq = "<sequence>"` ... `dur = <s>` ... `speed = <inches/s>` a clip
+fn lua_meta(text: &str, into: &mut HashMap<String, (f32, f32)>) {
+    let num = |line: &str, key: &str| -> Option<f32> {
+        let i = line.find(key)? + key.len();
+        let rest = line[i..].trim_start();
+        let end = rest.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).unwrap_or(rest.len());
+        rest[..end].parse().ok()
+    };
+    let mut seq: Option<String> = None;
+    let mut dur = 0.0;
+    for line in text.lines() {
+        if let Some(i) = line.find("seq = \"") {
+            let r = &line[i + 7..];
+            seq = r.find('"').map(|e| r[..e].to_ascii_lowercase());
+            dur = num(line, "dur =").unwrap_or(0.0);
+        }
+        if let (Some(s), Some(v)) = (&seq, num(line, "speed =")) {
+            into.insert(s.clone(), (v * 0.0254, dur)); // inches/s -> m/s
+        }
+    }
+}
+
+// (Sandbox) GTA V's clips (Grand Theft Gmod's model) beside GTA IV's: their numbers from V_BASE up, every clip
+// call taking either
+static STATE_V: Mutex<Option<Anim>> = Mutex::new(None);
+const V_BASE: i32 = 1 << 20;
+type TargetArgs = (Vec<String>, Vec<Option<usize>>, Vec<Frame>);
+static LAST_TARGET: Mutex<Option<TargetArgs>> = Mutex::new(None);
+
+fn with_clip<R>(c: i32, f: impl FnOnce(&mut Anim, usize) -> Result<R, String>) -> Result<R, String> {
+    let (st, i) = if c >= V_BASE { (&STATE_V, c - V_BASE) } else { (&STATE, c) };
+    let mut g = st.lock().unwrap_or_else(|e| e.into_inner());
+    let a = g.as_mut().ok_or("not open")?;
+    let i = usize::try_from(i).ok().filter(|&i| i < a.clips.len()).ok_or("no such clip")?;
+    f(a, i)
+}
+
+/// (Sandbox) Opens GTA V's clips: Grand Theft Gmod's male_move.mdl and clip data in `dir` (or the addon's folders
+/// under it), onto the skeleton da_target was given. 0, or -1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dv_open(dir: *const c_char) -> i32 {
+    let Some(d) = (unsafe { text(dir) }) else { return fail("dv_open: no folder") };
+    match Anim::open_mdl(Path::new(d)) {
+        Ok(mut a) => {
+            if let Some((n, p, l)) = LAST_TARGET.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+                if let Err(e) = a.target(&n, &p, l) { return fail(format!("dv_open: {e}")); }
+            }
+            *STATE_V.lock().unwrap_or_else(|e| e.into_inner()) = Some(a);
+            0
+        }
+        Err(e) => fail(format!("dv_open: {e}")),
+    }
+}
+
+/// (Sandbox) GTA V's clip (a sequence of the model: "gtgl_male_move_walk"): its number (as da_clip's for the rest),
+/// or -1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dv_clip(name: *const c_char) -> i32 {
+    let Some(n) = (unsafe { text(name) }) else { return fail("dv_clip: no name") };
+    let mut g = STATE_V.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(a) = g.as_mut() else { return fail("dv_clip: call dv_open first") };
+    match a.clip("", n) {
+        Ok(i) => V_BASE + i as i32,
+        Err(e) => fail(format!("dv_clip: {e}")),
+    }
+}
+
 fn with<R>(f: impl FnOnce(&mut Anim) -> Result<R, String>) -> Result<R, String> {
     let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let a = g.as_mut().ok_or("call da_open first")?;
@@ -582,10 +741,7 @@ pub unsafe extern "C" fn da_clip(dict: *const c_char, name: *const c_char) -> i3
 /// Clip `c`'s length (s) and how fast it carries him (m/s, flat).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn da_clip_info(c: i32, duration: *mut f32, speed: *mut f32) -> i32 {
-    match with(|a| {
-        let i = usize::try_from(c).ok().filter(|&i| i < a.clips.len()).ok_or("no such clip")?;
-        Ok((a.clips[i].anim.duration, a.speed(i)))
-    }) {
+    match with_clip(c, |a, i| Ok((a.clips[i].anim.duration, a.speed(i)))) {
         Ok((d, s)) => {
             unsafe {
                 if !duration.is_null() { *duration = d }
@@ -600,10 +756,7 @@ pub unsafe extern "C" fn da_clip_info(c: i32, duration: *mut f32, speed: *mut f3
 /// Clip `c`'s step phase (Anim::sync): the phase where its left foot is furthest ahead; negative on an error.
 #[unsafe(no_mangle)]
 pub extern "C" fn da_clip_sync(c: i32) -> f32 {
-    match with(|a| {
-        let i = usize::try_from(c).ok().filter(|&i| i < a.clips.len()).ok_or("no such clip")?;
-        Ok(a.sync(i))
-    }) {
+    match with_clip(c, |a, i| Ok(a.sync(i))) {
         Ok(v) => v,
         Err(e) => {
             fail(format!("da_clip_sync: {e}"));
@@ -626,6 +779,8 @@ pub unsafe extern "C" fn da_target(n: i32, names: *const *const c_char, parents:
         let v = unsafe { std::slice::from_raw_parts(local.add(i * 7), 7) };
         (Vec3::new(v[0], v[1], v[2]), Quat::from_xyzw(v[3], v[4], v[5], v[6]).normalize())
     }).collect();
+    *LAST_TARGET.lock().unwrap_or_else(|e| e.into_inner()) = Some((nm.clone(), pa.clone(), lo.clone()));
+    if let Some(v) = STATE_V.lock().unwrap_or_else(|e| e.into_inner()).as_mut() { let _ = v.target(&nm, &pa, lo.clone()); }
     match with(|a| a.target(&nm, &pa, lo)) {
         Ok(r) => {
             unsafe { put(&r, buf, len) };
@@ -643,8 +798,7 @@ pub unsafe extern "C" fn da_pose(c: i32, phase: f32, out: *mut f32, moved: *mut 
     if out.is_null() || moved.is_null() {
         return fail("da_pose: no output");
     }
-    match with(|a| {
-        let i = usize::try_from(c).ok().filter(|&i| i < a.clips.len()).ok_or("no such clip")?;
+    match with_clip(c, |a, i| {
         let n = a.target.as_ref().ok_or("no target skeleton")?.parents.len();
         let (o, m) = unsafe { (std::slice::from_raw_parts_mut(out, n * 7), std::slice::from_raw_parts_mut(moved, n)) };
         a.pose(i, phase, o, m)
@@ -661,8 +815,7 @@ pub unsafe extern "C" fn da_pose_root(c: i32, phase: f32, out: *mut f32, moved: 
     if out.is_null() || moved.is_null() {
         return fail("da_pose_root: no output");
     }
-    match with(|a| {
-        let i = usize::try_from(c).ok().filter(|&i| i < a.clips.len()).ok_or("no such clip")?;
+    match with_clip(c, |a, i| {
         let n = a.target.as_ref().ok_or("no target skeleton")?.parents.len();
         let (o, m) = unsafe { (std::slice::from_raw_parts_mut(out, n * 7), std::slice::from_raw_parts_mut(moved, n)) };
         a.pose_with(i, phase, o, m, true)
@@ -679,8 +832,7 @@ pub unsafe extern "C" fn da_pose_seat(c: i32, phase: f32, out: *mut f32, moved: 
     if out.is_null() || moved.is_null() {
         return fail("da_pose_seat: no output");
     }
-    match with(|a| {
-        let i = usize::try_from(c).ok().filter(|&i| i < a.clips.len()).ok_or("no such clip")?;
+    match with_clip(c, |a, i| {
         let n = a.target.as_ref().ok_or("no target skeleton")?.parents.len();
         let (o, m) = unsafe { (std::slice::from_raw_parts_mut(out, n * 7), std::slice::from_raw_parts_mut(moved, n)) };
         a.pose_mode(i, phase, o, m, 2)

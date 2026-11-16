@@ -367,3 +367,21 @@ files (default.xex, the three exported files, the archives) are picked by the la
   status (HeroGui HealthBar); Menu > Automatic > "Hero can't die" (heroImmortal; "Unlimited health" stays for all).
   Any death (hits, fire, a head shot, the Kill tool): DeliriumRagdolls.Die = dead + stopAllBehaviours + relax at
   stiffness 0 (relaxation 100: only joint limits), once (Man.Limp), till Reset.
+
+## GTA V's movement from Grand Theft Gmod (2026-11-16, evening)
+- D:\grandtheftgmod_0899: the addon after its exporter ran on the user's GTA V (clip data: `from = "move_m@generic.ycd"`,
+  `exporterVersion = 3`). models/grandtheftgmod/anims/{male,female}_*.mdl (Source MDL v48, 65 bones: SKEL_ROOT at the
+  hips, ValveBiped.Bip01_* with Spine..Spine2, Spine4, Neck1, Head1; inches, X forward Z up; all animations inline,
+  long ones in 30-frame sections, no movement: in place), lua/grandtheftgmod/clips/lib_male_move*.lua (each clip's
+  seq, dur, frames, move, speed in inches/s, a root-motion curve, foot/MoveEvent tags), sh_motion/sh_loco (the
+  addon's GTA V locomotion: states IDLE/START/MOVE/STOP/TURN/AIR/LAND..., MoveBlend by mbr, gait, dir, slope).
+- native/anim/src/mdl.rs: studiohdr bones (216 B), animdescs (100 B), seqdescs (212 B); mstudioanim_t lists: raw
+  Quaternion48/64, Vector48 (half floats), or RLE euler/position tracks (ExtractAnimValue), sections (the last frame
+  of a sectioned anim in a section of its own). Checked by plotting walk/run/sprint/idle: right.
+- The anim library's second set (STATE_V, clip numbers from 1<<20; dv_open, dv_clip; da_clip_info/sync/pose take
+  either): the Source skeleton as GTA IV's names (key(): valvebipedbip01 prefix, spine4->spine3, neck1->neck,
+  head1->head), the clips' speeds from the lua (walk 1.74, run 4.74, sprint 7.06 m/s), sync from the way it faces.
+  Onto the mannequin (examples/v.rs): stands at 0.97 m, feet on the ground, facing +X, walk/run plotted right.
+- GtaAnim.LoadV after GTA IV's clips: Move[0..3] = gtgl_male_move_idle/walk/run/sprint, Jump[1] = fall_med, and a
+  jump's take-off held by jump_launch_l (Hero PickClip, heroJumped). Next: starts/stops/turns from the clip data.
+- Phone: male_move.mdl and lib_male_move*.lua beside default.xex (or the addon's folder as grandtheftgmod_0899).

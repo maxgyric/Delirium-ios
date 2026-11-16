@@ -14,7 +14,7 @@ public partial class Game
     bool heroDrunk, heroAim;
     Vector3 heroPos, heroVel;      // his feet; flat velocity (m/s)
     float heroVy, heroYaw;         // degrees
-    bool heroGround = true, heroJumpStill;
+    bool heroGround = true, heroJumpStill, heroJumped;
     float heroSpotLand;
     float heroAir, heroLandUntil, heroSpotUntil, heroKnocked, heroNextFire, heroLean, heroBump;
     bool heroLeaning;
@@ -395,6 +395,7 @@ public partial class Game
             heroVy = 4.7f;
             heroGround = false;
             heroAir = 0f;
+            heroJumped = true;
             Play(Sfx.Jump, heroPos, 0.7f);
         }
         hJumpReq = false;
@@ -424,6 +425,7 @@ public partial class Game
             heroVy = 0f;
             heroPos.y = was ? Mathf.MoveTowards(heroPos.y, floor.point.y, 5f * dt) : floor.point.y;
             if (!was) Play(Sfx.Land, heroPos, 0.9f);
+            heroJumped = false;
         }
         else
         {
@@ -491,6 +493,13 @@ public partial class Game
         if (Time.time < heroSpotUntil && j[3].Ok) { rate = 1f / j[3].Dur; return j[3]; }
         // in the air: the one clip; take-offs and landings are cross-fades (their own clips carry him along the
         // ground, and he'd slide and snap back)
+        // GTA V's: the take-off's clip through the jump (it holds the leap), then its fall
+        if (!heroGround && heroJumped && !heroAim && GtaAnim.V && GtaAnim.VLaunch.Ok && heroAir < GtaAnim.VLaunch.Dur * 0.85f)
+        {
+            hPhaseSet = heroAir / GtaAnim.VLaunch.Dur;
+            rate = 0f;
+            return GtaAnim.VLaunch;
+        }
         if (!heroGround && j[1].Ok) { rate = 1f / j[1].Dur; return j[1]; }
         if (heroAim)
         {
