@@ -353,12 +353,16 @@ namespace Delirium.Ragdoll
 
         /// EnginePhysics: loose rigidbodies within 5 m of `d` not yet registered, to NM as Object movers (sized as
         /// RegisterMover does), so they hit him and he them.
+        /// Loose bodies the game keeps out of the ragdolls' worlds for now (a bike its rider was just thrown off,
+        /// his legs still round it): not made movers while they're in here.
+        public readonly HashSet<Transform> NotMovers = new HashSet<Transform>();
+
         void MoversNear(Doll d)
         {
             foreach (var c in Physics.OverlapSphere(d.Hips.position, 5 * d.scale, ~0, QueryTriggerInteraction.Ignore))
             {
                 var rb = c.attachedRigidbody;
-                if (rb == null || rb.isKinematic || cars.Any(x => x.T == rb.transform)) continue;
+                if (rb == null || rb.isKinematic || cars.Any(x => x.T == rb.transform) || NotMovers.Contains(rb.transform)) continue;
                 RegisterMover(rb.transform, MoverKind.Object);
             }
         }

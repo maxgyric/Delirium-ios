@@ -246,7 +246,7 @@ public partial class Game
     void BikeRemove()
     {
         if (riding) BikeOff(false);
-        if (bikeGo != null) { try { nm.UnregisterCar(bikeGo.transform); } catch (Exception) { } Destroy(bikeGo); }
+        if (bikeGo != null) { try { nm.UnregisterCar(bikeGo.transform); nm.NotMovers.Remove(bikeGo.transform); } catch (Exception) { } Destroy(bikeGo); }
         bikeGo = null;
         bikeWreck = null;
         if (bikeH >= 0) { try { db_drop(bikeH); } catch (Exception) { } }
@@ -321,6 +321,7 @@ public partial class Game
         if (bikeState == -1 && note.StartsWith("Bikes: opening")) note = "Bikes: " + bikeError;
         if (bikeState == 2 && note.StartsWith("Bikes: opening")) { note = ""; BikeButton(); }
         if (bikeH < 0 || bikeGo == null) return;
+        if (bikeClearAt > 0f && Time.time > bikeClearAt) { nm.NotMovers.Remove(bikeGo.transform); bikeClearAt = 0f; }
         if (bikeWreck != null) return; // on Unity's physics till it's picked up
         var t = bikeGo.transform;
         // the controls: the arrows on the screen (or the keys)
@@ -493,6 +494,7 @@ public partial class Game
 
     // Off on the left (GTA's driver side), standing.
     Transform heroParentWas;
+    float bikeClearAt;
 
     // The hero's body back where it lived (not the bike's any more).
     void Unseat()
@@ -533,7 +535,7 @@ public partial class Game
         heroMode = 0;
         heroGround = false;
         float speed = velIn.magnitude;
-        Vector3 fly = velIn * 0.85f + Vector3.up * Mathf.Clamp(speed * 0.3f, 2f, 6f);
+        Vector3 fly = velIn * 0.7f + Vector3.up * Mathf.Clamp(speed * 0.15f, 1.5f, 3.5f);
         heroVel = new Vector3(fly.x, 0f, fly.z);
         heroVy = fly.y;
         heroPos = hero.Body.Hips.position;
@@ -542,6 +544,9 @@ public partial class Game
         // the bike: what the wall left it, a little up, its nose going down and over
         var bt = bikeGo.transform;
         BikeFall(vel * 0.6f + hitNormal * 1.5f + Vector3.up * Mathf.Clamp(speed * 0.08f, 0.5f, 2.5f), bt.right * Mathf.Clamp(speed * 0.25f, 1f, 6f));
+        // his legs are round it as he goes: the bike isn't in his ragdoll's world till he's clear of it
+        nm.NotMovers.Add(bt);
+        bikeClearAt = Time.time + 1.5f;
         Play(Sfx.Punch, bikeGo.transform.position, 1f);
     }
 

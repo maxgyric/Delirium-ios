@@ -272,3 +272,6 @@ files (default.xex, the three exported files, the archives) are picked by the la
   returned at once when no car was left, so the worlds kept the last box set (the bike's, where it crashed): an
   invisible box. Cars() now clears the worlds' boxes (nm_world_set_boxes count 0) when the last car goes; the bike is
   unregistered before the rider is ragdolled.
+- Video 3 (into the platform at 50 km/h): thrown ~30 m, upright in mid-air. The wreck (a dynamic Rigidbody) became a
+  Delirium Object mover at once (MoversNear: loose bodies within 5 m), its box round his legs: NM shoved them out.
+  Bridge: NotMovers (a set MoversNear skips); the wreck is in it 1.5 s after a crash. Throw: velIn*0.7 + up 1.5-3.5.
