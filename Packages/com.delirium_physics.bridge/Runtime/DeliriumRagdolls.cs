@@ -1627,11 +1627,16 @@ namespace Delirium.Ragdoll
                 Floor(world, hips, owner, tris, ground, scale);
             }
             readAt = hips.position;
-            // (Sandbox) Made where its feet are now, not on the ground under it: taken in the air (a fall, a jump) with
-            // its root metres below the body, it was dragged down into the ground and through it. On its feet the
-            // two are the same place.
-            float feetNow = Mathf.Max(ground, bones.Where(b => b != null).Min(b => b.position.y));
-            agent = nm_agent_create(build, P(new Vector3(hips.position.x, feetNow, hips.position.z)), 0f, UnityEngine.Random.value);
+            // (Sandbox) Made standing where its bind pose stands (that pose's hips on its hips now): the rig ties each
+            // bone to its part by where the two are in these two poses (rig.rs make: the part's place less the bone's), so
+            // any gap between them is in every tie for good, NM's body that far from the drawn one. Made on the ground
+            // (a fall, a jump: the hips metres up) it was dragged through the ground; made where the feet are now
+            // (sitting on a bike: the feet on the pegs half a metre under the hips, not a leg's length) NM's body
+            // stood half a metre over the drawn one, which sank in the road and stopped at walls it never reached.
+            float feetBind = float.MaxValue;
+            for (int b = 0; b < n; b++) if (bones[b] != null) feetBind = Mathf.Min(feetBind, At(b).y);
+            if (feetBind == float.MaxValue) feetBind = Mathf.Max(ground, bones.Where(b => b != null).Min(b => b.position.y));
+            agent = nm_agent_create(build, P(new Vector3(hips.position.x, feetBind, hips.position.z)), 0f, UnityEngine.Random.value);
             if (agent == IntPtr.Zero) throw new Exception(LastError());
             float strong = Plugin.Strong.TryGetValue(owner, out var ownStrength) ? ownStrength : Plugin.Strength;
             if (strong != 1f) Plugin.Check(nm_agent_set_strength(agent, strong));

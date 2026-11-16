@@ -323,3 +323,10 @@ files (default.xex, the three exported files, the archives) are picked by the la
     from the origin). Now the exact size.
   - Menu > Physics view: NM's ground under a grid of rays round each ragdoll (green up / red down / yellow wall, drawn
     through everything) and its parts (blue, pink touching). New nm_world_raycast_face (the triangle's own face).
+- The user: "a plain ragdoll is fine, only off the bike". The cause, at last: rig.rs make ties each bone to its NM
+  part by their places in two poses, the rest (bind pose with its hips on the hips now) and the agent as made
+  (nm_agent_create: standing, its lowest part's bottom at `pos`). The Doll made the agent at the lowest bone now
+  (feetNow). Standing, that is where the bind pose's feet are; seated on the bike the feet are on the pegs ~0.5 m
+  under the hips, not a leg's length: every tie got that gap, NM's body ~0.5 m over the drawn one for the whole
+  ragdoll: the drawn body sank into the path (waist-deep), and stopped short of walls NM's body met. Now the agent is
+  made at the bind pose's own lowest bone (At(b)), whatever pose he's in.
