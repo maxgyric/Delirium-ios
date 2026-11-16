@@ -545,10 +545,37 @@ public partial class Game
         Vector3 fly = velIn * 0.7f + Vector3.up * Mathf.Clamp(speed * 0.15f, 1.5f, 3.5f);
         heroVel = new Vector3(fly.x, 0f, fly.z);
         heroVy = fly.y;
+        LiftOutOfGround();
         heroPos = hero.Body.Hips.position;
         Knock(speed > 12f);
         if (heroRb != null && !heroRb.isKinematic) heroRb.linearVelocity = fly;
         Play(Sfx.Punch, bikeGo.transform.position, 1f);
+    }
+
+    // The thrown rider wholly above the ground before Delirium takes him: leaned over with the bike, his feet on the
+    // pegs and a knee were under the road. A limb started under the ground stays under it (the ground pushes it from
+    // below): he slid along waist-deep in the path. Lifted by the deepest bone's depth under the ground there, plus
+    // a limb's thickness.
+    void LiftOutOfGround()
+    {
+        if (hero == null) return;
+        var body = hero.Body;
+        float lift = 0f;
+        foreach (var bone in body.Bones)
+        {
+            if (bone == null) continue;
+            Vector3 p = bone.position;
+            float best = float.NegativeInfinity;
+            foreach (var h in Physics.RaycastAll(p + Vector3.up * 1.2f, Vector3.down, 2.5f, ~0, QueryTriggerInteraction.Ignore))
+            {
+                var c = h.collider;
+                if (bikeOwn.Contains(c) || c.transform.IsChildOf(body.transform) || h.normal.y < 0.5f) continue;
+                // the top under him, not a roof over him: the first surface down from just above the bone
+                if (h.point.y <= p.y + 0.6f && h.point.y > best) best = h.point.y;
+            }
+            if (!float.IsNegativeInfinity(best)) lift = Mathf.Max(lift, best + 0.1f - p.y);
+        }
+        if (lift > 0.001f) body.transform.position += Vector3.up * Mathf.Min(lift, 1.2f);
     }
 
     // ------------------------------------------------------------------ the rider

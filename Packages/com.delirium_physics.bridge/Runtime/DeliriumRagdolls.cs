@@ -1337,17 +1337,10 @@ namespace Delirium.Ragdoll
                         tris.Add(at); tris.Add(at + 1); tris.Add(at + 2);
                         mats.Add(mat);
                     }
-                    // NM drops a triangle wider than its limit across the ground: halved till it's kPiece across at most
-                    void Split(Vector3 a, Vector3 bv, Vector3 d, int depth)
-                    {
-                        float wide = Mathf.Max(Mathf.Max(a.x, bv.x, d.x) - Mathf.Min(a.x, bv.x, d.x), Mathf.Max(a.z, bv.z, d.z) - Mathf.Min(a.z, bv.z, d.z));
-                        if (wide <= kPiece || depth > 12) { Tri(a, bv, d); return; }
-                        Vector3 ab = (a + bv) / 2, bd = (bv + d) / 2, da = (d + a) / 2;
-                        Split(a, ab, da, depth + 1);
-                        Split(ab, bv, bd, depth + 1);
-                        Split(da, bd, d, depth + 1);
-                        Split(ab, bd, da, depth + 1);
-                    }
+                    // NM drops a triangle wider than its limit across the ground: cut to kPiece across at most, the
+                    // same cuts on both sides of every edge (Conform)
+                    Action<Vector3, Vector3, Vector3> tri = Tri;
+                    void Split(Vector3 a, Vector3 bv, Vector3 d, int depth) => Conform(a, bv, d, tri);
                     foreach (var (v, ix, m) in parts)
                     {
                         mat = m;
@@ -1795,6 +1788,57 @@ namespace Delirium.Ragdoll
         static readonly Dictionary<IntPtr, HashSet<(int, int, long)>> givenPieces = new Dictionary<IntPtr, HashSet<(int, int, long)>>();
         const float kPiece = 4f;
 
+        // (Sandbox) A triangle cut till every edge is kPiece across at most (x and z), each edge cut by itself alone:
+        // halved when it's longer, at its exact middle. Its neighbour across it cuts it the same, so the pieces meet
+        // corner to corner. (Each triangle was quartered by its own width: a big one met a small one, or one cut
+        // more, with corners in the middle of the other's edges. NM finds a triangle's neighbours by shared corners;
+        // an edge with none is an outside edge that pushes sideways. A ragdoll on a split road hit invisible steps,
+        // hovered on them, sank by them.) `keep`: a piece (and all its pieces) left out when it says no.
+        static bool Long(Vector3 p, Vector3 q) => Mathf.Max(Mathf.Abs(p.x - q.x), Mathf.Abs(p.z - q.z)) > kPiece;
+        static Vector3 Mid(Vector3 p, Vector3 q) => new Vector3((p.x + q.x) * 0.5f, (p.y + q.y) * 0.5f, (p.z + q.z) * 0.5f);
+
+        internal static void Conform(Vector3 a, Vector3 b, Vector3 c, Action<Vector3, Vector3, Vector3> emit,
+            Func<Vector3, Vector3, Vector3, bool> keep = null, int depth = 0)
+        {
+            if (keep != null && !keep(a, b, c)) return;
+            bool s0 = Long(a, b), s1 = Long(b, c), s2 = Long(c, a);
+            int n = (s0 ? 1 : 0) + (s1 ? 1 : 0) + (s2 ? 1 : 0);
+            if (n == 0 || depth > 24) { emit(a, b, c); return; }
+            int d = depth + 1;
+            if (n == 3)
+            {
+                Vector3 ab = Mid(a, b), bc = Mid(b, c), ca = Mid(c, a);
+                Conform(a, ab, ca, emit, keep, d);
+                Conform(ab, b, bc, emit, keep, d);
+                Conform(ca, bc, c, emit, keep, d);
+                Conform(ab, bc, ca, emit, keep, d);
+                return;
+            }
+            // turned (same winding) so the one edge cut is a-b, or the one edge kept is b-c
+            if (n == 1 ? s1 : !s2) (a, b, c) = (b, c, a);
+            else if (n == 1 ? s2 : !s0) (a, b, c) = (c, a, b);
+            if (n == 1)
+            {
+                var m = Mid(a, b);
+                Conform(a, m, c, emit, keep, d);
+                Conform(m, b, c, emit, keep, d);
+                return;
+            }
+            // a-b and c-a cut: the corner at a, and the four-sided rest across its shorter diagonal
+            Vector3 m0 = Mid(a, b), m2 = Mid(c, a);
+            Conform(a, m0, m2, emit, keep, d);
+            if ((m0 - c).sqrMagnitude <= (b - m2).sqrMagnitude)
+            {
+                Conform(m0, b, c, emit, keep, d);
+                Conform(m0, c, m2, emit, keep, d);
+            }
+            else
+            {
+                Conform(m0, b, m2, emit, keep, d);
+                Conform(b, c, m2, emit, keep, d);
+            }
+        }
+
         static int Level(Transform hips, Transform owner, IntPtr world)
         {
             if (!given.TryGetValue(world, out var has)) given[world] = has = new HashSet<(int, long)>();
@@ -1819,35 +1863,24 @@ namespace Delirium.Ragdoll
             // (Sandbox) NM drops a triangle wider than its limit across the ground (a map's merged faces: a whole
             // field as two triangles; the sandbox's 80 m ground box): a ragdoll fell through it. Halved till it's 4 m
             // across at most.
-            void Split(Vector3 a, Vector3 b, Vector3 d)
-            {
-                float wide = Mathf.Max(Mathf.Max(a.x, b.x, d.x) - Mathf.Min(a.x, b.x, d.x), Mathf.Max(a.z, b.z, d.z) - Mathf.Min(a.z, b.z, d.z));
-                if (wide <= kPiece) { Tri(a, b, d); return; }
-                Vector3 ab = (a + b) / 2, bd = (b + d) / 2, da = (d + a) / 2;
-                Split(a, ab, da);
-                Split(ab, b, bd);
-                Split(da, bd, d);
-                Split(ab, bd, da);
-            }
+            // (the same cuts on both sides of every edge: Conform)
+            Action<Vector3, Vector3, Vector3> tri = Tri;
+            void Split(Vector3 a, Vector3 b, Vector3 d) => Conform(a, b, d, tri);
             // A big triangle's pieces within reach of `c` that this world hasn't got (each by its place); the rest of
             // it is left for when a ragdoll comes near.
             void SplitNear(int cid, int t, Vector3 a, Vector3 b, Vector3 d)
             {
-                var mid = (a + b + d) / 3;
-                float size = Mathf.Max((a - mid).magnitude, (b - mid).magnitude, (d - mid).magnitude);
-                if ((mid - c).magnitude > R + size) return;
-                float wide = Mathf.Max(Mathf.Max(a.x, b.x, d.x) - Mathf.Min(a.x, b.x, d.x), Mathf.Max(a.z, b.z, d.z) - Mathf.Min(a.z, b.z, d.z));
-                if (wide <= kPiece)
+                Conform(a, b, d, (p, q, r) =>
                 {
+                    var mid = (p + q + r) / 3;
                     long at = Key(Mathf.FloorToInt(mid.x * 4f), Mathf.FloorToInt(mid.y * 4f), Mathf.FloorToInt(mid.z * 4f)); // its middle, to 25 cm
-                    if (pieces.Add((cid, t, at))) Tri(a, b, d);
-                    return;
-                }
-                Vector3 ab = (a + b) / 2, bd = (b + d) / 2, da = (d + a) / 2;
-                SplitNear(cid, t, a, ab, da);
-                SplitNear(cid, t, ab, b, bd);
-                SplitNear(cid, t, da, bd, d);
-                SplitNear(cid, t, ab, bd, da);
+                    if (pieces.Add((cid, t, at))) Tri(p, q, r);
+                }, (p, q, r) =>
+                {
+                    var mid = (p + q + r) / 3;
+                    float size = Mathf.Max((p - mid).magnitude, (q - mid).magnitude, (r - mid).magnitude);
+                    return (mid - c).magnitude <= R + size;
+                });
             }
             foreach (var col in Physics.OverlapSphere(c, R))
             {

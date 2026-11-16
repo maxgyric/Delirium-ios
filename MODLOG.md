@@ -299,3 +299,17 @@ files (default.xex, the three exported files, the archives) are picked by the la
   <game>/delirium-anim.cache ("DAC1": xex size + mtime, the key, kv::export, the skeleton): the next start reads
   those and only anim.img's table. kv::export / import added to delirium-data. Round trip tested; not run on the
   real files (not here).
+
+## Ragdoll off the bike: invisible steps, hovering, sinking (2026-11-16)
+- The video: thrown off at ~50 km/h he went waist-deep into the red path at once, slid along it so, then lay hovering
+  by the kerb. The whole-level world changed nothing because both ways of giving the level to NM cut big triangles the
+  same broken way: each triangle quartered by its own width (Split / SplitNear), so a cut road triangle met an uncut
+  or less-cut neighbour with corners in the middle of its edges (T-junctions). NM (collision.rs tuples) finds a
+  triangle's neighbours by shared corners; an edge without one is an outside edge, whose contacts aren't filtered by
+  the neighbour's normal (ragdoll.rs world_meet across_ok): sideways pushes all along the cut lines.
+- Now Conform (DeliriumRagdolls.cs): an edge is halved iff it is longer than kPiece (x/z) on its own, at its exact
+  middle (commutative sums: bit-identical from both sides); 1, 2 or 3 edges cut -> 2, 3 or 4 pieces, recursively.
+  Test (scratchpad conf/t.cs, 200 random 5x5 grids of 0.5-40 m quads): every inner edge in exactly two pieces, the
+  outer ones once, widest piece 4.0 m. Level's SplitNear prunes pieces out of reach but cuts the same.
+- Bike.cs LiftOutOfGround: before the rider is ragdolled, the body lifted by its deepest bone's depth under the
+  ground under it (+0.1 m): a leg started under a one-sided surface stays under it.
