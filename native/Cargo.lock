@@ -543,6 +543,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "delirium-bike"
+version = "0.1.0"
+dependencies = [
+ "delirium-data",
+ "miniz_oxide",
+]
+
+[[package]]
 name = "delirium-data"
 version = "0.1.0"
 dependencies = [
@@ -557,6 +565,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "delirium-anim",
+ "delirium-bike",
  "delirium-sdk",
 ]
 

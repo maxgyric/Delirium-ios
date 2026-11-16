@@ -105,6 +105,7 @@ public partial class Game
     void RemoveHero()
     {
         if (!heroOn) return;
+        BikeRemove();
         if (gunModel != null) Destroy(gunModel);
         gunModel = null;
         gunShown = -1;
@@ -125,6 +126,7 @@ public partial class Game
     // On his feet at `at`, on his clips, sober (after a reset).
     void HeroPlace(Vector3 at, float yaw)
     {
+        riding = false;
         heroMode = 0;
         heroDrunk = heroLeaning = heroDrunkPending = false;
         heroPos = at;
@@ -163,7 +165,7 @@ public partial class Game
 
     void ToggleNoclip()
     {
-        if (hero == null || hero.Killed) return;
+        if (hero == null || hero.Killed || riding) return;
         heroNoclip = !heroNoclip;
         heroDrunkPending = false;
         if (heroNoclip)
@@ -218,7 +220,7 @@ public partial class Game
 
     void ToggleDrunk()
     {
-        if (heroNoclip) return;
+        if (heroNoclip || riding) return;
         if (hero == null || hero.Rising || hero.Killed) return;
         // (in the air too, now a ragdoll made mid-air keeps its place: it lands drunk)
         heroDrunkPending = false;
@@ -315,6 +317,7 @@ public partial class Game
         // his Rigidbody is only how Delirium learns his speed: never the physics' to move
         if (heroRb != null && !heroRb.isKinematic && !nm.State(hero.Body.transform).Ragdolled) heroRb.isKinematic = true;
         if (hero.Rising || hero.Broken) return;
+        if (riding) return; // on the bike: Bike.cs has him
         var owner = hero.Body.transform;
         if (heroMode != 0)
         {
@@ -899,6 +902,7 @@ public partial class Game
             if (f.Began && !OverUi(f.Screen))
             {
                 if (RadialTap(f.Pos, f.Id, w, h)) { } // the VRChat avatar's Expressions button and its wheel
+                else if (BikeTap(f.Pos, f.Id, w, h)) { } // Ride, Off (Gas and Brake are Jump's and Sprint's places)
                 else if (Vector2.Distance(f.Pos, BtnJump(w, h)) < kBtnR + 6f) { hJumpReq = true; hJumpId = f.Id; }
                 else if (Vector2.Distance(f.Pos, BtnAim(w, h)) < kBtnR + 6f) { if (heroMode == 0 && !kGuns[weapon % kGuns.Length].Fists) heroAim = !heroAim; }
                 else if (Vector2.Distance(f.Pos, BtnDrunk(w, h)) < kBtnR + 6f) { if (heroNoclip) hDownId = f.Id; else ToggleDrunk(); }
@@ -933,6 +937,7 @@ public partial class Game
         if (Input.GetKeyDown(KeyCode.Space)) hJumpReq = true;
         if (Input.GetKeyDown(KeyCode.J)) ToggleDrunk();
         if (Input.GetKeyDown(KeyCode.N)) ToggleNoclip();
+        if (Input.GetKeyDown(KeyCode.E)) { if (riding) BikeOff(false); else if (NearBike()) BikeOn(); }
         // the right mouse button aims (on a phone Unity calls a second finger the right button: not that)
         if (Input.touchCount == 0 && Input.GetMouseButtonDown(1) && heroMode == 0 && !kGuns[weapon % kGuns.Length].Fists) heroAim = !heroAim;
         heroSprint = hSprintId != kNone || Input.GetKey(KeyCode.LeftShift);
@@ -967,6 +972,16 @@ public partial class Game
 
     void HeroGui(float w, float h)
     {
+        if (riding)
+        {
+            var ringR = new Color(1f, 1f, 1f, 0.16f);
+            Disc(PadL(w, h), kStickR + 18f, ringR);
+            Disc(PadL(w, h) + new Vector2(hStick.x, -hStick.y) * kStickR, 30f, new Color(1f, 1f, 1f, 0.45f));
+            BikeGui(w, h);
+            RadialGui(w, h);
+            return;
+        }
+        BikeGui(w, h);
         bool fists = kGuns[weapon % kGuns.Length].Fists;
         var ring = new Color(1f, 1f, 1f, 0.16f);
         var knob = new Color(1f, 1f, 1f, 0.45f);

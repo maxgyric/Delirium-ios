@@ -1,0 +1,17 @@
+# GTA IV's motorbikes in Delirium Sandbox: the model (geometry, parts, textures) read from your own vehicles.img,
+# handling.dat from your common.rpf, and the ride simulated with GTA IV's wheel code (delirium-data's wheelstep,
+# tyre, suspension) plus a bike balance after handling.dat's bike line. On iOS: inside libdelirium_ios.a.
+[package]
+name = "delirium-bike"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "delirium_bike"
+crate-type = ["rlib"]
+
+[dependencies]
+delirium-data = { path = "../crates/delirium-data" }
+miniz_oxide = "0.8"

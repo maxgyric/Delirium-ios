@@ -30,6 +30,7 @@ public static class GtaAnim
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_target(int n, IntPtr[] names, int[] parents, float[] local, byte[] buf, int len);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_pose(int c, float phase, float[] o, int[] moved);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_pose_root(int c, float phase, float[] o, int[] moved);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] static extern int da_pose_seat(int c, float phase, float[] o, int[] moved);
 
     static byte[] Z(string s) => Encoding.UTF8.GetBytes(s + "\0");
 
@@ -220,6 +221,43 @@ public static class GtaAnim
         }
         phase = Mathf.Clamp01(phase);
         int r = root ? da_pose_root(c.Id, phase, raw, moved) : da_pose(c.Id, phase, raw, moved);
+        if (r < 0) return false;
+        for (int b = 0; b < Bones && b < into.Length; b++)
+        {
+            int k = b * 7;
+            into[b].P = new Vector3(raw[k], raw[k + 2], raw[k + 1]);
+            into[b].R = new Quaternion(-raw[k + 3], -raw[k + 5], -raw[k + 4], raw[k + 6]);
+        }
+        return true;
+    }
+
+    /// A clip of `dict` (a bike's veh@bike_spt...), loaded when first asked for (the hero's are loaded at start).
+    public static Clip Vehicle(string dict, string name, bool cycle = false)
+    {
+        if (State != 2) return new Clip();
+        string k = dict + "/" + name;
+        if (vehicleClips.TryGetValue(k, out var c)) return c;
+        c = Get(dict, name, cycle);
+        vehicleClips[k] = c;
+        return c;
+    }
+
+    static readonly Dictionary<string, Clip> vehicleClips = new Dictionary<string, Clip>();
+    static bool noSeat;
+
+    /// As Pose, about the clip's own root (in a vehicle: its seat) and not stood on its feet: the pelvis where the
+    /// clip has it from the seat. A library without it (an old desktop build): false.
+    public static bool PoseSeat(Clip c, float phase, Frame[] into)
+    {
+        if (State != 2 || c == null || !c.Ok || noSeat) return false;
+        if (raw == null || raw.Length != Bones * 7)
+        {
+            raw = new float[Bones * 7];
+            moved = new int[Bones];
+        }
+        int r;
+        try { r = da_pose_seat(c.Id, Mathf.Clamp01(phase), raw, moved); }
+        catch (EntryPointNotFoundException) { noSeat = true; return false; }
         if (r < 0) return false;
         for (int b = 0; b < Bones && b < into.Length; b++)
         {

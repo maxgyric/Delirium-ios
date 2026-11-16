@@ -544,7 +544,7 @@ public partial class Game : MonoBehaviour
         SettingsUpdate();
         float dt = Time.deltaTime;
         foreach (var m in men) Mind(m, dt);
-        if (heroOn) HeroUpdate(dt);
+        if (heroOn) { HeroUpdate(dt); BikeUpdate(dt); }
         else Pointer();
         for (int i = flashes.Count - 1; i >= 0; i--)
         {
@@ -772,8 +772,10 @@ public partial class Game : MonoBehaviour
         }
         if (heroOn)
         {
+            BikePose();
             HeroPose();
-            HeroCamera();
+            if (riding && bikeGo != null) BikeCamera();
+            else HeroCamera();
             return;
         }
         // the camera: round the first man (or the held one)
@@ -1018,6 +1020,7 @@ public partial class Game : MonoBehaviour
             if (Button("Reset", 80f)) ResetAll();
             if (Button(menuOpen ? "Menu <" : "Menu >", 90f)) menuOpen = !menuOpen;
             if (Button(heroNoclip ? "Noclip: on" : "Noclip", 120f)) ToggleNoclip();
+            if (Button(bikeState == 1 || bikeBuilding ? "Bike..." : bikeGo == null ? "Bike" : "Next bike", 110f)) BikeButton();
             if (Button("Settings", 100f)) OpenSettings();
             FpsGui(w);
             HeroGui(w, h);

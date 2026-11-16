@@ -226,3 +226,21 @@ files (default.xex, the three exported files, the archives) are picked by the la
 - Rigs.cs: ".x" is noise; "*twist"/"*stretch" sided halves read as the bone; no neck/head by name -> the spine bones above the shoulders' parent (Rigify DEF-spine.004..006).
 - Materials: toon node set-ups (no Principled) - the picture scored by its name (_D, albedo vs _N, mask, ramp...) and where it goes (normal map, separate, ramp factor: data); a colour ramp driven by a data picture gives its mean colour; mix factors aren't followed.
 - Picker: several files at once; .zips unpacked each into its own folder (nested .zips too); a .zip with no .blend kept as textures for the next model.
+
+## GTA IV motorbike (stage 1)
+- Your files: handling.dat from common.rpf (rpf key found by trial from default.xex), bikes' .xft/.xtd + vehshare.xtd
+  from xbox360/models/cdimages/vehicles.img (IMG key = xbox360.rpf's). Bikes: pcj nrg900 sanchez faggio hellfury bobber
+  zombieb; anim dicts veh@bike_spt/dirt/scooter/chopper (sit_drive, steer_l/r, steer_fwd/bwd, still, reverse, get_in_ds...).
+- native/bike: tex.rs (Xbox fetch constant at header+0x1C: d0 bit31 tiled, pitch bits 22..30 *32; d1 &0x3F format
+  18 DXT1 / 20 DXT5 / 6 ARGB, endian (d1>>6)&3, base d1&~0xFFF; d2 size-1; XGAddress2DTiledOffset in blocks), glb.rs
+  (bones -> nodes, rigid meshes split by blend index into bone space, fragment children (wheels) in their bone's space,
+  GTA (x,y,z) -> glTF (-x,z,y) -> Unity (x,z,y)), sim.rs (Transmission::process, Spring/force, tyre_force verbatim;
+  balance: roll purely by a PD to atan(v*yaw/g)*(1+DesLean) - steer*StickLean, k 160 c 24 (gravity m g h / I ~ 45);
+  wheel forces' roll torque removed; COM shift LeanFwd/BakCOM; wheelie/stoppie limits; InAirSteer; BrakeStabil yaw damp;
+  drag a = drag * v^2), game.rs, lib.rs (db_* C API).
+- Headless test (bike/examples/ride.rs, flat plane): settles at x=rest, 0-60 km/h ~3 s, 5 gears, ~126 km/h, lean held
+  at 40 deg, wheelie ~55 deg, brakes, reverse when braking at a stop.
+- anim: da_pose_seat (pose about the clip's root = the seat, mover added, not re-grounded).
+- Bike.cs: spawn (top bar), Ride / Off / E, Gas = Jump's place, Brake = Sprint's, stick steer + lean; rays per wheel;
+  push-out of what it hits, > 7 m/s into it or a spill -> rider on Delirium (Knock with the bike's speed), bike on a
+  Unity Rigidbody; registered with Delirium as a Car mover. Get-on/off are 0.35 s blends (the clips not used yet).

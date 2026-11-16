@@ -12,5 +12,6 @@ crate-type = ["staticlib"]
 [dependencies]
 delirium-sdk = { path = "../crates/delirium-sdk" }
 delirium-anim = { path = "../anim" }
+delirium-bike = { path = "../bike" }
 # BLAKE3 in plain Rust: no C compiled for the phone (the build runs on Linux)
 blake3 = { version = "1", features = ["pure"] }

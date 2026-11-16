@@ -382,10 +382,23 @@ impl Anim {
     /// As `pose`, the body carried by the clip's mover over the ground (not put back in place): its ground the
     /// ground under its end, its place relative to where the clip starts. For get-ups (lying -> standing).
     fn pose_with(&self, c: usize, phase: f32, out: &mut [f32], moved: &mut [i32], travel: bool) -> Result<(), String> {
+        self.pose_mode(c, phase, out, moved, if travel { 1 } else { 0 })
+    }
+
+    /// mode 0: in place on its feet; 1: carried by its mover; 2: as the clip has it about its root (a vehicle's
+    /// seat), its mover on top, nothing re-grounded
+    fn pose_mode(&self, c: usize, phase: f32, out: &mut [f32], moved: &mut [i32], mode: i32) -> Result<(), String> {
+        let travel = mode == 1;
         let t = self.target.as_ref().ok_or("no target skeleton (da_target)")?;
         let gl = self.sample_rooted(c, phase);
         let mut gw = world(&self.parents, &gl);
-        let (mid, floor) = if travel {
+        let (mid, floor) = if mode == 2 {
+            let m = self.mover(c, phase);
+            for f in gw.iter_mut() {
+                f.0 += m;
+            }
+            (Vec3::ZERO, 0.0)
+        } else if travel {
             let m = self.mover(c, phase);
             for f in gw.iter_mut() {
                 f.0 += m;
@@ -582,6 +595,24 @@ pub unsafe extern "C" fn da_pose_root(c: i32, phase: f32, out: *mut f32, moved: 
     }) {
         Ok(()) => 0,
         Err(e) => fail(format!("da_pose_root: {e}")),
+    }
+}
+
+/// As `da_pose`, the clip about its own root (in a vehicle: the seat) with its mover, not stood on its feet: the
+/// pelvis where the clip has it from the root (GTA metres scaled to the target, plus the target's floor height).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn da_pose_seat(c: i32, phase: f32, out: *mut f32, moved: *mut i32) -> i32 {
+    if out.is_null() || moved.is_null() {
+        return fail("da_pose_seat: no output");
+    }
+    match with(|a| {
+        let i = usize::try_from(c).ok().filter(|&i| i < a.clips.len()).ok_or("no such clip")?;
+        let n = a.target.as_ref().ok_or("no target skeleton")?.parents.len();
+        let (o, m) = unsafe { (std::slice::from_raw_parts_mut(out, n * 7), std::slice::from_raw_parts_mut(moved, n)) };
+        a.pose_mode(i, phase, o, m, 2)
+    }) {
+        Ok(()) => 0,
+        Err(e) => fail(format!("da_pose_seat: {e}")),
     }
 }
 
