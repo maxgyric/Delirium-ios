@@ -803,10 +803,21 @@ namespace Delirium.Ragdoll
 
         /// The cars into every ragdoll's world (before its steps); standing characters one is about to hit ragdolled; the
         /// braces aimed at theirs.
+        bool carBoxesSet; // a world was given boxes: when the last car goes, they're taken back out
+
         void Cars()
         {
             cars.RemoveAll(c => c.T == null);
-            if (cars.Count == 0) return;
+            if (cars.Count == 0)
+            {
+                // the last set stays in a world till another replaces it: an invisible box where the last car was
+                if (carBoxesSet)
+                    foreach (var w in dolls.Select(d => d.world).Distinct())
+                        Check(nm_world_set_boxes(w, new float[0], 0));
+                carBoxesSet = false;
+                return;
+            }
+            carBoxesSet = true;
             var boxes = new float[cars.Count * 13];
             for (int k = 0; k < cars.Count; k++)
             {

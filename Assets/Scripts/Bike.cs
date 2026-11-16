@@ -527,6 +527,8 @@ public partial class Game
     // after the wall took its share
     void BikeCrash(Vector3 velIn, Vector3 vel, Vector3 hitNormal)
     {
+        // not a car to Delirium any more before the rider is its ragdoll (its box would be in his world)
+        try { nm.UnregisterCar(bikeGo.transform); } catch (Exception) { }
         BikeOff(true);
         heroMode = 0;
         heroGround = false;

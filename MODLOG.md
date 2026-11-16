@@ -268,3 +268,7 @@ files (default.xex, the three exported files, the archives) are picked by the la
 - Video (crash into a raised bed at 68 km/h): the ball wheel climbed the 0.6 m wall; ground hits higher than 0.85 r
   above the wheel's lowest point are skipped now (the body's box meets them). The rider flew back with the bike: the
   crash used the speed after the push-out; now velIn * 0.85 + up (over the bars), the bike tumbles nose-down.
+- Video 2 (crash into the well at 50 km/h): the rider hung upright in the air beside it. Delirium's bridge Cars()
+  returned at once when no car was left, so the worlds kept the last box set (the bike's, where it crashed): an
+  invisible box. Cars() now clears the worlds' boxes (nm_world_set_boxes count 0) when the last car goes; the bike is
+  unregistered before the rider is ragdolled.
