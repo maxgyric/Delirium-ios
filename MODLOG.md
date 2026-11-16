@@ -244,3 +244,15 @@ files (default.xex, the three exported files, the archives) are picked by the la
 - Bike.cs: spawn (top bar), Ride / Off / E, Gas = Jump's place, Brake = Sprint's, stick steer + lean; rays per wheel;
   push-out of what it hits, > 7 m/s into it or a spill -> rider on Delirium (Knock with the bike's speed), bike on a
   Unity Rigidbody; registered with Delirium as a Car mover. Get-on/off are 0.35 s blends (the clips not used yet).
+
+## Bike stage 2 (user's 7 points)
+- NaN: tyre_force divides by the load; a wheel just touching (a step's edge, spawning) had load 0 -> NaN pose ->
+  Unity's physics broken for everything (collision gone, teleports, Reset useless). Now the game's own rule (no tyre
+  below m g kv51), the step rolled back if anything goes non-finite, and Unity never takes a non-finite pose.
+- Stairs launched it (ray on the next step: a huge bump-stop kick): past the travel it's a contact now (lifted out,
+  inward speed removed), spring rate clamped to 3 m/s. Box push-outs with an upward normal are ground (no crash, no
+  state reset: db_nudge moves pos/vel only).
+- Load time: the archive key from the clips' opening (delirium_anim::KEY) - no second default.xex unpack; textures
+  decoded only when a mesh uses them (vehshare.xtd has dozens); PNG deflate level 1. Open 4 ms, build ~45 ms on a PC.
+- Riding controls: arrows (left/right) on the left, Gas / Brake / lean up / lean down on the right, Off top right; no
+  stick. The gun hidden while riding.

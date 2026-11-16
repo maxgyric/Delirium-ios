@@ -148,6 +148,24 @@ pub unsafe extern "C" fn db_place(h: i32, pos: *const f32, rot: *const f32, vel:
     }
 }
 
+/// Moves it to `pos` (3) going `vel` (3), everything else as it was (a push out of a wall).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn db_nudge(h: i32, pos: *const f32, vel: *const f32) -> i32 {
+    match with(|s| {
+        let (b, _) = s.bikes.get_mut(h as usize).and_then(|b| b.as_mut()).ok_or("no such bike")?;
+        let p = unsafe { std::slice::from_raw_parts(pos, 3) };
+        let v = unsafe { std::slice::from_raw_parts(vel, 3) };
+        if p.iter().chain(v.iter()).all(|x| x.is_finite()) {
+            b.pos = [p[0], p[1], p[2]];
+            b.vel = [v[0], v[1], v[2]];
+        }
+        Ok(())
+    }) {
+        Ok(()) => 0,
+        Err(e) => fail(e),
+    }
+}
+
 /// One step: `input` 5 floats (throttle 0..1, brake 0..1, steer -1..1 (+ right), lean -1 back..1 forward,
 /// handbrake 0/1); `ground` 14 floats (a wheel each: hit 0/1, point (3), normal (3)); `out` 32 floats:
 /// pos (3), rot (4), vel (3), ang (3), steer angle, lean, pitch, speed along, gear, revs, front x, rear x,

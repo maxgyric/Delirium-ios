@@ -56,6 +56,8 @@ struct Anim {
 }
 
 static STATE: Mutex<Option<Anim>> = Mutex::new(None);
+/// The archives' key found when the game was opened (the bikes reuse it: no second pass over default.xex).
+pub static KEY: std::sync::OnceLock<ArchiveKey> = std::sync::OnceLock::new();
 static ERR: Mutex<String> = Mutex::new(String::new());
 
 fn fail(e: impl Into<String>) -> i32 {
@@ -168,6 +170,7 @@ impl Anim {
             let nested = toc.iter().find(|e| e.path.eq_ignore_ascii_case("models/cdimages/playerped.rpf")).ok_or("playerped.rpf not found")?;
             (rpf::read(&platform, nested)?, key)
         };
+        let _ = KEY.set(key.clone());
         let inner = rpf::read_toc(&peds, &key)?;
         let e = inner.iter().find(|e| e.path.eq_ignore_ascii_case(&plat(pc, "player.xft"))).ok_or("player.xft not in playerped.rpf")?;
         let frag = resource::parse(&rpf::read(&peds, e)?)?;

@@ -546,6 +546,7 @@ dependencies = [
 name = "delirium-bike"
 version = "0.1.0"
 dependencies = [
+ "delirium-anim",
  "delirium-data",
  "miniz_oxide",
 ]

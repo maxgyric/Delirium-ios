@@ -55,6 +55,34 @@ pub struct Built {
     pub max: [f32; 3],
 }
 
+/// The textures the model may use, decoded when a mesh first asks for one (vehshare.xtd has dozens).
+pub struct Lazy<'a> {
+    index: HashMap<String, (&'a Resource, usize)>,
+    done: HashMap<String, Option<Tex>>,
+}
+
+impl<'a> Lazy<'a> {
+    fn new(dicts: &[&'a Resource]) -> Self {
+        let mut index = HashMap::new();
+        for d in dicts {
+            if let Ok(e) = model::dictionary(d) {
+                for (_, at) in e {
+                    if let Some(n) = tex::name_of(d, at) { index.entry(tex::key(&n)).or_insert((*d, at)); }
+                }
+            }
+        }
+        Lazy { index, done: HashMap::new() }
+    }
+    fn get(&mut self, name: &str) -> Option<&Tex> {
+        let k = tex::key(name);
+        if !self.done.contains_key(&k) {
+            let t = self.index.get(&k).and_then(|&(r, at)| tex::read_one(r, at));
+            self.done.insert(k.clone(), t);
+        }
+        self.done.get(&k).and_then(|t| t.as_ref())
+    }
+}
+
 #[derive(Default)]
 struct Out {
     json_meshes: Vec<String>,
@@ -95,7 +123,7 @@ impl Out {
         self.accessors.push(format!("{{\"bufferView\":{bv},\"componentType\":5125,\"count\":{},\"type\":\"SCALAR\"}}", v.len()));
         self.accessors.len() - 1
     }
-    fn texture(&mut self, name: &str, texes: &HashMap<String, Tex>) -> Option<usize> {
+    fn texture(&mut self, name: &str, texes: &mut Lazy) -> Option<usize> {
         let k = tex::key(name);
         if let Some(t) = self.tex_of.get(&k) { return *t; }
         let r = texes.get(&k).map(|t| {
@@ -108,7 +136,7 @@ impl Out {
         self.tex_of.insert(k, r);
         r
     }
-    fn material(&mut self, shader: &str, texture: Option<&str>, texes: &HashMap<String, Tex>, paint: &[[f32; 3]; 2]) -> usize {
+    fn material(&mut self, shader: &str, texture: Option<&str>, texes: &mut Lazy, paint: &[[f32; 3]; 2]) -> usize {
         let key = format!("{shader}|{}", texture.unwrap_or(""));
         if let Some(&m) = self.mat_of.get(&key) { return m; }
         let s = shader.to_ascii_lowercase();
@@ -121,7 +149,7 @@ impl Out {
         if !painted {
             if let Some(t) = texture.and_then(|t| self.texture(t, texes)) {
                 tex_json = format!(",\"baseColorTexture\":{{\"index\":{t}}}");
-                alpha = texture.map(|n| texes.get(&tex::key(n)).map(|t| t.alpha).unwrap_or(false)).unwrap_or(false);
+                alpha = texture.map(|n| texes.get(n).map(|t| t.alpha).unwrap_or(false)).unwrap_or(false);
             } else {
                 col = [0.35, 0.35, 0.37];
             }
@@ -143,16 +171,7 @@ impl Out {
 pub fn build(frag: &Resource, dicts: &[&Resource], paint: [[f32; 3]; 2]) -> Result<Built, String> {
     let root = model::fragment_root(frag)?;
     let bones = skeleton::read(frag, root)?;
-    let mut texes: HashMap<String, Tex> = HashMap::new();
-    if let Some(at) = model::embedded_textures(frag, root) {
-        // a dictionary in the model itself (rare for vehicles)
-        let _ = at;
-    }
-    for d in dicts {
-        if let Ok(e) = model::dictionary(d) {
-            for t in tex::read_dict(d, &e) { texes.entry(tex::key(&t.name)).or_insert(t); }
-        }
-    }
+    let mut texes = Lazy::new(dicts);
     // the bones' bind matrices in the model's frame
     let mut world: Vec<M> = Vec::with_capacity(bones.len());
     for b in &bones {
@@ -188,7 +207,7 @@ pub fn build(frag: &Resource, dicts: &[&Resource], paint: [[f32; 3]; 2]) -> Resu
     };
     let main = model::meshes(frag, root, root)?;
     for m in &main {
-        let mat = out.material(&m.shader, m.texture.as_deref(), &texes, &paint);
+        let mat = out.material(&m.shader, m.texture.as_deref(), &mut texes, &paint);
         // split by the bone each vertex is bound to (vehicles are rigid: one bone a vertex)
         let bone_of = |v: usize| -> usize {
             let j = m.joints.get(v).map(|j| j[0] as usize).unwrap_or(0);
@@ -208,7 +227,7 @@ pub fn build(frag: &Resource, dicts: &[&Resource], paint: [[f32; 3]; 2]) -> Resu
             let Ok(ms) = model::meshes(frag, d, root) else { continue };
             let b = bone.min(bones.len().saturating_sub(1));
             for m in &ms {
-                let mat = out.material(&m.shader, m.texture.as_deref(), &texes, &paint);
+                let mat = out.material(&m.shader, m.texture.as_deref(), &mut texes, &paint);
                 add(b, mat, &m.positions, &m.normals, &m.uvs, &m.indices, true, &mut per_bone);
             }
         }

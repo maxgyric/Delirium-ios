@@ -1,7 +1,7 @@
 use delirium_bike::{game::Game, sim::{Ground, Input}};
 fn main() {
     let a: Vec<String> = std::env::args().collect();
-    let g = Game::open(std::path::Path::new(&a[1])).unwrap();
+    let mut g = Game::open(std::path::Path::new(&a[1])).unwrap();
     println!("bikes {:?}", g.bike_list());
     let (built, mut b) = g.bike(&a[2], [[0.6, 0.05, 0.05], [0.05; 3]]).unwrap();
     println!("wheels {:?} r {} / {:?} r {}, travel {} rest {}", b.wheels[0].at, b.wheels[0].radius, b.wheels[1].at, b.wheels[1].radius, b.wheels[0].spring.travel, b.wheels[0].spring.rest);

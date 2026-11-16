@@ -621,6 +621,7 @@ public partial class Game
     void HeroCamera()
     {
         if (hero == null) return;
+        if (gunModel != null && !gunModel.activeSelf) gunModel.SetActive(true); // off the bike: back in his hand
         GunInHand();
         Vector3 want = heroMode == 0 && !hero.Rising ? heroPos + Vector3.up * 1.45f : hero.Body.Hips.position + Vector3.up * 0.5f;
         hPivot = Vector3.Lerp(hPivot, want, 1f - Mathf.Exp(-14f * Time.unscaledDeltaTime));
@@ -974,9 +975,6 @@ public partial class Game
     {
         if (riding)
         {
-            var ringR = new Color(1f, 1f, 1f, 0.16f);
-            Disc(PadL(w, h), kStickR + 18f, ringR);
-            Disc(PadL(w, h) + new Vector2(hStick.x, -hStick.y) * kStickR, 30f, new Color(1f, 1f, 1f, 0.45f));
             BikeGui(w, h);
             RadialGui(w, h);
             return;

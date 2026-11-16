@@ -14,4 +14,5 @@ crate-type = ["rlib"]
 
 [dependencies]
 delirium-data = { path = "../crates/delirium-data" }
+delirium-anim = { path = "../anim" }
 miniz_oxide = "0.8"

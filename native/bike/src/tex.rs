@@ -34,7 +34,14 @@ pub fn read_dict(r: &Resource, entries: &[(u32, usize)]) -> Vec<Tex> {
     entries.iter().filter_map(|&(_, at)| read_one(r, at)).collect()
 }
 
-fn read_one(r: &Resource, at: usize) -> Option<Tex> {
+/// A texture's name only (cheap: nothing decoded).
+pub fn name_of(r: &Resource, at: usize) -> Option<String> {
+    let d = &r.data;
+    let name_at = ptr(r, be32(d, at + 0x14)?)?;
+    Some(String::from_utf8_lossy(d.get(name_at..)?.split(|&b| b == 0).next()?).into_owned())
+}
+
+pub fn read_one(r: &Resource, at: usize) -> Option<Tex> {
     let d = &r.data;
     let name_at = ptr(r, be32(d, at + 0x14)?)?;
     let name = String::from_utf8_lossy(d.get(name_at..)?.split(|&b| b == 0).next()?).into_owned();
@@ -189,7 +196,7 @@ pub fn png(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
         raw.push(0);
         raw.extend_from_slice(&rgba[y * w as usize * 4..(y + 1) * w as usize * 4]);
     }
-    let z = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
+    let z = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 1);
     let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
     let mut chunk = |t: &[u8], data: &[u8]| {
         out.extend_from_slice(&(data.len() as u32).to_be_bytes());

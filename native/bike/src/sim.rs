@@ -155,8 +155,21 @@ impl Bike {
         self.steer += (want - self.steer) * (1.0 - (-dt * 8.0).exp());
         let want_shift = if input.lean > 0.0 { input.lean * self.b.lean_fwd_com } else { input.lean * self.b.lean_back_com };
         self.shift += (want_shift - self.shift) * (1.0 - (-dt * 6.0).exp());
+        let saved = (self.pos, self.q, self.vel, self.ang, [self.wheels[0].x, self.wheels[1].x]);
         for _ in 0..n {
             self.substep(input, brake, &ground, h);
+            let ok = self.pos.iter().chain(self.vel.iter()).chain(self.ang.iter()).chain(self.q.0.iter()).all(|v| v.is_finite())
+                && self.vel.iter().all(|v| v.abs() < 300.0) && self.ang.iter().all(|v| v.abs() < 80.0);
+            if !ok {
+                // something blew up: back to where this frame began, at rest
+                (self.pos, self.q) = (saved.0, saved.1);
+                self.vel = [0.0; 3];
+                self.ang = [0.0; 3];
+                self.wheels[0].x = saved.4[0];
+                self.wheels[1].x = saved.4[1];
+                for w in self.wheels.iter_mut() { w.slip = 0.0; }
+                break;
+            }
         }
         let (right, fwd, up) = self.axes();
         self.lean = right[2].atan2(up[2]);
@@ -188,8 +201,20 @@ impl Bike {
                 let den = dot(down, g.normal);
                 if den < -0.2 { d = dot(sub(g.point, start), g.normal) / den; }
             }
-            let x_new = if d >= -0.3 && d <= s.travel { s.travel - d } else { 0.0 };
-            let rate = (x_new - w.x) / dt;
+            let mut x_new = if d >= -0.3 && d <= s.travel { s.travel - d } else { 0.0 };
+            // past the spring's travel (a kerb, a step, a hard landing): the frame meets the ground, a contact, not
+            // a spring: lifted out of it and its speed into the ground taken away
+            if x_new > s.travel {
+                let over = (x_new - s.travel).min(0.08);
+                self.pos = add(self.pos, mulv(g.normal, over));
+                let at = add(start, mulv(down, d));
+                let vp = add(self.vel, cross(self.ang, sub(at, com)));
+                let into = dot(vp, g.normal);
+                if into < 0.0 { self.vel = sub(self.vel, mulv(g.normal, into * 0.6)); }
+                x_new = s.travel;
+            }
+            // (a step's edge moves the ground at once: not a speed of the spring)
+            let rate = ((x_new - w.x) / dt).clamp(-3.0, 3.0);
             w.x = x_new;
             w.grounded = x_new > 0.0;
             if !w.grounded { w.load = 0.0; w.slip = 0.0; continue; }
@@ -199,10 +224,10 @@ impl Bike {
             let nrm = g.normal;
             let arm = sub(contact, com);
             // the spring and damper (GTA IV's), along the ground's normal
-            let load = suspension::force(&self.h, &s, w.x, rate.clamp(-10.0, 10.0), self.mass);
+            let load = suspension::force(&self.h, &s, w.x, rate, self.mass);
             let mut fz = load.force;
-            // bottomed out: the frame takes it
-            if w.x > s.travel - 0.02 { fz += (w.x - (s.travel - 0.02)) * self.mass * G * 60.0 + rate.max(0.0) * self.mass * 3.0; }
+            // near the end of its travel: a stiff bump stop
+            if w.x > s.travel - 0.05 { fz += (w.x - (s.travel - 0.05)) * self.mass * G * 20.0; }
             w.load = load.tyre.max(0.0);
             let f_sus = mulv(nrm, fz);
             force = add(force, f_sus);
@@ -217,6 +242,9 @@ impl Bike {
             let along = dot(v, wfwd);
             let across = dot(v, wside);
             let up_v = dot(v, nrm);
+            // too light on the ground for grip (a wheel brushing a step's edge): no tyre force, as the game's own
+            // wheel step skips it (its load is the divisor of the tyre's sums)
+            if !(w.load > self.mass * G * delirium_data::kv!(51)) { w.slip = 0.0; continue; }
             let drive_n = if w.front { 0.0 } else { self.drive * self.mass * G };
             let bias = self.h.brake_bias[if w.front { 0 } else { 1 }];
             let mut brake_n = brake * self.h.brake_force * bias * 0.5 * self.mass * G;

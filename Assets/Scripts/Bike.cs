@@ -31,6 +31,7 @@ public partial class Game
     [DllImport(BikeDll)] static extern int db_place(int h, float[] pos, float[] rot, float[] vel);
     [DllImport(BikeDll)] static extern int db_step(int h, float dt, float[] input, float[] ground, float[] o);
     [DllImport(BikeDll)] static extern int db_drop(int h);
+    [DllImport(BikeDll)] static extern int db_nudge(int h, float[] pos, float[] vel);
 
     // ------------------------------------------------------------------ state
     static volatile int bikeState;          // 0 not opened, 1 opening, 2 ready, -1 failed
@@ -308,26 +309,20 @@ public partial class Game
         if (bikeH < 0 || bikeGo == null) return;
         if (bikeWreck != null) return; // on Unity's physics till it's picked up
         var t = bikeGo.transform;
-        // the controls
+        // the controls: the arrows on the screen (or the keys)
+        if (!Has(bkL)) bkL = kNone;
+        if (!Has(bkR)) bkR = kNone;
+        if (!Has(bkGas)) bkGas = kNone;
+        if (!Has(bkBrake)) bkBrake = kNone;
+        if (!Has(bkFwd)) bkFwd = kNone;
+        if (!Has(bkBack)) bkBack = kNone;
         float thr = 0f, brk = 0f, steer = 0f, lean = 0f;
         if (riding && rideBlend >= 1f && !hero.Killed)
         {
-            bool keys = Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.D);
-            if (keys)
-            {
-                thr = Input.GetKey(KeyCode.W) ? 1f : 0f;
-                brk = Input.GetKey(KeyCode.S) ? 1f : 0f;
-                steer = (Input.GetKey(KeyCode.D) ? 1f : 0f) - (Input.GetKey(KeyCode.A) ? 1f : 0f);
-            }
-            else
-            {
-                thr = hJumpId != kNone ? 1f : 0f;
-                brk = hSprintId != kNone ? 1f : 0f;
-                steer = hStick.x;
-                lean = hStick.y;
-            }
-            lean += (Input.GetKey(KeyCode.UpArrow) ? 1f : 0f) - (Input.GetKey(KeyCode.DownArrow) ? 1f : 0f);
-            lean = Mathf.Clamp(lean, -1f, 1f);
+            thr = bkGas != kNone || Input.GetKey(KeyCode.W) ? 1f : 0f;
+            brk = bkBrake != kNone || Input.GetKey(KeyCode.S) ? 1f : 0f;
+            steer = (bkR != kNone || Input.GetKey(KeyCode.D) ? 1f : 0f) - (bkL != kNone || Input.GetKey(KeyCode.A) ? 1f : 0f);
+            lean = (bkFwd != kNone || Input.GetKey(KeyCode.UpArrow) ? 1f : 0f) - (bkBack != kNone || Input.GetKey(KeyCode.DownArrow) ? 1f : 0f);
         }
         else brk = riding ? 0f : 0.3f; // left alone: its brake on
         rideSteer = Mathf.MoveTowards(rideSteer, steer, dt * 4f);
@@ -336,11 +331,17 @@ public partial class Game
         BikeRay(0, t);
         BikeRay(1, t);
         Vector3 before = t.position;
-        Vector3 velBefore = FromGta(bikeOut, 7);
+        Quaternion beforeRot = t.rotation;
         if (db_step(bikeH, Mathf.Min(dt, 0.05f), bikeIn, bikeGround, bikeOut) < 0) { note = "Bike: " + BikeErr(); return; }
         Vector3 pos = FromGta(bikeOut, 0);
         Quaternion rot = RotFromGta(bikeOut, 3);
         Vector3 vel = FromGta(bikeOut, 7);
+        // never a broken number into Unity's physics (it took everything's collisions with it): back where it was
+        if (!Finite(pos) || !Finite(vel) || float.IsNaN(rot.x) || float.IsNaN(rot.w) || Mathf.Abs(rot.x * rot.x + rot.y * rot.y + rot.z * rot.z + rot.w * rot.w - 1f) > 0.1f)
+        {
+            BikePlace(before, beforeRot, Vector3.zero);
+            return;
+        }
         bikeSpeed = bikeOut[16];
         bikeGear = (int)bikeOut[17];
         bool fallen = bikeOut[25] > 0.5f;
@@ -348,6 +349,7 @@ public partial class Game
         t.SetPositionAndRotation(pos, rot);
         Physics.SyncTransforms();
         float hitSpeed = 0f;
+        bool pushed = false;
         Vector3 hitNormal = Vector3.zero;
         var near = Physics.OverlapBox(t.TransformPoint(bikeBox.center), bikeBox.size * 0.5f, rot, ~0, QueryTriggerInteraction.Ignore);
         foreach (var c in near)
@@ -372,18 +374,26 @@ public partial class Game
             }
             if (Physics.ComputePenetration(bikeBox, t.position, rot, c, c.transform.position, c.transform.rotation, out Vector3 dir, out float dist))
             {
-                pos += dir * dist;
+                // the ground under it (its springs bottomed out on a landing, a step): the wheels' business, just
+                // not through it; a wall: pushed out, and how hard it went in
+                bool ground = dir.y > 0.6f;
+                pos += dir * Mathf.Min(dist, 0.3f);
+                pushed = true;
                 float into = -Vector3.Dot(vel, dir);
                 if (into > 0f)
                 {
-                    if (into > hitSpeed) { hitSpeed = into; hitNormal = dir; }
-                    vel += dir * into * 1.2f;
+                    if (!ground && into > hitSpeed) { hitSpeed = into; hitNormal = dir; }
+                    vel += dir * into * (ground ? 1f : 1.2f);
                 }
             }
         }
-        if (hitSpeed > 0f)
+        if (pushed)
         {
-            BikePlaceKeep(pos, rot, vel);
+            var p = new float[3];
+            var v = new float[3];
+            ToGta(pos, p, 0);
+            ToGta(vel, v, 0);
+            db_nudge(bikeH, p, v);
             if (hitSpeed > 3f) Play(Sfx.Land, pos, Mathf.Clamp01(hitSpeed / 10f));
         }
         t.SetPositionAndRotation(pos, rot);
@@ -392,17 +402,7 @@ public partial class Game
         else if (fallen) BikeFall(vel);
     }
 
-    // Placed again where the push-out put it, its spin kept (db_place starts it still; the next step is fine)
-    void BikePlaceKeep(Vector3 pos, Quaternion rot, Vector3 vel)
-    {
-        var p = new float[3];
-        var r = new float[4];
-        var v = new float[3];
-        ToGta(pos, p, 0);
-        RotToGta(rot, r, 0);
-        ToGta(vel, v, 0);
-        db_place(bikeH, p, r, v);
-    }
+    static bool Finite(Vector3 v) => !float.IsNaN(v.x) && !float.IsNaN(v.y) && !float.IsNaN(v.z) && !float.IsInfinity(v.x) && !float.IsInfinity(v.y) && !float.IsInfinity(v.z);
 
     Man ManOf(Collider c)
     {
@@ -575,6 +575,7 @@ public partial class Game
     // Behind the bike, turned with it unless you've looked round lately.
     void BikeCamera()
     {
+        if (gunModel != null && gunModel.activeSelf) gunModel.SetActive(false); // both hands on the bars
         var bt = bikeGo.transform;
         float yaw = Mathf.Atan2(bt.forward.x, bt.forward.z) * Mathf.Rad2Deg;
         rideCamIdle += Time.unscaledDeltaTime;
@@ -596,32 +597,87 @@ public partial class Game
     }
 
     // ------------------------------------------------------------------ the screen
+    // riding: steering arrows on the left; Gas, Brake and the rider's lean (wheelie / stoppie) on the right
+    int bkL = kNone, bkR = kNone, bkGas = kNone, bkBrake = kNone, bkFwd = kNone, bkBack = kNone;
+    Texture2D arrowTex;
+
     Vector2 BtnRide(float w, float h) => new Vector2(w - 190f, h - 275f);
+    Vector2 BkLeft(float w, float h) => new Vector2(85f, h - 105f);
+    Vector2 BkRight(float w, float h) => new Vector2(215f, h - 105f);
+    Vector2 BkGas(float w, float h) => new Vector2(w - 90f, h - 100f);
+    Vector2 BkBrake(float w, float h) => new Vector2(w - 215f, h - 85f);
+    Vector2 BkFwd(float w, float h) => new Vector2(w - 90f, h - 225f);
+    Vector2 BkBack(float w, float h) => new Vector2(w - 205f, h - 205f);
+    Vector2 BkOff(float w, float h) => new Vector2(w - 70f, 120f);
+    const float kBigR = 52f;
+
+    // An arrow (a triangle) pointing up, turned by `deg` (clockwise)
+    void Arrow(Vector2 at, float size, float deg, Color c)
+    {
+        if (arrowTex == null)
+        {
+            const int n = 64;
+            arrowTex = new Texture2D(n, n, TextureFormat.RGBA32, false);
+            var px = new Color32[n * n];
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    // texture rows run up: the tip at the top
+                    float fy = (y + 0.5f) / n, fx = Mathf.Abs((x + 0.5f) / n - 0.5f) * 2f;
+                    float edge = Mathf.Min((1f - fy) - fx * 1f, fy - 0.12f) * n * 0.5f;
+                    px[y * n + x] = new Color32(255, 255, 255, (byte)(255f * Mathf.Clamp01(edge)));
+                }
+            arrowTex.SetPixels32(px);
+            arrowTex.Apply();
+        }
+        var m = GUI.matrix;
+        GUIUtility.RotateAroundPivot(deg, at);
+        var was = GUI.color;
+        GUI.color = c;
+        GUI.DrawTexture(new Rect(at.x - size * 0.5f, at.y - size * 0.5f, size, size), arrowTex);
+        GUI.color = was;
+        GUI.matrix = m;
+    }
 
     void BikeGui(float w, float h)
     {
         if (riding)
         {
-            var lit = new Color(0.35f, 0.75f, 1f, 0.6f);
-            var knob = new Color(1f, 1f, 1f, 0.27f);
+            var lit = new Color(0.35f, 0.75f, 1f, 0.65f);
+            var knob = new Color(1f, 1f, 1f, 0.25f);
+            var ink = new Color(1f, 1f, 1f, 0.9f);
             string kmh = Mathf.RoundToInt(Mathf.Abs(bikeSpeed) * 3.6f) + " km/h  " + (bikeGear == 0 ? "R" : bikeGear.ToString());
             GUI.Label(new Rect(w * 0.5f - 90f, h - 70f, 180f, 30f), kmh, new GUIStyle(chip) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, fontSize = 18 });
-            Disc(BtnJump(w, h), kBtnR + 6f, hJumpId != kNone ? lit : knob, "Gas");
-            Disc(BtnSprint(w, h), kBtnR, hSprintId != kNone ? lit : knob, "Brake");
-            Disc(BtnDrunk(w, h), kBtnR, knob, "Off");
-            GUI.Label(new Rect(20f, h - 250f, 220f, 22f), "stick: steer; up / down: lean", radialLabel ?? chip);
+            Disc(BkLeft(w, h), kBigR, bkL != kNone ? lit : knob);
+            Arrow(BkLeft(w, h), 46f, -90f, ink);
+            Disc(BkRight(w, h), kBigR, bkR != kNone ? lit : knob);
+            Arrow(BkRight(w, h), 46f, 90f, ink);
+            Disc(BkGas(w, h), kBigR, bkGas != kNone ? lit : knob, "Gas");
+            Disc(BkBrake(w, h), kBtnR + 4f, bkBrake != kNone ? lit : knob, "Brake");
+            Disc(BkFwd(w, h), kBtnR, bkFwd != kNone ? lit : knob);
+            Arrow(BkFwd(w, h), 34f, 0f, ink);
+            Disc(BkBack(w, h), kBtnR, bkBack != kNone ? lit : knob);
+            Arrow(BkBack(w, h), 34f, 180f, ink);
+            GUI.Label(new Rect(BkBack(w, h).x - 60f, BkBack(w, h).y - kBtnR - 22f, 230f, 20f), "lean: back = wheelie", radialLabel ?? chip);
+            Disc(BkOff(w, h), kBtnR - 4f, knob, "Off");
         }
         else if (NearBike()) Disc(BtnRide(w, h), kBtnR, new Color(0.35f, 0.75f, 1f, 0.6f), "Ride");
     }
 
-    /// A finger put down on the bike's buttons: true when they take it.
+    /// A finger put down: true when the bike's buttons take it (while riding: every one but the camera's drag).
     bool BikeTap(Vector2 at, int finger, float w, float h)
     {
         if (riding)
         {
-            if (Vector2.Distance(at, BtnDrunk(w, h)) < kBtnR + 6f) { BikeOff(false); return true; }
-            if (Vector2.Distance(at, BtnAim(w, h)) < kBtnR + 6f) return true; // no aiming on the bike (yet)
-            return false;
+            if (Vector2.Distance(at, BkOff(w, h)) < kBtnR + 4f) { BikeOff(false); return true; }
+            if (Vector2.Distance(at, BkLeft(w, h)) < kBigR + 10f) { bkL = finger; return true; }
+            if (Vector2.Distance(at, BkRight(w, h)) < kBigR + 10f) { bkR = finger; return true; }
+            if (Vector2.Distance(at, BkGas(w, h)) < kBigR + 8f) { bkGas = finger; return true; }
+            if (Vector2.Distance(at, BkBrake(w, h)) < kBtnR + 10f) { bkBrake = finger; return true; }
+            if (Vector2.Distance(at, BkFwd(w, h)) < kBtnR + 8f) { bkFwd = finger; return true; }
+            if (Vector2.Distance(at, BkBack(w, h)) < kBtnR + 8f) { bkBack = finger; return true; }
+            // the rest of the left side: nothing (no stick); the rest: the camera
+            return at.x < w * 0.4f && at.y > h * 0.55f;
         }
         if (NearBike() && Vector2.Distance(at, BtnRide(w, h)) < kBtnR + 6f) { BikeOn(); return true; }
         return false;

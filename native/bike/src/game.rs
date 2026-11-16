@@ -28,20 +28,35 @@ pub const BIKES: &[(&str, &str, &str)] = &[
 impl Game {
     pub fn open(dir: &Path) -> Result<Game, String> {
         let pc = dir.join("GTAIV.exe").is_file();
-        let exe = if pc { dir.join("GTAIV.exe") } else { dir.join("default.xex") };
-        let prog = xex::program(&exe)?;
-        if !kv::unlock(&prog) {
-            return Err(format!("{}: not a version the numbers are read from", exe.display()));
-        }
-        delirium_data::LE.store(pc, std::sync::atomic::Ordering::Relaxed);
-        let mut head = vec![0u8; 0x810];
-        let platform = if pc { dir.join("pc/models/cdimages/playerped.rpf") } else { dir.join("xbox360.rpf") };
-        std::fs::File::open(&platform).and_then(|mut f| f.read_exact(&mut head)).map_err(|e| format!("{}: {e}", platform.display()))?;
-        let key = ArchiveKey::find_by_trial(&prog, &head).map(|(k, _)| k).ok_or("no archive key in the game's program")?;
+        // the key and the numbers: from the clips' opening if it's done (default.xex is slow to unpack), else here
+        let mut prog: Option<Vec<u8>> = None;
+        let key = match (kv::open(), delirium_anim::KEY.get()) {
+            (true, Some(k)) => k.clone(),
+            _ => {
+                let exe = if pc { dir.join("GTAIV.exe") } else { dir.join("default.xex") };
+                let p = xex::program(&exe)?;
+                if !kv::unlock(&p) {
+                    return Err(format!("{}: not a version the numbers are read from", exe.display()));
+                }
+                delirium_data::LE.store(pc, std::sync::atomic::Ordering::Relaxed);
+                let mut head = vec![0u8; 0x810];
+                let platform = if pc { dir.join("pc/models/cdimages/playerped.rpf") } else { dir.join("xbox360.rpf") };
+                std::fs::File::open(&platform).and_then(|mut f| f.read_exact(&mut head)).map_err(|e| format!("{}: {e}", platform.display()))?;
+                let k = ArchiveKey::find_by_trial(&p, &head).map(|(k, _)| k).ok_or("no archive key in the game's program")?;
+                prog = Some(p);
+                k
+            }
+        };
         // handling.dat
         let common = std::fs::read(dir.join("common.rpf")).map_err(|e| format!("common.rpf: {e} (copy it next to default.xex)"))?;
-        let ckey = ArchiveKey::find_by_trial(&prog, &common[..0x810.min(common.len())]).map(|(k, _)| k).unwrap_or_else(|| key.clone());
-        let toc = rpf::read_toc(&common, &ckey)?;
+        let toc = match rpf::read_toc(&common, &key) {
+            Ok(t) => t,
+            Err(_) => {
+                let p = match prog { Some(p) => p, None => xex::program(&if pc { dir.join("GTAIV.exe") } else { dir.join("default.xex") })? };
+                let ckey = ArchiveKey::find_by_trial(&p, &common[..0x810.min(common.len())]).map(|(k, _)| k).ok_or("common.rpf: no key")?;
+                rpf::read_toc(&common, &ckey)?
+            }
+        };
         let e = toc.iter().find(|e| e.path.eq_ignore_ascii_case("data/handling.dat")).ok_or("handling.dat isn't in common.rpf")?;
         let text = String::from_utf8_lossy(&rpf::read(&common, e)?).into_owned();
         let handling = vehicles::read_handling(&text);
@@ -75,7 +90,7 @@ impl Game {
     }
 
     /// A bike: its model and a simulation of it, at rest at the origin.
-    pub fn bike(&self, model: &str, paint: [[f32; 3]; 2]) -> Result<(glb::Built, sim::Bike), String> {
+    pub fn bike(&mut self, model: &str, paint: [[f32; 3]; 2]) -> Result<(glb::Built, sim::Bike), String> {
         let (_, hid, _) = BIKES.iter().find(|b| b.0 == model).ok_or("not a bike")?;
         let frag = self.resource(&format!("{model}.xft"))?;
         let own = self.resource(&format!("{model}.xtd")).ok();
