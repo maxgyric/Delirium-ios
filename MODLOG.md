@@ -284,3 +284,18 @@ files (default.xex, the three exported files, the archives) are picked by the la
 - Still floating after a crash (the user: like the old fall-from-height bug). Same cause: Ground() is a ray down from
   the hips; thrown off a bike it hit the bike's box (the seat's height), the agent made at max(that, lowest bone) =
   half a metre above his feet's real ground. Ground() / GroundCollider() skip SandboxNotLevel (and triggers).
+
+## Whole level in Delirium; faster start
+- The user: make the ragdolls' collision the map itself (like SA), not reads round each ragdoll. Bridge:
+  SandboxWholeLevel(level, floorY): the level's colliders gathered on the main thread (mesh caches, box corners,
+  terrain at 2 m), one NM world a ragdoll size built on a ThreadPool thread (triangles split to kPiece, NM axes and
+  winding as Level's Tri, the floor under it all as 4 m pieces 60 m past the map - nm add_floor asserts on its size),
+  flushed to nm_world_add_mesh in 300k-triangle batches. Dolls of a size whose world is ready go in it (refcounted,
+  no Level / Floor / SandboxFollow); before that, the old way. A new level (map, sandbox, ice) retires the worlds:
+  freed with their last ragdoll. Called from BuildLevel, PlaceOnMap and the ice switch. NM's collision is a 2D cell
+  grid (collision.rs): a whole map in one world only costs memory and the build.
+- Start: da_open unpacked default.xex (LZX) and found the archive key by trial (an AES key schedule every 4 bytes
+  of the program), then read all of xbox360.rpf for player.xft's skeleton - every start. Now
+  <game>/delirium-anim.cache ("DAC1": xex size + mtime, the key, kv::export, the skeleton): the next start reads
+  those and only anim.img's table. kv::export / import added to delirium-data. Round trip tested; not run on the
+  real files (not here).

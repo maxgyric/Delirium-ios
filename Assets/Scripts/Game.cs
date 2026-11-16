@@ -414,6 +414,7 @@ public partial class Game : MonoBehaviour
         Box("Ramp", new Vector3(-8f, 0.75f, 0f), new Vector3(6f, 0.3f, 3f), Quaternion.Euler(0f, 0f, -16f), matProp);
         Box("Kerb", new Vector3(0f, 0.1f, -6f), new Vector3(8f, 0.2f, 0.4f), Quaternion.identity, matProp);
         Physics.SyncTransforms(); // the physics knows where they are before anything casts a ray at them
+        DeliriumRagdolls.SandboxWholeLevel(level, 0f); // all of it to Delirium at once: the ragdolls' collision
     }
 
     void StartClips()

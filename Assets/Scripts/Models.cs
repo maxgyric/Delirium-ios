@@ -302,7 +302,8 @@ public partial class Game
         // a floor under the whole map (nothing falls for ever), the level read only around each man
         DeliriumRagdolls.SandboxFloor = b.min.y - 1f;
         DeliriumRagdolls.SandboxFloorSurface = null;
-        DeliriumRagdolls.SandboxLevelRadius = 14f; // read round each ragdoll, more as it moves (a ragdoll goes nowhere fast)
+        DeliriumRagdolls.SandboxLevelRadius = 14f; // (while the whole map's world is being built: read round each ragdoll)
+        DeliriumRagdolls.SandboxWholeLevel(level, b.min.y - 1f); // the whole map to Delirium at once, built in the background
         ice = false;
         spawn = b.center;
         Transform mark = null;

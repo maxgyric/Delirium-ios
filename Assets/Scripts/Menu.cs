@@ -296,6 +296,7 @@ public partial class Game
             var slick = ice ? new PhysicsMaterial("Ice") { dynamicFriction = 0.03f, staticFriction = 0.03f, bounciness = 0f } : null;
             foreach (var c in level) c.sharedMaterial = slick;
             DeliriumRagdolls.SandboxFloorSurface = ice && level.Count > 0 ? level[0] : null; // the floor under the level too
+            DeliriumRagdolls.SandboxWholeLevel(level, DeliriumRagdolls.SandboxFloor); // Delirium's copy of the level with it
             foreach (var x in men) Restand(x, Feet(x), Yaw(x));
         }
 

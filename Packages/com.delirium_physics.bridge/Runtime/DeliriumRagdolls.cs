@@ -129,6 +129,10 @@ namespace Delirium.Ragdoll
         }
         /// (Sandbox) A map's mesh collider read into the level cache now (as it loads), not at the first ragdoll.
         public static void SandboxWarm(Collider col) => global::Delirium.Ragdoll.Doll.Warm(col); // ("Doll" here is a method of this class)
+        /// (Sandbox) The whole level handed to Delirium at once, as it loads: one world a ragdoll size holding all of it
+        /// (built on a thread), every ragdoll of that size in it; nothing read round each ragdoll, nothing left over
+        /// from where something was. `floorY`: a floor under it all. Call again when the level changes (a new map, ice).
+        public static void SandboxWholeLevel(IList<Collider> level, float? floorY) => global::Delirium.Ragdoll.Doll.Whole(level, floorY);
         /// (Sandbox) A bone's place in the world in its character's bind pose, when the game knows it better than the
         /// meshes' bind poses tell (a loaded model: every scale in its tree would go through a matrix inverse here).
         public delegate bool BindOf(Transform owner, Transform bone, out Matrix4x4 bind);
@@ -1202,6 +1206,205 @@ namespace Delirium.Ragdoll
         /// Worlds ragdolls share, so they push and pile on each other: one per spot (same size, ground within 0.5 m,
         /// within 5 m of where it was made, its level read there), freed with its last ragdoll.
         static readonly List<(IntPtr world, float scale, Vector3 at, int refs, int scene)> shared = new List<(IntPtr, float, Vector3, int, int)>();
+
+        // (Sandbox) The whole level in one world a size (SandboxWholeLevel): built on a thread, every ragdoll of that
+        // size in it once it's ready (till then the old way: read round it). A level loaded after retires it: freed
+        // with its last ragdoll.
+        internal class WholeWorld { public IntPtr world; public volatile bool ready; public int refs; public bool retired; public int scene; }
+        static readonly Dictionary<int, WholeWorld> wholes = new Dictionary<int, WholeWorld>();
+        static readonly object wholeLock = new object();
+        static List<(Vector3[] v, int[] ix, byte mat)> wholeMeshes;
+        static float? wholeFloor;
+        static byte wholeFloorMat;
+        static Bounds wholeBounds;
+        static int wholeScene;
+        WholeWorld inWhole;
+        static int SizeKey(float s) => Mathf.RoundToInt(s * 20f);
+
+        internal static void Whole(IList<Collider> level, float? floorY)
+        {
+            lock (wholeLock)
+            {
+                foreach (var w in wholes.Values) RetireWhole(w);
+                wholes.Clear();
+            }
+            Physics.SyncTransforms();
+            var parts = new List<(Vector3[] v, int[] ix, byte mat)>();
+            var b = new Bounds();
+            bool any = false;
+            int scene = 0;
+            int[][] faces = { new[] { 0, 2, 3, 1 }, new[] { 4, 5, 7, 6 }, new[] { 0, 1, 5, 4 }, new[] { 2, 6, 7, 3 }, new[] { 0, 4, 6, 2 }, new[] { 1, 3, 7, 5 } };
+            foreach (var col in level)
+            {
+                if (col == null || !col.enabled || col.isTrigger || col.attachedRigidbody != null && !col.attachedRigidbody.isKinematic) continue;
+                if (Plugin.NotLevel(col.transform)) continue;
+                scene = col.gameObject.scene.GetHashCode();
+                byte mat = Surface(col);
+                var t = col.transform;
+                switch (col)
+                {
+                    case MeshCollider m when m.sharedMesh != null && m.sharedMesh.isReadable:
+                        var mc = Cached(m);
+                        parts.Add((mc.v, mc.ix, mat));
+                        break;
+                    case BoxCollider box:
+                        var k = new Vector3[8];
+                        for (int i = 0; i < 8; i++)
+                            k[i] = t.TransformPoint(box.center + Vector3.Scale(box.size / 2, new Vector3((i & 1) * 2 - 1, (i & 2) - 1, (i >> 1 & 2) - 1)));
+                        var bix = new int[36];
+                        for (int fi = 0; fi < 6; fi++)
+                        {
+                            var fc = faces[fi];
+                            new[] { fc[0], fc[1], fc[2], fc[0], fc[2], fc[3] }.CopyTo(bix, fi * 6);
+                        }
+                        parts.Add((k, bix, mat));
+                        break;
+                    case TerrainCollider tc when tc.terrainData != null:
+                        var td = tc.terrainData;
+                        var o = t.position;
+                        int nx = Mathf.Max(2, Mathf.CeilToInt(td.size.x / 2f) + 1), nz = Mathf.Max(2, Mathf.CeilToInt(td.size.z / 2f) + 1);
+                        var tv = new Vector3[nx * nz];
+                        for (int z = 0; z < nz; z++)
+                            for (int x = 0; x < nx; x++)
+                            {
+                                float u = x / (float)(nx - 1), w = z / (float)(nz - 1);
+                                tv[z * nx + x] = new Vector3(o.x + u * td.size.x, o.y + td.GetInterpolatedHeight(u, w), o.z + w * td.size.z);
+                            }
+                        var tix = new List<int>();
+                        for (int z = 0; z + 1 < nz; z++)
+                            for (int x = 0; x + 1 < nx; x++)
+                            {
+                                int a = z * nx + x;
+                                tix.AddRange(new[] { a, a + nx, a + nx + 1, a, a + nx + 1, a + 1 });
+                            }
+                        parts.Add((tv, tix.ToArray(), mat));
+                        break;
+                    default:
+                        continue;
+                }
+                if (!any) { b = col.bounds; any = true; }
+                else b.Encapsulate(col.bounds);
+            }
+            wholeMeshes = parts.Count > 0 ? parts : null;
+            wholeFloor = floorY;
+            wholeFloorMat = Surface(Plugin.SandboxFloorSurface);
+            wholeBounds = b;
+            wholeScene = scene;
+            if (wholeMeshes != null) StartWhole(1f); // a person's size; others when one first comes
+        }
+
+        static void RetireWhole(WholeWorld w)
+        {
+            w.retired = true;
+            if (w.ready && w.refs <= 0 && w.world != IntPtr.Zero) { nm_world_destroy(w.world); w.world = IntPtr.Zero; }
+        }
+
+        static WholeWorld StartWhole(float scale)
+        {
+            var w = new WholeWorld { scene = wholeScene };
+            lock (wholeLock) wholes[SizeKey(scale)] = w;
+            var parts = wholeMeshes;
+            var floor = wholeFloor;
+            var floorMat = wholeFloorMat;
+            var bb = wholeBounds;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                IntPtr world = IntPtr.Zero;
+                long count = 0;
+                try
+                {
+                    world = nm_world_create();
+                    nm_world_set_scale(world, scale);
+                    var pts = new List<float>(1 << 20);
+                    var tris = new List<uint>(1 << 18);
+                    var mats = new List<byte>(1 << 16);
+                    byte mat = 0;
+                    void Flush()
+                    {
+                        if (tris.Count == 0) return;
+                        nm_world_add_mesh(world, pts.ToArray(), pts.Count / 3, tris.ToArray(), tris.Count / 3, mats.ToArray());
+                        count += tris.Count / 3;
+                        pts.Clear(); tris.Clear(); mats.Clear();
+                    }
+                    // NM's axes (x, z, y); Unity's winding turned (as Level's Tri)
+                    void Tri(Vector3 a, Vector3 bv, Vector3 d)
+                    {
+                        uint at = (uint)(pts.Count / 3);
+                        pts.Add(a.x); pts.Add(a.z); pts.Add(a.y);
+                        pts.Add(d.x); pts.Add(d.z); pts.Add(d.y);
+                        pts.Add(bv.x); pts.Add(bv.z); pts.Add(bv.y);
+                        tris.Add(at); tris.Add(at + 1); tris.Add(at + 2);
+                        mats.Add(mat);
+                    }
+                    // NM drops a triangle wider than its limit across the ground: halved till it's kPiece across at most
+                    void Split(Vector3 a, Vector3 bv, Vector3 d, int depth)
+                    {
+                        float wide = Mathf.Max(Mathf.Max(a.x, bv.x, d.x) - Mathf.Min(a.x, bv.x, d.x), Mathf.Max(a.z, bv.z, d.z) - Mathf.Min(a.z, bv.z, d.z));
+                        if (wide <= kPiece || depth > 12) { Tri(a, bv, d); return; }
+                        Vector3 ab = (a + bv) / 2, bd = (bv + d) / 2, da = (d + a) / 2;
+                        Split(a, ab, da, depth + 1);
+                        Split(ab, bv, bd, depth + 1);
+                        Split(da, bd, d, depth + 1);
+                        Split(ab, bd, da, depth + 1);
+                    }
+                    foreach (var (v, ix, m) in parts)
+                    {
+                        mat = m;
+                        for (int i = 0; i + 2 < ix.Length; i += 3)
+                        {
+                            Vector3 a = v[ix[i]], bv = v[ix[i + 1]], d = v[ix[i + 2]];
+                            if (!(float.IsFinite(a.x) && float.IsFinite(bv.x) && float.IsFinite(d.x))) continue;
+                            Split(a, bv, d, 0);
+                            if (tris.Count > 300000) Flush();
+                        }
+                    }
+                    // the floor under everything (nothing falls for ever), in pieces NM keeps
+                    if (floor != null)
+                    {
+                        mat = floorMat;
+                        float y = floor.Value, m2 = 60f * scale;
+                        float x0 = bb.min.x - m2, x1 = bb.max.x + m2, z0 = bb.min.z - m2, z1 = bb.max.z + m2;
+                        for (float x = x0; x < x1; x += kPiece)
+                            for (float z = z0; z < z1; z += kPiece)
+                            {
+                                float xe = Mathf.Min(x + kPiece, x1), ze = Mathf.Min(z + kPiece, z1);
+                                // wound to face up (Unity's clockwise from above)
+                                Tri(new Vector3(x, y, z), new Vector3(x, y, ze), new Vector3(xe, y, ze));
+                                Tri(new Vector3(x, y, z), new Vector3(xe, y, ze), new Vector3(xe, y, z));
+                                if (tris.Count > 300000) Flush();
+                            }
+                    }
+                    Flush();
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[NM] the whole level: " + e.Message);
+                    if (world != IntPtr.Zero) nm_world_destroy(world);
+                    world = IntPtr.Zero;
+                }
+                lock (wholeLock)
+                {
+                    if (world == IntPtr.Zero) { wholes.Remove(SizeKey(scale)); return; }
+                    if (w.retired) { nm_world_destroy(world); return; } // a newer level came while it was built
+                    w.world = world;
+                    w.ready = true;
+                }
+                Debug.Log($"[NM] the whole level in Delirium: {count} triangles, size {scale:F2}, {watch.ElapsedMilliseconds} ms");
+            });
+            return w;
+        }
+
+        // The whole level's world for a ragdoll of `scale` in `scene` when it's ready (one started for a new size)
+        static WholeWorld WholeFor(int scene, float scale)
+        {
+            lock (wholeLock)
+            {
+                if (wholes.TryGetValue(SizeKey(scale), out var w)) return w.ready && !w.retired && w.scene == scene ? w : null;
+            }
+            if (wholeMeshes != null && wholeScene == scene) StartWhole(scale);
+            return null;
+        }
         public readonly Transform Hips;
         readonly Transform[] bones;
         internal IntPtr world; // (Sandbox: not readonly: SandboxFollow moves it on)
@@ -1369,9 +1572,16 @@ namespace Delirium.Ragdoll
             var spot = new Vector3(hips.position.x, ground, hips.position.z);
             // Only ragdolls in the same scene share one.
             int sceneId = owner.gameObject.scene.GetHashCode(); // its handle, on every Unity (6.6 made .handle a SceneHandle)
-            int near = shared.FindIndex(s => s.scene == sceneId && s.scale == scale && Mathf.Abs(s.at.y - ground) < 0.5f * scale &&
+            inWhole = WholeFor(sceneId, scale);
+            int near = inWhole != null ? -2 : shared.FindIndex(s => s.scene == sceneId && s.scale == scale && Mathf.Abs(s.at.y - ground) < 0.5f * scale &&
                                              Vector3.Distance(s.at, spot) < 5f * scale);
-            if (near >= 0)
+            if (inWhole != null)
+            {
+                // (Sandbox) the whole level's world: all of it there already
+                world = inWhole.world;
+                lock (wholeLock) inWhole.refs++;
+            }
+            else if (near >= 0)
             {
                 var s = shared[near];
                 world = s.world;
@@ -1386,7 +1596,7 @@ namespace Delirium.Ragdoll
             // The level around it (walls, stairs, slopes); a floor at its feet when there's none to read.
             // ponytail: the ground under it is always added too, as unreadable meshes (common in shipped games) leave holes;
             // that floor also covers pits next to it, until meshes can be read another way.
-            if (near < 0)
+            if (near == -1)
             {
                 int tris = Environment.GetEnvironmentVariable("DELIRIUM_NOLEVEL") == null ? Level(hips, owner, world) : 0;
                 if (!string.IsNullOrEmpty(dump))
@@ -1474,7 +1684,7 @@ namespace Delirium.Ragdoll
         /// (a ragdoll walked or thrown off the read part of a big map fell through it).
         internal void SandboxFollow()
         {
-            if (Plugin.SandboxFloor == null || Hips == null || Owner == null) return;
+            if (inWhole != null || Plugin.SandboxFloor == null || Hips == null || Owner == null) return;
             float R = Plugin.SandboxLevelRadius;
             Vector3 h = Hips.position;
             if ((h - readAt).magnitude < R * 0.4f) return;
@@ -1890,6 +2100,15 @@ namespace Delirium.Ragdoll
             nm_rig_destroy(rig);
             nm_agent_destroy(agent);
             nm_build_destroy(build);
+            if (inWhole != null)
+            {
+                lock (wholeLock)
+                {
+                    inWhole.refs--;
+                    if (inWhole.retired && inWhole.refs <= 0 && inWhole.world != IntPtr.Zero) { nm_world_destroy(inWhole.world); inWhole.world = IntPtr.Zero; }
+                }
+                return Owner == null ? new List<Animator>() : Owner.GetComponentsInChildren<Animator>().Where(a => a.enabled).ToList();
+            }
             int i = shared.FindIndex(s => s.world == world);
             if (i >= 0 && shared[i].refs > 1) shared[i] = (world, shared[i].scale, shared[i].at, shared[i].refs - 1, shared[i].scene);
             else

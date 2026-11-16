@@ -56,6 +56,59 @@ struct Anim {
 }
 
 static STATE: Mutex<Option<Anim>> = Mutex::new(None);
+
+// (Sandbox) The start's cache: "DAC1", the program's size and time, the key (32), the numbers (kv::export), the
+// player's skeleton (name, parent, id, translation, rotation each bone).
+fn cache_stamp(exe: &Path) -> Option<(u64, u64)> {
+    let m = std::fs::metadata(exe).ok()?;
+    let t = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    Some((m.len(), t))
+}
+
+fn write_cache(path: &Path, st: (u64, u64), key: &[u8; 32], bones: &[skeleton::Bone]) {
+    let Some(kv) = delirium_data::kv::export() else { return };
+    let mut v = b"DAC1".to_vec();
+    v.extend_from_slice(&st.0.to_le_bytes());
+    v.extend_from_slice(&st.1.to_le_bytes());
+    v.extend_from_slice(key);
+    v.extend_from_slice(&(kv.len() as u32).to_le_bytes());
+    v.extend_from_slice(&kv);
+    v.extend_from_slice(&(bones.len() as u32).to_le_bytes());
+    for b in bones {
+        v.extend_from_slice(&(b.name.len() as u16).to_le_bytes());
+        v.extend_from_slice(b.name.as_bytes());
+        v.extend_from_slice(&b.parent.map_or(-1i32, |p| p as i32).to_le_bytes());
+        v.extend_from_slice(&b.id.to_le_bytes());
+        for f in b.translation.iter().chain(b.rotation.iter()) { v.extend_from_slice(&f.to_le_bytes()); }
+    }
+    let _ = std::fs::write(path, v); // a read-only folder: no cache, no harm
+}
+
+fn read_cache(path: &Path, st: (u64, u64)) -> Option<(ArchiveKey, Vec<skeleton::Bone>)> {
+    let b = std::fs::read(path).ok()?;
+    let mut at = 0usize;
+    let mut take = |n: usize| -> Option<&[u8]> { let s = b.get(at..at + n)?; at += n; Some(s) };
+    if take(4)? != b"DAC1" { return None }
+    let u64_ = |s: &[u8]| u64::from_le_bytes(s.try_into().unwrap());
+    if u64_(take(8)?) != st.0 || u64_(take(8)?) != st.1 { return None }
+    let key: [u8; 32] = take(32)?.try_into().ok()?;
+    let n = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+    let kv = take(n)?.to_vec();
+    let count = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+    let mut bones = Vec::with_capacity(count);
+    for _ in 0..count {
+        let len = u16::from_le_bytes(take(2)?.try_into().ok()?) as usize;
+        let name = String::from_utf8(take(len)?.to_vec()).ok()?;
+        let parent = i32::from_le_bytes(take(4)?.try_into().ok()?);
+        let id = u16::from_le_bytes(take(2)?.try_into().ok()?);
+        let mut f = [0f32; 7];
+        for x in f.iter_mut() { *x = f32::from_le_bytes(take(4)?.try_into().ok()?); }
+        bones.push(skeleton::Bone { name, parent: (parent >= 0).then_some(parent as usize), id, translation: [f[0], f[1], f[2]],
+                                    rotation: [f[3], f[4], f[5], f[6]], flags: 0, rot_min: [0.0; 3], rot_max: [0.0; 3], block: [0.0; 4] });
+    }
+    if !delirium_data::kv::import(&kv) { return None }
+    Some((ArchiveKey::from_bytes(&key), bones))
+}
 /// The archives' key found when the game was opened (the bikes reuse it: no second pass over default.xex).
 pub static KEY: std::sync::OnceLock<ArchiveKey> = std::sync::OnceLock::new();
 static ERR: Mutex<String> = Mutex::new(String::new());
@@ -151,6 +204,15 @@ impl Anim {
     fn open(dir: &Path) -> Result<Anim, String> {
         let pc = dir.join("GTAIV.exe").is_file();
         let exe = if pc { dir.join("GTAIV.exe") } else { dir.join("default.xex") };
+        // (Sandbox) what the last start worked out of the program (its numbers, the archives' key, the player's
+        // skeleton), kept beside the game: unpacking default.xex and trying keys through it took seconds a start
+        let stamp = cache_stamp(&exe);
+        let cache = dir.join("delirium-anim.cache");
+        if let Some((key, bones)) = stamp.and_then(|st| read_cache(&cache, st)) {
+            delirium_data::LE.store(pc, std::sync::atomic::Ordering::Relaxed);
+            let _ = KEY.set(key.clone());
+            return Self::finish(dir, pc, key, bones);
+        }
         let prog = delirium_data::xex::program(&exe)?;
         if !delirium_data::kv::unlock(&prog) {
             return Err(format!("{}: not a version the numbers are read from (the Steam GTAIV.exe or the disc's default.xex)", exe.display()));
@@ -158,7 +220,8 @@ impl Anim {
         delirium_data::LE.store(pc, std::sync::atomic::Ordering::Relaxed);
         let rd = |p: &str| std::fs::read(dir.join(p)).map_err(|e| format!("{p}: {e}"));
         // the archives' key, out of the program, tried on an archive's head; the player's archive
-        let find = |head: &[u8]| ArchiveKey::find_by_trial(&prog, &head[..0x810.min(head.len())]).map(|(k, _)| k).ok_or("no archive key in the game's program");
+        let found = std::cell::Cell::new(None::<[u8; 32]>);
+        let find = |head: &[u8]| ArchiveKey::find_by_trial(&prog, &head[..0x810.min(head.len())]).map(|(k, b)| { found.set(Some(b)); k }).ok_or("no archive key in the game's program");
         let (peds, key) = if pc {
             let peds = rd("pc/models/cdimages/playerped.rpf")?;
             let key = find(&peds)?;
@@ -171,10 +234,18 @@ impl Anim {
             (rpf::read(&platform, nested)?, key)
         };
         let _ = KEY.set(key.clone());
+        let key_bytes = found.get();
         let inner = rpf::read_toc(&peds, &key)?;
         let e = inner.iter().find(|e| e.path.eq_ignore_ascii_case(&plat(pc, "player.xft"))).ok_or("player.xft not in playerped.rpf")?;
         let frag = resource::parse(&rpf::read(&peds, e)?)?;
         let bones = skeleton::read(&frag, model::fragment_root(&frag)?)?;
+        if let (Some(st), Some(kb)) = (stamp, key_bytes) {
+            write_cache(&cache, st, &kb, &bones);
+        }
+        Self::finish(dir, pc, key, bones)
+    }
+
+    fn finish(dir: &Path, pc: bool, key: ArchiveKey, bones: Vec<skeleton::Bone>) -> Result<Anim, String> {
         let path = PathBuf::from(plat(pc, &dir.join("xbox360/anim/anim.img").to_string_lossy()));
         let mut file = std::fs::File::open(&path).map_err(|e| format!("anim.img: {e}"))?;
         let mut head = vec![];
@@ -672,4 +743,25 @@ pub fn facing_report(dict: &str, name: &str) -> String {
         }
         Ok(s + "\n")
     }).unwrap_or_else(|e| e)
+}
+
+#[cfg(test)]
+mod cache_test {
+    use super::*;
+    #[test]
+    fn round_trip() {
+        assert!(delirium_data::kv::import(&vec![7u8; delirium_data::kv::export().map_or(1095 * 12, |v| v.len())]));
+        let bones = vec![skeleton::Bone { name: "SKEL_ROOT".into(), parent: None, id: 0, translation: [1.0, 2.0, 3.0], rotation: [0.0, 0.0, 0.0, 1.0], flags: 0, rot_min: [0.0; 3], rot_max: [0.0; 3], block: [0.0; 4] },
+                         skeleton::Bone { name: "SKEL_Pelvis".into(), parent: Some(0), id: 11816, translation: [0.0, 0.1, 0.9], rotation: [0.5, 0.5, 0.5, 0.5], flags: 0, rot_min: [0.0; 3], rot_max: [0.0; 3], block: [0.0; 4] }];
+        let p = std::env::temp_dir().join("dac_test.cache");
+        write_cache(&p, (123, 456), &[9u8; 32], &bones);
+        let (_, b) = read_cache(&p, (123, 456)).expect("read back");
+        assert_eq!(b.len(), 2);
+        assert_eq!(b[1].name, "SKEL_Pelvis");
+        assert_eq!(b[1].parent, Some(0));
+        assert_eq!(b[1].id, 11816);
+        assert_eq!(b[1].rotation, [0.5, 0.5, 0.5, 0.5]);
+        assert!(read_cache(&p, (124, 456)).is_none());
+        assert_eq!(delirium_data::kv::export().unwrap(), vec![7u8; 1095 * 12]);
+    }
 }

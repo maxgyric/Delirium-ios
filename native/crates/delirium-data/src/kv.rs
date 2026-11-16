@@ -52,6 +52,28 @@ fn wide(h: u32, how: u8) -> u64 {
 /// Opened (`unlock`).
 pub fn open() -> bool { OPEN.load(Relaxed) }
 
+/// (Sandbox) The opened numbers as bytes, to keep beside the player's game (the next start skips unpacking the program).
+pub fn export() -> Option<Vec<u8>> {
+    if !OPEN.load(Relaxed) { return None }
+    let mut v = Vec::with_capacity(N * 12);
+    for i in 0..N {
+        v.extend_from_slice(&K64[i].load(Relaxed).to_le_bytes());
+        v.extend_from_slice(&K32[i].load(Relaxed).to_le_bytes());
+    }
+    Some(v)
+}
+
+/// (Sandbox) The numbers back from `export`'s bytes; false if they aren't such.
+pub fn import(b: &[u8]) -> bool {
+    if b.len() != N * 12 { return false }
+    for i in 0..N {
+        K64[i].store(u64::from_le_bytes(b[i * 12..i * 12 + 8].try_into().unwrap()), Relaxed);
+        K32[i].store(u32::from_le_bytes(b[i * 12 + 8..i * 12 + 12].try_into().unwrap()), Relaxed);
+    }
+    OPEN.store(true, Relaxed);
+    true
+}
+
 pub trait Kv: Copy { fn at(i: usize) -> Self; }
 impl Kv for f32 { #[inline(always)] fn at(i: usize) -> f32 { f32::from_bits(K32[i].load(Relaxed)) } }
 impl Kv for f64 { #[inline(always)] fn at(i: usize) -> f64 { f64::from_bits(K64[i].load(Relaxed)) } }
