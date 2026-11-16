@@ -397,3 +397,9 @@ files (default.xex, the three exported files, the archives) are picked by the la
   and heading apart (speed eased 4.5/3.2/2.4 m/s2 up by gait, 4-6 down; heading turning 480 deg/s at a walk down to
   150 at a sprint), the facing smoothed (SmoothDampAngle 0.12 s), GTA V's gaits blended by speed (Gait: walk/run/
   sprint pairs, one stride), clip cross-fades 0.3 s.
+- (22:18) Shaking when turning hard at a jog: the run 180 was measured from the velocity but turned from the facing,
+  so it could end still > 150 deg off and start again (turn after turn). Now from the facing (both > 150), and 0.35 s
+  between two actions. Smoother: heading and speed on damped springs (SmoothDampAngle 0.12-0.3 s by speed, max
+  520-200 deg/s; SmoothDamp speed 0.28/0.38/0.55 s up by gait, 0.22-0.35 down), facing 0.09 s. Landings: after
+  > 0.3 s in the air, GTA V's jump_land_{l,r} running on (act kind 4: its curve, or on at the landing speed) or
+  land_stop_{l,r} when stopped, then the loop on the same foot.

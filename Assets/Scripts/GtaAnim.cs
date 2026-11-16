@@ -71,6 +71,8 @@ public static class GtaAnim
     public static readonly Clip[] VWStart = new Clip[6], VRStart = new Clip[6];
     // stops (walk / run): on the left foot, on the right; the run's 180 turn left, right
     public static readonly Clip[] VWStop = new Clip[2], VRStop = new Clip[2], VRunTurn = new Clip[2];
+    // landings: running on (left, right foot), stopping (left, right)
+    public static readonly Clip[] VLand = new Clip[2], VLandStop = new Clip[2];
 
     /// Where a GTA V clip has carried its root by `phase`: x forward, y left (m), z its turn left (degrees), from
     /// where it started.
@@ -313,7 +315,15 @@ public static class GtaAnim
         VWStop[1] = GetV("gtgl_male_move_wstop_r_0", false);
         VRStop[0] = GetV("gtgl_male_move_rstop_l", false);
         VRStop[1] = GetV("gtgl_male_move_rstop_r", false);
-        VRunTurn[0] = GetV("gtgl_male_move_run_turn_180_l", false);
+        VLand[0] = GetV("gtgl_male_move_jump_land_l", false);
+        VLand[1] = GetV("gtgl_male_move_jump_land_r", false);
+        if (!VLand[1].Ok) VLand[1] = VLand[0];
+        if (!VLand[0].Ok) VLand[0] = VLand[1].Ok ? VLand[1] : null;
+        if (VLand[0] == null) VLand[1] = null;
+        VLandStop[0] = GetV("gtgl_male_move_land_stop_l", false);
+        VLandStop[1] = GetV("gtgl_male_move_land_stop_r", false);
+        if (!VLandStop[1].Ok) VLandStop[1] = VLandStop[0];
+                VRunTurn[0] = GetV("gtgl_male_move_run_turn_180_l", false);
         VRunTurn[1] = GetV("gtgl_male_move_run_turn_180_r", false);
         Debug.Log($"[Hero] GTA V's moves: walk {Move[1].Speed:F2} m/s, run {Move[2].Speed:F2}, sprint {Move[3].Speed:F2}");
     }

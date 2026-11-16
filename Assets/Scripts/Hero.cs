@@ -36,7 +36,9 @@ public partial class Game
     Vector2 hStick;
     int hStickId = kNone, hDragId = kNone, hFireId = kNone, hSprintId = kNone;
     bool heroSprint;
-    float sprintPower, heroYawVel;
+    float sprintPower, heroYawVel, heroHeading, heroHeadingRate, heroSpeedRate;
+    bool heroLanded;          // just down from a jump or a fall: GTA V's landing (VAct)
+    float heroLandAir;
     int heroTier = 1;              // 1 walk, 2 run, 3 sprint: each its own clip
     GameObject gunModel;
     int gunShown = -1;
@@ -383,25 +385,27 @@ public partial class Game
                 heroVel = Vector3.MoveTowards(heroVel, want, (heroGround ? 14f : 3f) * dt);
             else
             {
-                // his speed and his heading apart: the speed eases up and down (a run takes a moment to reach,
-                // longer at the top), the heading swings round, slower the faster he goes (a wide arc at a sprint,
-                // not a snap), as GTA V's
+                // his speed and his heading apart, both eased in and out (GTA V's weight): the speed springs to the
+                // gait's (slower to the top: a sprint takes a while), the heading swings round on a damped spring,
+                // lazier the faster he goes (a wide arc at a sprint), never a snap or a straight cut across
                 float cur = heroVel.magnitude;
-                Vector3 dir = cur > 0.05f ? heroVel / cur : Quaternion.Euler(0f, heroYaw, 0f) * Vector3.forward;
+                if (cur > 0.05f) heroHeading = Mathf.Atan2(heroVel.x, heroVel.z) * Mathf.Rad2Deg;
+                else { heroHeading = heroYaw; heroHeadingRate = 0f; }
                 if (want.sqrMagnitude > 1e-6f)
                 {
-                    Vector3 wd = want.normalized;
-                    float turn = Mathf.Lerp(480f, 150f, Mathf.InverseLerp(walk, sprint, cur));
-                    dir = cur < 0.3f ? wd : Vector3.RotateTowards(dir, wd, turn * Mathf.Deg2Rad * dt, 0f);
+                    float wy = Mathf.Atan2(want.x, want.z) * Mathf.Rad2Deg;
+                    float fast = Mathf.InverseLerp(walk, sprint, cur);
+                    if (cur < 0.3f) { heroHeading = wy; heroHeadingRate = 0f; }
+                    else heroHeading = Mathf.SmoothDampAngle(heroHeading, wy, ref heroHeadingRate, Mathf.Lerp(0.12f, 0.3f, fast), Mathf.Lerp(520f, 200f, fast), dt);
                 }
-                float accel = !heroGround ? 2f : target > cur ? (cur < walk ? 4.5f : cur < run ? 3.2f : 2.4f) : (target < 0.1f ? 6f : 4f);
-                cur = Mathf.MoveTowards(cur, want.magnitude, accel * dt);
-                heroVel = dir * cur;
+                float ease = !heroGround ? 0.9f : want.magnitude > cur ? (cur < walk ? 0.28f : cur < run ? 0.38f : 0.55f) : (want.magnitude < 0.1f ? 0.22f : 0.35f);
+                cur = Mathf.SmoothDamp(cur, want.magnitude, ref heroSpeedRate, ease, 12f, dt);
+                heroVel = Quaternion.Euler(0f, heroHeading, 0f) * Vector3.forward * cur;
             }
             float wantYaw = heroAim ? hCamYaw : heroVel.magnitude > 0.3f ? Mathf.Atan2(heroVel.x, heroVel.z) * Mathf.Rad2Deg : heroYaw;
             if (Time.time < heroFaceUntil) wantYaw = heroFaceYaw; // a punch: at the man he's hitting
-            if (heroAim || Time.time < heroFaceUntil) heroYaw = Mathf.MoveTowardsAngle(heroYaw, wantYaw, 720f * dt);
-            else heroYaw = Mathf.SmoothDampAngle(heroYaw, wantYaw, ref heroYawVel, 0.12f, 600f, dt);
+            if (heroAim || Time.time < heroFaceUntil) { heroYaw = Mathf.MoveTowardsAngle(heroYaw, wantYaw, 720f * dt); heroYawVel = 0f; }
+            else heroYaw = Mathf.SmoothDampAngle(heroYaw, wantYaw, ref heroYawVel, 0.09f, 720f, dt);
         }
 
         if (heroSpotLand > 0f && Time.time >= heroSpotLand)
@@ -450,7 +454,7 @@ public partial class Game
             heroGround = true;
             heroVy = 0f;
             heroPos.y = was ? Mathf.MoveTowards(heroPos.y, floor.point.y, 5f * dt) : floor.point.y;
-            if (!was) Play(Sfx.Land, heroPos, 0.9f);
+            if (!was) { Play(Sfx.Land, heroPos, 0.9f); heroLanded = true; heroLandAir = heroAir; }
             heroJumped = false;
         }
         else
@@ -1079,11 +1083,14 @@ public partial class Game
     float actT, actYaw, actWarp, actEnd, hNextPhase = -1f;
     Vector3 actPos;
     bool actRun, startLeft;
+    float actNextAt, actSpeed;
     float hStepPhase = -1f;
     GtaAnim.Clip hStepClip;
 
     bool VAct(float dt, float mag, Vector3 wish, float walkSp, float runSp)
     {
+        bool landed = heroLanded;
+        heroLanded = false;
         if (!GtaAnim.V || heroAim || !heroGround || heroNoclip || Time.time < heroSpotUntil || Time.time < heroFaceUntil)
         {
             act = null;
@@ -1093,9 +1100,19 @@ public partial class Game
         float speed = flat.magnitude;
         bool push = mag >= 0.12f;
         Vector3 fwd = Quaternion.Euler(0f, heroYaw, 0f) * Vector3.forward;
+        if (act == null && Time.time < actNextAt && !landed) return false; // a moment between two (no turn after turn)
         if (act == null)
         {
-            if (push && speed < 0.4f)
+            if (landed && heroLandAir > 0.3f && GtaAnim.VLand[0] != null)
+            {
+                // down from a jump or a fall: still going, the landing that runs on; stopped, the one that stops
+                bool on = push && speed > 1f;
+                var set = on ? GtaAnim.VLand : GtaAnim.VLandStop;
+                if (!Begin(set[(startLeft = !startLeft) ? 0 : 1], on ? 4 : 2, 0f)) return false;
+                actRun = speed > (walkSp + runSp) * 0.5f;
+                actSpeed = speed;
+            }
+            else if (push && speed < 0.4f)
             {
                 // the way to go from the way he faces (right +), and the start that turns most like it
                 float a = Vector3.SignedAngle(fwd, wish, Vector3.up);
@@ -1113,24 +1130,31 @@ public partial class Game
                 var set = run ? GtaAnim.VRStop : GtaAnim.VWStop;
                 if (!Begin(set[side == 2 ? 0 : 1], 2, 0f)) return false;
             }
-            else if (push && speed > runSp * 0.75f && Vector3.Angle(flat, wish) > 150f)
+            else if (push && speed > runSp * 0.75f && Vector3.Angle(flat, wish) > 150f && Vector3.Angle(fwd, wish) > 150f)
             {
-                float a = Vector3.SignedAngle(flat, wish, Vector3.up);
+                float a = Vector3.SignedAngle(fwd, wish, Vector3.up);
                 if (!Begin(GtaAnim.VRunTurn[a < 0f ? 0 : 1], 3, -a)) return false;
                 actRun = true;
             }
             else return false;
         }
         // let go of a start, pushed during a stop: back to the plain moves
-        if ((actKind == 1 && !push) || (actKind == 2 && push)) { act = null; return false; }
+        if ((actKind == 1 && !push) || (actKind == 2 && push)) { act = null; actNextAt = Time.time + 0.25f; return false; }
         actT += dt;
         float ph = actT / act.Dur;
         if (ph >= actEnd)
         {
             Finish();
+            actNextAt = Time.time + 0.35f;
             return false;
         }
         var m = GtaAnim.Motion(act, ph);
+        if (actKind == 4 && m.sqrMagnitude < 1e-6f)
+        {
+            // a landing without its own way along the ground: on at the speed he came down with, easing off a little
+            heroVel = fwd * Mathf.Max(actSpeed * Mathf.Lerp(1f, 0.85f, ph), 1f);
+            return true;
+        }
         float turn = m.z + actWarp * Mathf.Clamp01(ph / actEnd);
         Vector3 to = actPos + Quaternion.Euler(0f, actYaw, 0f) * new Vector3(-m.y, 0f, m.x);
         Vector3 v = new Vector3(to.x - heroPos.x, 0f, to.z - heroPos.z) / Mathf.Max(dt, 1e-3f);
@@ -1148,7 +1172,7 @@ public partial class Game
         actPos = heroPos;
         actYaw = heroYaw;
         float clipTurn = GtaAnim.Motion(c, 1f).z;
-        actWarp = kind == 2 ? 0f : Mathf.DeltaAngle(clipTurn, leftTurn);
+        actWarp = kind == 2 || kind == 4 ? 0f : Mathf.DeltaAngle(clipTurn, leftTurn);
         float b = GtaAnim.Mark(c, 3);
         actEnd = b > 0.05f ? b : 1f;
         return true;
