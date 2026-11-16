@@ -441,3 +441,7 @@ files (default.xex, the three exported files, the archives) are picked by the la
   the ground, a 0.55 m step-down probe), teleported (disable/enable) when heroPos is set elsewhere (climbs, resets),
   off while ragdolled / riding / noclip. The vault's drop stays kinematic. The body is drawn on a smoothed height on
   the ground (the controller steps up at once).
+- (00:48 user) After climbing something small with a drop behind, the fall clip, a moment's freeze, then a ragdoll.
+  The high fall was by speed (vy < -8.5): a vault's kinematic drop ended fast (run_vault_exit drops 3.6 m, its last
+  samples ~8 m/s), and any 2.6 m drop did it; the freeze was the switch to Delirium. Now by height fallen (> 4.5 m
+  from the top of the fall, heroFallFrom) and the vault's drop handed on at most 5 m/s.

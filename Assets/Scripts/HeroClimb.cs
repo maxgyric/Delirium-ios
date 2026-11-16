@@ -274,6 +274,7 @@ public partial class Game
             string[] falls = { "clamberpose_fall", "clamberpose_fall_wide", "clamberpose_fall_xtrawide", "clamberpose_fall_low" };
             var c = clLow ? GtaAnim.Climb(clRun ? "run_vault_exit" + side : "standvault_exit") : GtaAnim.Climb(falls[clFall]) ?? GtaAnim.Climb("clamberpose_fall");
             heroGround = false;
+            heroFallFrom = clTop;
             if (c != null)
             {
                 clAir = c;
@@ -334,7 +335,7 @@ public partial class Game
         if (u >= 1f || (heroGround && clAirT > 0.1f))
         {
             clAir = null;
-            if (!heroGround) heroVy = Mathf.Min(heroVy, 0f);
+            if (!heroGround) heroVy = Mathf.Clamp(heroVy, -5f, 0f); // on falling from there (the clip's last drop was fast)
         }
     }
 

@@ -39,8 +39,9 @@ public partial class Game
     bool heroSprint;
     float sprintPower, heroYawVel, heroHeading, heroHeadingRate, heroSpeedRate;
     bool heroLanded;          // just down from a jump or a fall: GTA V's landing (VAct)
-    Vector3 heroIntent, heroVelSlid;
-    float heroTilt, heroTiltVel, heroYawLast, heroDrawY, heroDrawYV; // his velocity before a wall slid it, and after (the heading is the first's)
+    Vector3 heroIntent, heroVelSlid; // his velocity before a wall slid it, and after (the heading is the first's)
+    float heroTilt, heroTiltVel, heroYawLast, heroDrawY, heroDrawYV;
+    float heroFallFrom;       // the top of his fall (Knock's high fall from 4.5 m down)
     float heroLandAir;
     int heroTier = 1;              // 1 walk, 2 run, 3 sprint: each its own clip
     GameObject gunModel;
@@ -534,15 +535,19 @@ public partial class Game
             {
                 heroGround = true;
                 heroVy = 0f;
+                heroFallFrom = heroPos.y;
                 if (!was) { Play(Sfx.Land, heroPos, 0.9f); heroLanded = true; heroLandAir = heroAir; }
                 heroJumped = false;
             }
             else
             {
                 if (was && heroVy <= 0f) { heroAir = 0f; heroJumpStill = false; }
+                heroFallFrom = Mathf.Max(heroFallFrom, heroPos.y); // (on the ground it's where he stands)
                 heroGround = false;
                 heroAir += dt;
-                if (heroVy < -8.5f) Knock(true); // a long way down: Delirium's high fall
+                // a long way down: Delirium's high fall (by how far he's fallen, not how fast: a vault's drop off its
+                // clip came out fast, and a ledge a couple of metres down threw him into a ragdoll)
+                if (heroFallFrom - heroPos.y > 4.5f && heroVy < -6f) Knock(true);
             }
         }
         heroVelSlid = heroVel;
