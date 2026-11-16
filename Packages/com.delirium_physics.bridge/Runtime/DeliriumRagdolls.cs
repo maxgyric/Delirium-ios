@@ -1739,13 +1739,14 @@ namespace Delirium.Ragdoll
 
         /// The ground under the hips (its collider), null when none.
         static Collider GroundCollider(Transform hips, Transform owner) =>
-            Physics.RaycastAll(hips.position, Vector3.down, 5f).Where(h => !h.transform.IsChildOf(owner)).OrderBy(h => h.distance).FirstOrDefault().collider;
+            Physics.RaycastAll(hips.position, Vector3.down, 5f).Where(h => !h.transform.IsChildOf(owner) && !Plugin.NotLevel(h.transform)).OrderBy(h => h.distance).FirstOrDefault().collider;
 
         static float Ground(Transform hips, Transform owner)
         {
             var root = owner;
             // (Sandbox: 500 m, was 5: a man dropped from higher got a floor at his feet, in the air)
-            var hit = Physics.RaycastAll(hips.position, Vector3.down, 500f).Where(h => !h.transform.IsChildOf(root)).OrderBy(h => h.distance).FirstOrDefault();
+            // (Sandbox: not what isn't the level: thrown off a bike, its seat under him isn't the ground)
+            var hit = Physics.RaycastAll(hips.position, Vector3.down, 500f).Where(h => !h.transform.IsChildOf(root) && !Plugin.NotLevel(h.transform) && !h.collider.isTrigger).OrderBy(h => h.distance).FirstOrDefault();
             return hit.collider != null ? hit.point.y : hips.GetComponentsInChildren<Transform>().Min(t => t.position.y);
         }
 

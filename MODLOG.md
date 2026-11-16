@@ -281,3 +281,6 @@ files (default.xex, the three exported files, the archives) are picked by the la
   stayed in the world where it was. Bridge: DeliriumRagdolls.SandboxNotLevel (never read as level; the bike's root,
   always); the crash makes the bike a loose body before the rider's ragdoll. The sea: maps' meshes all get colliders,
   water too: solid for ragdolls (left as is: passable water needs swimming or a respawn; asked the user).
+- Still floating after a crash (the user: like the old fall-from-height bug). Same cause: Ground() is a ray down from
+  the hips; thrown off a bike it hit the bike's box (the seat's height), the agent made at max(that, lowest bone) =
+  half a metre above his feet's real ground. Ground() / GroundCollider() skip SandboxNotLevel (and triggers).
