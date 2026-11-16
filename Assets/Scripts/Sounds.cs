@@ -2,6 +2,7 @@
 // gun's shot, a punch, a blast. Played flat (2D) through a few sources, quieter with distance from the camera.
 // GTA IV's own take their place once your game's audio files are read (GtaSounds.cs).
 using System;
+using Delirium.Ragdoll;
 using UnityEngine;
 
 public partial class Game
