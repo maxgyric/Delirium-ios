@@ -40,7 +40,7 @@ public partial class Game
     float sprintPower, heroYawVel, heroHeading, heroHeadingRate, heroSpeedRate;
     bool heroLanded;          // just down from a jump or a fall: GTA V's landing (VAct)
     Vector3 heroIntent, heroVelSlid;
-    float heroTilt, heroTiltVel, heroYawLast; // his velocity before a wall slid it, and after (the heading is the first's)
+    float heroTilt, heroTiltVel, heroYawLast, heroDrawY, heroDrawYV; // his velocity before a wall slid it, and after (the heading is the first's)
     float heroLandAir;
     int heroTier = 1;              // 1 walk, 2 run, 3 sprint: each its own clip
     GameObject gunModel;
@@ -112,6 +112,12 @@ public partial class Game
     {
         if (!heroOn) return;
         BikeRemove();
+        if (heroCC != null)
+        {
+            Delirium.Ragdoll.DeliriumRagdolls.SandboxNotLevel.Remove(heroCC.transform);
+            Destroy(heroCC.gameObject);
+            heroCC = null;
+        }
         if (gunModel != null) Destroy(gunModel);
         gunModel = null;
         gunShown = -1;
@@ -329,6 +335,7 @@ public partial class Game
         HeroInput(dt);
         // his Rigidbody is only how Delirium learns his speed: never the physics' to move
         if (heroRb != null && !heroRb.isKinematic && !nm.State(hero.Body.transform).Ragdolled) heroRb.isKinematic = true;
+        if (hero.Rising || hero.Broken || riding || heroMode != 0) MoverOff();
         if (hero.Rising || hero.Broken) return;
         if (riding) return; // on the bike: Bike.cs has him
         var owner = hero.Body.transform;
@@ -347,7 +354,7 @@ public partial class Game
             else heroKnocked = 0f;
             return;
         }
-        if (heroNoclip) Fly(dt);
+        if (heroNoclip) { MoverOff(); Fly(dt); }
         else Walk(dt);
         bool fists = kGuns[weapon % kGuns.Length].Fists;
         if (fists) heroAim = false;
@@ -472,49 +479,73 @@ public partial class Game
 
         // over the ground, sliding along what's in the way (the capsule's foot is above a stair's step)
         heroIntent = heroVel;
-        Vector3 step = heroVel * dt;
-        if (step.sqrMagnitude > 1e-9f)
-        {
-            // on the ground its foot clears a stair's step; in the air it reaches his feet (he went over the edge of
-            // a box with his feet in it, and through it on the way down)
-            Vector3 p1 = heroPos + Vector3.up * (heroGround ? 0.55f : 0.3f), p2 = heroPos + Vector3.up * 1.5f, dir = step.normalized;
-            if (Physics.CapsuleCast(p1, p2, 0.25f, dir, out var wall, step.magnitude + 0.06f))
-            {
-                Vector3 first = dir * Mathf.Clamp(wall.distance - 0.06f, 0f, step.magnitude);
-                Vector3 n = Vector3.ProjectOnPlane(wall.normal, Vector3.up);
-                Vector3 rest = n.sqrMagnitude > 1e-6f ? Vector3.ProjectOnPlane(step - first, n.normalized) : Vector3.zero;
-                heroPos += first;
-                if (rest.sqrMagnitude > 1e-9f && !Physics.CapsuleCast(p1 + first, p2 + first, 0.25f, rest.normalized, out var wall2, rest.magnitude + 0.06f)) heroPos += rest;
-                if (n.sqrMagnitude > 1e-6f) heroVel = Vector3.ProjectOnPlane(heroVel, n.normalized);
-            }
-            else heroPos += step;
-        }
-        heroVelSlid = heroVel;
-        // the ground under him: steps up and down a stair's height, falls off anything higher
         bool was = heroGround;
-        float reach = heroGround ? 0.7f + 0.45f : 0.7f + Mathf.Max(0.03f, -heroVy * dt);
-        // a ball his feet's size, not a thin ray: his middle past an edge (a climb ends with it there) still stands on it
-        if (heroVy <= 0f && Physics.SphereCast(heroPos + Vector3.up * 0.9f, 0.2f, Vector3.down, out var floor, reach) && floor.point.y <= heroPos.y + 0.72f && !VaultedTop(floor.point.y))
+        if (clAir != null && clAir.Rise != null)
         {
-            heroGround = true;
-            heroVy = 0f;
-            heroPos.y = was ? Mathf.MoveTowards(heroPos.y, floor.point.y, 5f * dt) : floor.point.y;
-            if (!was) { Play(Sfx.Land, heroPos, 0.9f); heroLanded = true; heroLandAir = heroAir; }
-            heroJumped = false;
+            // over a vaulted top and down its far side: his way and drop are the clip's (ClimbAir), the top itself
+            // not ground to stop on
+            heroPos += new Vector3(heroVel.x, 0f, heroVel.z) * dt;
+            float reach = 0.7f + Mathf.Max(0.03f, -heroVy * dt);
+            if (heroVy <= 0f && Physics.SphereCast(heroPos + Vector3.up * 0.9f, 0.2f, Vector3.down, out var floor, reach) && floor.point.y <= heroPos.y + 0.72f && !VaultedTop(floor.point.y))
+            {
+                heroGround = true;
+                heroVy = 0f;
+                heroPos.y = floor.point.y;
+                Play(Sfx.Land, heroPos, 0.9f);
+                heroLanded = true;
+                heroLandAir = heroAir;
+                heroJumped = false;
+            }
+            else
+            {
+                heroGround = false;
+                heroAir += dt;
+            }
         }
         else
         {
-            if (was && heroVy <= 0f) { heroAir = 0f; heroJumpStill = false; }
-            heroGround = false;
+            // Unity's character controller: it never ends up inside the map (a cast that starts touching a mesh
+            // misses all of it: on the stairs his capsule touched the next step, and he walked through the wall
+            // and fell out of the world), steps up stairs, keeps him on slopes
+            var cc = HeroMover();
+            PlaceMover();
+            if (!heroGround) heroVy -= 14f * dt;
+            Vector3 motion = heroVel * dt + Vector3.up * (heroGround ? -0.04f : heroVy * dt);
+            var f = cc.Move(motion);
+            Vector3 moved = cc.transform.position - heroPos;
+            heroPos = cc.transform.position;
+            if ((f & CollisionFlags.Sides) != 0)
+            {
+                // slid along what's in the way: his velocity what he really did (his heading stays his own)
+                Vector3 real = new Vector3(moved.x, 0f, moved.z) / dt;
+                heroVel = Vector3.ClampMagnitude(real, heroVel.magnitude);
+            }
+            if ((f & CollisionFlags.Above) != 0 && heroVy > 0f) heroVy = 0f;
+            bool down = (f & CollisionFlags.Below) != 0;
+            if (!down && was && heroVy <= 0f)
+            {
+                // a step or a slope down: kept on it if it's close under him, else he's off an edge
+                Vector3 at = heroPos;
+                var f2 = cc.Move(Vector3.down * 0.55f);
+                if ((f2 & CollisionFlags.Below) != 0) { down = true; heroPos = cc.transform.position; }
+                else { heroPos = at; PlaceMover(); }
+            }
+            if (down && heroVy <= 0f)
+            {
+                heroGround = true;
+                heroVy = 0f;
+                if (!was) { Play(Sfx.Land, heroPos, 0.9f); heroLanded = true; heroLandAir = heroAir; }
+                heroJumped = false;
+            }
+            else
+            {
+                if (was && heroVy <= 0f) { heroAir = 0f; heroJumpStill = false; }
+                heroGround = false;
+                heroAir += dt;
+                if (heroVy < -8.5f) Knock(true); // a long way down: Delirium's high fall
+            }
         }
-        if (!heroGround && clAir != null && clAir.Rise != null) heroAir += dt; // the vault's own drop (ClimbAir)
-        else if (!heroGround)
-        {
-            heroAir += dt;
-            heroVy -= 14f * dt;
-            heroPos.y += heroVy * dt;
-            if (heroVy < -8.5f) Knock(true); // a long way down: Delirium's high fall
-        }
+        heroVelSlid = heroVel;
         // walking into someone shoves him
         heroBump -= dt;
         if (heroBump <= 0f && heroVel.magnitude > 1f)
@@ -528,6 +559,44 @@ public partial class Game
                 heroBump = 0.35f;
             }
         Step(dt);
+    }
+
+    // His body in the map's collisions while he's on his clips (not a ragdoll's: Delirium's world doesn't see it,
+    // nor do the game's rays: it's on Ignore Raycast).
+    CharacterController heroCC;
+
+    CharacterController HeroMover()
+    {
+        if (heroCC != null) return heroCC;
+        var go = new GameObject("Hero mover") { layer = 2 };
+        go.transform.position = heroPos;
+        heroCC = go.AddComponent<CharacterController>();
+        heroCC.radius = 0.25f;
+        heroCC.height = 1.7f;
+        heroCC.skinWidth = 0.03f;
+        heroCC.center = new Vector3(0f, 0.85f + 0.03f, 0f);
+        heroCC.stepOffset = 0.5f;
+        heroCC.slopeLimit = 55f;
+        heroCC.minMoveDistance = 0f;
+        Delirium.Ragdoll.DeliriumRagdolls.SandboxNotLevel.Add(go.transform);
+        return heroCC;
+    }
+
+    // Where heroPos is (moved by a climb, a reset, a get-up): put there, not swept there.
+    void PlaceMover()
+    {
+        if (heroCC == null) return;
+        if ((heroCC.transform.position - heroPos).sqrMagnitude > 1e-6f || !heroCC.enabled)
+        {
+            heroCC.enabled = false;
+            heroCC.transform.position = heroPos;
+            heroCC.enabled = true;
+        }
+    }
+
+    void MoverOff()
+    {
+        if (heroCC != null && heroCC.enabled) heroCC.enabled = false;
     }
 
     // Knocked off his clips: Delirium has him till he's up again.
@@ -655,7 +724,12 @@ public partial class Game
         if (hero == null || heroMode != 0 || hero.Rising || hCur == null) return;
         var body = hero.Body;
         if (heroRb != null && !heroRb.isKinematic) heroRb.isKinematic = true; // ours to move, not the physics'
-        body.transform.SetPositionAndRotation(heroPos, Quaternion.Euler(0f, heroYaw, 0f));
+        // drawn a little behind a step up or down the stairs (the controller steps at once), never in the air
+        float dy = heroPos.y - heroDrawY;
+        if (!heroGround || climbing || clAir != null || Mathf.Abs(dy) > 0.8f) { heroDrawY = heroPos.y; heroDrawYV = 0f; }
+        else heroDrawY = Mathf.SmoothDamp(heroDrawY, heroPos.y, ref heroDrawYV, 0.07f, Mathf.Infinity, Mathf.Max(Time.deltaTime, 1e-4f));
+        Vector3 drawPos = new Vector3(heroPos.x, heroDrawY, heroPos.z);
+        body.transform.SetPositionAndRotation(drawPos, Quaternion.Euler(0f, heroYaw, 0f));
         if (!GtaAnim.Pose(hCur, GtaAnim.At(hCur, hPhase), fA)) return;
         if (hCurB != null && hCurW > 0f && GtaAnim.Pose(hCurB, GtaAnim.At(hCurB, hPhase), fB)) GtaAnim.Blend(fA, fB, hCurW);
         if (hFade > 0f && hPrev != null && GtaAnim.Pose(hPrev, GtaAnim.At(hPrev, hPrevPhase), fC))
@@ -663,7 +737,7 @@ public partial class Game
             if (hPrevB != null && hPrevW > 0f && GtaAnim.Pose(hPrevB, GtaAnim.At(hPrevB, hPrevPhase), fB)) GtaAnim.Blend(fC, fB, hPrevW);
             GtaAnim.Blend(fA, fC, hFade);
         }
-        body.Apply(fA, heroPos, heroYaw);
+        body.Apply(fA, drawPos, heroYaw);
         // GTA V's lean into a turn: the faster he goes and the harder he turns, the more (about his feet)
         {
             float dtp = Mathf.Max(Time.deltaTime, 1e-4f);
@@ -672,7 +746,7 @@ public partial class Game
             float sp = new Vector3(heroVel.x, 0f, heroVel.z).magnitude;
             float lean = heroGround && !heroAim && !climbing && !heroNoclip ? -Mathf.Atan(sp * yawRate * Mathf.Deg2Rad / 9.81f) * Mathf.Rad2Deg * 0.3f : 0f;
             heroTilt = Mathf.SmoothDamp(heroTilt, Mathf.Clamp(lean, -12f, 12f), ref heroTiltVel, 0.12f, Mathf.Infinity, dtp);
-            if (Mathf.Abs(heroTilt) > 0.05f) body.Hips.RotateAround(heroPos, body.transform.forward, heroTilt);
+            if (Mathf.Abs(heroTilt) > 0.05f) body.Hips.RotateAround(drawPos, body.transform.forward, heroTilt);
         }
         // the upper body: the gun's aim (its clip's last frame) over the legs' clip, bent up and down with the camera
         if (hUpper > 0f && AimPoseV(body)) { }

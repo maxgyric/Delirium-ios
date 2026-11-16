@@ -433,3 +433,11 @@ files (default.xex, the three exported files, the archives) are picked by the la
   the stick's way. Camera: eased distance/side/height (aim 1.75 m over the shoulder, 3.3-4.1 m by speed), lagged
   pivot (more vertically), recentres behind him while running after 1.2 s untouched, sphere-cast pull-in at once and
   slow let-out, FOV +6 at a sprint, -6 aiming.
+- (00:29 user, video) Still walks through the wall at the top of the stairs (Minecraft map) and falls out of the
+  world. Cause: Physics casts ignore a collider they start touching, and the map is a few big MeshColliders: on
+  the stairs his capsule touched the next step, so the whole map was missed (walls too), and the ground sphere,
+  starting inside, missed the ground. Now a CharacterController ("Hero mover", Ignore Raycast layer, in
+  SandboxNotLevel so Delirium's world skips it; r 0.25, h 1.7, step 0.5, slope 55): Move each frame (-0.04 down on
+  the ground, a 0.55 m step-down probe), teleported (disable/enable) when heroPos is set elsewhere (climbs, resets),
+  off while ragdolled / riding / noclip. The vault's drop stays kinematic. The body is drawn on a smoothed height on
+  the ground (the controller steps up at once).
