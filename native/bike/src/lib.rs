@@ -139,6 +139,8 @@ pub unsafe extern "C" fn db_place(h: i32, pos: *const f32, rot: *const f32, vel:
         b.vel = if vel.is_null() { [0.0; 3] } else { let v = unsafe { std::slice::from_raw_parts(vel, 3) }; [v[0], v[1], v[2]] };
         b.ang = [0.0; 3];
         b.fallen = false;
+        b.steer_in = 0.0;
+        b.steer = 0.0;
         b.gear = Default::default();
         for w in b.wheels.iter_mut() { w.x = w.spring.rest; w.slip = 0.0; }
         Ok(())

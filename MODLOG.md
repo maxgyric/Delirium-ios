@@ -256,3 +256,12 @@ files (default.xex, the three exported files, the archives) are picked by the la
   decoded only when a mesh uses them (vehshare.xtd has dozens); PNG deflate level 1. Open 4 ms, build ~45 ms on a PC.
 - Riding controls: arrows (left/right) on the left, Gas / Brake / lean up / lean down on the right, Off top right; no
   stick. The gun hidden while riding.
+
+## Bike stage 3
+- "Knocked" + teleport on Off / crash: Delirium's Car mover puts anyone in its box (moving > 2 m/s) into NM - the rider
+  too. The hero's body is now the bike's child while riding (Cars() skips who.IsChildOf(car)); Unseat() on every way off.
+- Steering: arrows eased (2.5/s in, 5/s back), lock capped at atan(wheelbase * 0.7 g traction_max / v^2) - within grip,
+  no sliding round when going left then right; lean target from the turn only.
+- Wheels: a sphere cast (0.7 r) per wheel, the contact at the ball's bottom, edge normals leaned toward up: rolls over
+  step edges instead of popping.
+- Arrow icons: one texture a direction (GUIUtility.RotateAroundPivot misplaces under the scaled GUI matrix).

@@ -275,15 +275,20 @@ public partial class Game
     // The ground under one wheel: a ray down the bike from its spring's top (not the bike, the rider, a man).
     readonly RaycastHit[] bikeHits = new RaycastHit[12];
 
+    // The ground under one wheel: a ball (most of the wheel's size) cast down the bike from its spring's top, so the
+    // wheel rolls up a step's edge instead of popping onto it (not the bike, the rider, a man).
     void BikeRay(int wheel, Transform t)
     {
         int k = wheel * 7;
         int w = wheel * 4;
+        float r = bikeInfo[w + 3];
+        float rs = r * 0.7f;
         // the wheel's place in the bike's frame (GTA's), the spring's top above it
         Vector3 top = t.TransformPoint(new Vector3(bikeInfo[w], bikeInfo[w + 2] + bikeInfo[10], bikeInfo[w + 1]));
         Vector3 down = -t.up;
         float reach = bikeInfo[8] + 0.6f;
-        int n = Physics.RaycastNonAlloc(top - down * 0.3f, down, bikeHits, reach + 0.3f, ~0, QueryTriggerInteraction.Ignore);
+        Vector3 from = top - down * 0.3f;
+        int n = Physics.SphereCastNonAlloc(from, rs, down, bikeHits, reach + 0.3f, ~0, QueryTriggerInteraction.Ignore);
         float best = float.MaxValue;
         int pick = -1;
         for (int i = 0; i < n; i++)
@@ -292,12 +297,17 @@ public partial class Game
             if (bikeOwn.Contains(c)) continue;
             if (hero != null && c.transform.IsChildOf(hero.Body.transform)) continue;
             if (c.attachedRigidbody != null && !c.attachedRigidbody.isKinematic) continue; // a ragdoll's part, a crate
+            if (bikeHits[i].distance <= 0f) continue; // the ball already in something at its start: not under it
             if (bikeHits[i].distance < best) { best = bikeHits[i].distance; pick = i; }
         }
         if (pick < 0) { bikeGround[k] = 0f; return; }
+        // the wheel's lowest point where the ball stopped; the ground's slope there, a step's edge leaned toward up
+        Vector3 contact = from + down * (best + rs);
+        Vector3 nrm = bikeHits[pick].normal;
+        if (Vector3.Dot(nrm, -down) < 0.5f) nrm = (nrm - down).normalized;
         bikeGround[k] = 1f;
-        ToGta(bikeHits[pick].point, bikeGround, k + 1);
-        ToGta(bikeHits[pick].normal, bikeGround, k + 4);
+        ToGta(contact, bikeGround, k + 1);
+        ToGta(nrm, bikeGround, k + 4);
     }
 
     // ------------------------------------------------------------------ every frame
@@ -459,6 +469,9 @@ public partial class Game
         try { nm.RegisterMover(bikeGo.transform, DeliriumRagdolls.MoverKind.Car, Vector3.zero, true); } catch (Exception) { }
         riding = true;
         rideBlend = 0f;
+        // on the bike, part of it: Delirium's car knocks down whoever's in its way but its own
+        heroParentWas = hero.Body.transform.parent;
+        hero.Body.transform.SetParent(bikeGo.transform, true);
         heroAim = false;
         heroMode = 3;
         var body = hero.Body;
@@ -472,10 +485,20 @@ public partial class Game
     }
 
     // Off on the left (GTA's driver side), standing.
+    Transform heroParentWas;
+
+    // The hero's body back where it lived (not the bike's any more).
+    void Unseat()
+    {
+        if (hero != null && bikeGo != null && hero.Body.transform.parent == bikeGo.transform)
+            hero.Body.transform.SetParent(heroParentWas, true);
+    }
+
     void BikeOff(bool thrown)
     {
         if (!riding) return;
         riding = false;
+        Unseat();
         if (thrown || hero == null) return;
         var t = bikeGo.transform;
         Vector3 side = -Vector3.ProjectOnPlane(t.right, Vector3.up).normalized;
@@ -599,7 +622,6 @@ public partial class Game
     // ------------------------------------------------------------------ the screen
     // riding: steering arrows on the left; Gas, Brake and the rider's lean (wheelie / stoppie) on the right
     int bkL = kNone, bkR = kNone, bkGas = kNone, bkBrake = kNone, bkFwd = kNone, bkBack = kNone;
-    Texture2D arrowTex;
 
     Vector2 BtnRide(float w, float h) => new Vector2(w - 190f, h - 275f);
     Vector2 BkLeft(float w, float h) => new Vector2(85f, h - 105f);
@@ -611,32 +633,41 @@ public partial class Game
     Vector2 BkOff(float w, float h) => new Vector2(w - 70f, 120f);
     const float kBigR = 52f;
 
-    // An arrow (a triangle) pointing up, turned by `deg` (clockwise)
-    void Arrow(Vector2 at, float size, float deg, Color c)
+    readonly Texture2D[] arrowTexs = new Texture2D[4];
+
+    // An arrow (a triangle): dir 0 up, 1 right, 2 down, 3 left
+    void Arrow(Vector2 at, float size, int dir, Color c)
     {
-        if (arrowTex == null)
+        if (arrowTexs[dir] == null)
         {
             const int n = 64;
-            arrowTex = new Texture2D(n, n, TextureFormat.RGBA32, false);
+            var t = new Texture2D(n, n, TextureFormat.RGBA32, false);
             var px = new Color32[n * n];
             for (int y = 0; y < n; y++)
                 for (int x = 0; x < n; x++)
                 {
-                    // texture rows run up: the tip at the top
-                    float fy = (y + 0.5f) / n, fx = Mathf.Abs((x + 0.5f) / n - 0.5f) * 2f;
-                    float edge = Mathf.Min((1f - fy) - fx * 1f, fy - 0.12f) * n * 0.5f;
-                    px[y * n + x] = new Color32(255, 255, 255, (byte)(255f * Mathf.Clamp01(edge)));
+                    // in screen terms: u across, v down the picture (texture rows run up)
+                    float u = (x + 0.5f) / n, v = 1f - (y + 0.5f) / n;
+                    // along: 0 at the base, 1 at the tip; across: 0 on the axis, 1 at the base's corners
+                    float along, across;
+                    switch (dir)
+                    {
+                        case 0: along = 1f - v; across = Mathf.Abs(u - 0.5f) * 2f; break;
+                        case 1: along = u; across = Mathf.Abs(v - 0.5f) * 2f; break;
+                        case 2: along = v; across = Mathf.Abs(u - 0.5f) * 2f; break;
+                        default: along = 1f - u; across = Mathf.Abs(v - 0.5f) * 2f; break;
+                    }
+                    float inside = Mathf.Min((1f - along) - across * 0.88f, along - 0.1f) * n * 0.5f;
+                    px[y * n + x] = new Color32(255, 255, 255, (byte)(255f * Mathf.Clamp01(inside)));
                 }
-            arrowTex.SetPixels32(px);
-            arrowTex.Apply();
+            t.SetPixels32(px);
+            t.Apply();
+            arrowTexs[dir] = t;
         }
-        var m = GUI.matrix;
-        GUIUtility.RotateAroundPivot(deg, at);
         var was = GUI.color;
         GUI.color = c;
-        GUI.DrawTexture(new Rect(at.x - size * 0.5f, at.y - size * 0.5f, size, size), arrowTex);
+        GUI.DrawTexture(new Rect(at.x - size * 0.5f, at.y - size * 0.5f, size, size), arrowTexs[dir]);
         GUI.color = was;
-        GUI.matrix = m;
     }
 
     void BikeGui(float w, float h)
@@ -649,16 +680,15 @@ public partial class Game
             string kmh = Mathf.RoundToInt(Mathf.Abs(bikeSpeed) * 3.6f) + " km/h  " + (bikeGear == 0 ? "R" : bikeGear.ToString());
             GUI.Label(new Rect(w * 0.5f - 90f, h - 70f, 180f, 30f), kmh, new GUIStyle(chip) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, fontSize = 18 });
             Disc(BkLeft(w, h), kBigR, bkL != kNone ? lit : knob);
-            Arrow(BkLeft(w, h), 46f, -90f, ink);
+            Arrow(BkLeft(w, h), 46f, 3, ink);
             Disc(BkRight(w, h), kBigR, bkR != kNone ? lit : knob);
-            Arrow(BkRight(w, h), 46f, 90f, ink);
+            Arrow(BkRight(w, h), 46f, 1, ink);
             Disc(BkGas(w, h), kBigR, bkGas != kNone ? lit : knob, "Gas");
             Disc(BkBrake(w, h), kBtnR + 4f, bkBrake != kNone ? lit : knob, "Brake");
             Disc(BkFwd(w, h), kBtnR, bkFwd != kNone ? lit : knob);
-            Arrow(BkFwd(w, h), 34f, 0f, ink);
+            Arrow(BkFwd(w, h), 34f, 0, ink);
             Disc(BkBack(w, h), kBtnR, bkBack != kNone ? lit : knob);
-            Arrow(BkBack(w, h), 34f, 180f, ink);
-            GUI.Label(new Rect(BkBack(w, h).x - 60f, BkBack(w, h).y - kBtnR - 22f, 230f, 20f), "lean: back = wheelie", radialLabel ?? chip);
+            Arrow(BkBack(w, h), 34f, 2, ink);
             Disc(BkOff(w, h), kBtnR - 4f, knob, "Off");
         }
         else if (NearBike()) Disc(BtnRide(w, h), kBtnR, new Color(0.35f, 0.75f, 1f, 0.6f), "Ride");

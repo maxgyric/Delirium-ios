@@ -101,6 +101,7 @@ pub struct Bike {
     pub fallen: bool,
     pub drive: f32,
     pub shift: f32,
+    pub steer_in: f32,
 }
 
 const G: f32 = 9.8;
@@ -119,7 +120,7 @@ impl Bike {
             inertia: [inertia_per_kg[0].max(0.05) * mass, inertia_per_kg[1].max(0.05) * mass, inertia_per_kg[2].max(0.05) * mass],
             com, mass, pos: [0.0; 3], q: Q([0.0, 0.0, 0.0, 1.0]), vel: [0.0; 3], ang: [0.0; 3],
             wheels: [mk(front.0, front.1, true), mk(rear.0, rear.1, false)],
-            gear: Transmission::default(), steer: 0.0, lean: 0.0, pitch: 0.0, time_ms: 0, fallen: false, drive: 0.0, shift: 0.0, h, b,
+            gear: Transmission::default(), steer: 0.0, lean: 0.0, pitch: 0.0, time_ms: 0, fallen: false, drive: 0.0, shift: 0.0, steer_in: 0.0, h, b,
         }
     }
 
@@ -148,11 +149,18 @@ impl Bike {
         self.time_ms = self.time_ms.wrapping_add((dt * 1000.0) as u32);
         // drive wheels: the rear one (drive_bias [front, rear])
         self.drive = self.gear.process(&self.h, c, &wheel_speeds[..1], along, grounded.min(1), dt, self.time_ms);
-        // steering: GTA cuts the lock as the speed goes up
+        // steering: the bars eased toward the arrows (an arrow is all or nothing), and never more lock than the
+        // tyres can hold at this speed (the turn's pull v^2 tan(a) / wheelbase within the grip): no sliding round
+        let target = input.steer.clamp(-1.0, 1.0);
+        let rate = if target.abs() < self.steer_in.abs() || target * self.steer_in < 0.0 { 5.0 } else { 2.5 };
+        self.steer_in += (target - self.steer_in).clamp(-rate * dt, rate * dt);
         let speed = len(self.vel);
-        let lock = self.h.steering_lock * (1.0 - (speed / self.h.max_flat_velocity).min(1.0) * 0.75);
-        let want = input.steer.clamp(-1.0, 1.0) * lock;
-        self.steer += (want - self.steer) * (1.0 - (-dt * 8.0).exp());
+        let base = (self.wheels[0].at[1] - self.wheels[1].at[1]).abs().max(0.8);
+        let grip = G * self.h.traction_max.clamp(0.8, 2.0) * 0.7;
+        let hold = (base * grip / speed.max(0.1).powi(2)).atan();
+        let lock = self.h.steering_lock.min(hold);
+        let want = self.steer_in * lock;
+        self.steer += (want - self.steer) * (1.0 - (-dt * 10.0).exp());
         let want_shift = if input.lean > 0.0 { input.lean * self.b.lean_fwd_com } else { input.lean * self.b.lean_back_com };
         self.shift += (want_shift - self.shift) * (1.0 - (-dt * 6.0).exp());
         let saved = (self.pos, self.q, self.vel, self.ang, [self.wheels[0].x, self.wheels[1].x]);
@@ -271,7 +279,7 @@ impl Bike {
             // the lean that balances the turn, the stick's own lean on top, within MaxLean
             // (lean > 0: tipped left; turning left, yaw_rate > 0, wants a left lean; the lean falls as the bike
             // turns about its forward axis)
-            let mut target = (along * yaw_rate / G).atan() * (1.0 + b.des_lean) - input.steer * b.stick_lean * (along.abs() / 10.0).min(1.0);
+            let mut target = (along * yaw_rate / G).atan() * (1.0 + b.des_lean * 0.5);
             target = target.clamp(-b.max_lean, b.max_lean);
             // stiffer than gravity's pull over the tyres (m g h / I is about 45 1/s^2 on a PCJ)
             let k = if on > 0 { 160.0 } else { 6.0 };

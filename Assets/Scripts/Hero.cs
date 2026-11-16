@@ -126,7 +126,7 @@ public partial class Game
     // On his feet at `at`, on his clips, sober (after a reset).
     void HeroPlace(Vector3 at, float yaw)
     {
-        riding = false;
+        if (riding) { riding = false; Unseat(); }
         heroMode = 0;
         heroDrunk = heroLeaning = heroDrunkPending = false;
         heroPos = at;

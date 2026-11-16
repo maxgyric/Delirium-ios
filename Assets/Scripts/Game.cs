@@ -565,6 +565,7 @@ public partial class Game : MonoBehaviour
     void Mind(Man m, float dt)
     {
         if (m.Rising || m.Broken) return;
+        if (m.Hero && riding) return; // on the bike: his pose is the bike's (Bike.cs), not a ragdoll's
         var owner = m.Body.transform;
         var st = nm.State(owner);
         if (m.Hero && heroMode == 0)
