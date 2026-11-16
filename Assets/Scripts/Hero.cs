@@ -39,6 +39,8 @@ public partial class Game
     bool heroSprint;
     float sprintPower, heroYawVel, heroHeading, heroHeadingRate, heroSpeedRate;
     bool heroLanded;          // just down from a jump or a fall: GTA V's landing (VAct)
+    Vector3 heroIntent, heroVelSlid;
+    float heroTilt, heroTiltVel, heroYawLast; // his velocity before a wall slid it, and after (the heading is the first's)
     float heroLandAir;
     int heroTier = 1;              // 1 walk, 2 run, 3 sprint: each its own clip
     GameObject gunModel;
@@ -122,6 +124,9 @@ public partial class Game
         }
         hero = null;
         heroOn = heroDrunk = heroAim = false;
+        if (camFovBase > 0f) cam.fieldOfView = camFovBase;
+        camFovBase = 0f;
+        camOut = -1f;
         sel = 0;
         if (men.Count == 0) AddMan();
         camYaw = hCamYaw;
@@ -405,27 +410,42 @@ public partial class Game
                 heroVel = Vector3.MoveTowards(heroVel, want, (heroGround ? 14f : 3f) * dt);
             else
             {
-                // his speed and his heading apart, both eased in and out (GTA V's weight): the speed springs to the
-                // gait's (slower to the top: a sprint takes a while), the heading swings round on a damped spring,
-                // lazier the faster he goes (a wide arc at a sprint), never a snap or a straight cut across
-                float cur = heroVel.magnitude;
-                if (cur > 0.05f) heroHeading = Mathf.Atan2(heroVel.x, heroVel.z) * Mathf.Rad2Deg;
+                // his speed and his heading apart (GTA V's weight). The heading is where he means to go, not where a
+                // wall slid him (else he turned along every wall he walked into, and never faced one to climb it).
+                // It swings round at a steady rate (quick at a walk, a wide arc at a sprint), eased in and out; a
+                // hard turn takes some speed off; the speed springs to the gait's.
+                Vector3 basis = heroVel == heroVelSlid ? heroIntent : heroVel;
+                float cur = basis.magnitude;
+                if (cur > 0.05f) heroHeading = Mathf.Atan2(basis.x, basis.z) * Mathf.Rad2Deg;
                 else { heroHeading = heroYaw; heroHeadingRate = 0f; }
+                float off = 0f;
                 if (want.sqrMagnitude > 1e-6f)
                 {
                     float wy = Mathf.Atan2(want.x, want.z) * Mathf.Rad2Deg;
                     float fast = Mathf.InverseLerp(walk, sprint, cur);
                     if (cur < 0.3f) { heroHeading = wy; heroHeadingRate = 0f; }
-                    else heroHeading = Mathf.SmoothDampAngle(heroHeading, wy, ref heroHeadingRate, Mathf.Lerp(0.12f, 0.3f, fast), Mathf.Lerp(520f, 200f, fast), dt);
+                    else
+                    {
+                        off = Mathf.DeltaAngle(heroHeading, wy);
+                        float top = Mathf.Lerp(560f, 230f, fast);
+                        float rate = Mathf.Clamp(off * 8f, -top, top);
+                        heroHeadingRate = Mathf.MoveTowards(heroHeadingRate, rate, Mathf.Lerp(3200f, 1600f, fast) * dt);
+                        heroHeading += heroHeadingRate * dt;
+                    }
                 }
-                float ease = !heroGround ? 0.9f : want.magnitude > cur ? (cur < walk ? 0.28f : cur < run ? 0.38f : 0.55f) : (want.magnitude < 0.1f ? 0.22f : 0.35f);
-                cur = Mathf.SmoothDamp(cur, want.magnitude, ref heroSpeedRate, ease, 12f, dt);
+                else heroHeadingRate = Mathf.MoveTowards(heroHeadingRate, 0f, 3200f * dt);
+                float wantSp = want.magnitude;
+                if (cur > walk * 0.8f) wantSp *= Mathf.Lerp(1f, 0.6f, Mathf.InverseLerp(50f, 160f, Mathf.Abs(off)));
+                float ease = !heroGround ? 0.9f : wantSp > cur ? (cur < walk ? 0.28f : cur < run ? 0.38f : 0.55f) : (wantSp < 0.1f ? 0.22f : 0.35f);
+                cur = Mathf.SmoothDamp(cur, wantSp, ref heroSpeedRate, ease, 12f, dt);
                 heroVel = Quaternion.Euler(0f, heroHeading, 0f) * Vector3.forward * cur;
             }
-            float wantYaw = heroAim ? hCamYaw : heroVel.magnitude > 0.3f ? Mathf.Atan2(heroVel.x, heroVel.z) * Mathf.Rad2Deg : heroYaw;
+            // he faces the way he's going (his heading), not a step behind it
+            bool going = heroVel.magnitude > 0.3f || (want.sqrMagnitude > 1e-6f && !heroAim);
+            float wantYaw = heroAim ? hCamYaw : going && !heroNoclip ? heroHeading : heroVel.magnitude > 0.3f ? Mathf.Atan2(heroVel.x, heroVel.z) * Mathf.Rad2Deg : heroYaw;
             if (Time.time < heroFaceUntil) wantYaw = heroFaceYaw; // a punch: at the man he's hitting
             if (heroAim || Time.time < heroFaceUntil) { heroYaw = Mathf.MoveTowardsAngle(heroYaw, wantYaw, 720f * dt); heroYawVel = 0f; }
-            else heroYaw = Mathf.SmoothDampAngle(heroYaw, wantYaw, ref heroYawVel, 0.09f, 720f, dt);
+            else heroYaw = Mathf.SmoothDampAngle(heroYaw, wantYaw, ref heroYawVel, 0.05f, 900f, dt);
         }
 
         if (heroSpotLand > 0f && Time.time >= heroSpotLand)
@@ -451,10 +471,13 @@ public partial class Game
         hJumpReq = false;
 
         // over the ground, sliding along what's in the way (the capsule's foot is above a stair's step)
+        heroIntent = heroVel;
         Vector3 step = heroVel * dt;
         if (step.sqrMagnitude > 1e-9f)
         {
-            Vector3 p1 = heroPos + Vector3.up * 0.55f, p2 = heroPos + Vector3.up * 1.5f, dir = step.normalized;
+            // on the ground its foot clears a stair's step; in the air it reaches his feet (he went over the edge of
+            // a box with his feet in it, and through it on the way down)
+            Vector3 p1 = heroPos + Vector3.up * (heroGround ? 0.55f : 0.3f), p2 = heroPos + Vector3.up * 1.5f, dir = step.normalized;
             if (Physics.CapsuleCast(p1, p2, 0.25f, dir, out var wall, step.magnitude + 0.06f))
             {
                 Vector3 first = dir * Mathf.Clamp(wall.distance - 0.06f, 0f, step.magnitude);
@@ -466,10 +489,12 @@ public partial class Game
             }
             else heroPos += step;
         }
+        heroVelSlid = heroVel;
         // the ground under him: steps up and down a stair's height, falls off anything higher
         bool was = heroGround;
         float reach = heroGround ? 0.7f + 0.45f : 0.7f + Mathf.Max(0.03f, -heroVy * dt);
-        if (heroVy <= 0f && Physics.Raycast(heroPos + Vector3.up * 0.7f, Vector3.down, out var floor, reach) && !VaultedTop(floor.point.y))
+        // a ball his feet's size, not a thin ray: his middle past an edge (a climb ends with it there) still stands on it
+        if (heroVy <= 0f && Physics.SphereCast(heroPos + Vector3.up * 0.9f, 0.2f, Vector3.down, out var floor, reach) && floor.point.y <= heroPos.y + 0.72f && !VaultedTop(floor.point.y))
         {
             heroGround = true;
             heroVy = 0f;
@@ -639,6 +664,16 @@ public partial class Game
             GtaAnim.Blend(fA, fC, hFade);
         }
         body.Apply(fA, heroPos, heroYaw);
+        // GTA V's lean into a turn: the faster he goes and the harder he turns, the more (about his feet)
+        {
+            float dtp = Mathf.Max(Time.deltaTime, 1e-4f);
+            float yawRate = Mathf.DeltaAngle(heroYawLast, heroYaw) / dtp;
+            heroYawLast = heroYaw;
+            float sp = new Vector3(heroVel.x, 0f, heroVel.z).magnitude;
+            float lean = heroGround && !heroAim && !climbing && !heroNoclip ? -Mathf.Atan(sp * yawRate * Mathf.Deg2Rad / 9.81f) * Mathf.Rad2Deg * 0.3f : 0f;
+            heroTilt = Mathf.SmoothDamp(heroTilt, Mathf.Clamp(lean, -12f, 12f), ref heroTiltVel, 0.12f, Mathf.Infinity, dtp);
+            if (Mathf.Abs(heroTilt) > 0.05f) body.Hips.RotateAround(heroPos, body.transform.forward, heroTilt);
+        }
         // the upper body: the gun's aim (its clip's last frame) over the legs' clip, bent up and down with the camera
         if (hUpper > 0f && AimPoseV(body)) { }
         else if (hUpper > 0f)
@@ -698,19 +733,53 @@ public partial class Game
         }
     }
 
+    // GTA V's camera: behind him and a little over, eased (never snapped) to the aim's over-the-shoulder and back,
+    // further out the faster he goes (a little wider at a sprint), swinging round behind him by itself while he
+    // runs and you leave it alone, pulled in from walls at once and let out slowly.
+    float camDist = 3.4f, camDistV, camSide = 0.2f, camSideV, camHigh = 1.4f, camHighV, camOut = -1f, camFov, camFovBase;
+    Vector3 camPivotV;
+    float hLookAt;
+
     void HeroCamera()
     {
         if (hero == null) return;
         if (gunModel != null && !gunModel.activeSelf) gunModel.SetActive(true); // off the bike: back in his hand
         GunInHand();
-        Vector3 want = heroMode == 0 && !hero.Rising ? heroPos + Vector3.up * 1.45f : hero.Body.Hips.position + Vector3.up * 0.5f;
-        hPivot = Vector3.Lerp(hPivot, want, 1f - Mathf.Exp(-14f * Time.unscaledDeltaTime));
+        float dt = Mathf.Max(Time.unscaledDeltaTime, 1e-4f);
+        bool onFeet = heroMode == 0 && !hero.Rising;
+        bool aiming = heroAim && onFeet;
+        float sp = onFeet ? new Vector3(heroVel.x, 0f, heroVel.z).magnitude : 0f;
+        camDist = Mathf.SmoothDamp(camDist, aiming ? 1.75f : 3.3f + Mathf.InverseLerp(2f, 7f, sp) * 0.8f, ref camDistV, aiming ? 0.12f : 0.4f, Mathf.Infinity, dt);
+        camSide = Mathf.SmoothDamp(camSide, aiming ? 0.55f : 0.2f, ref camSideV, 0.12f, Mathf.Infinity, dt);
+        camHigh = Mathf.SmoothDamp(camHigh, aiming ? 1.55f : 1.4f, ref camHighV, 0.15f, Mathf.Infinity, dt);
+        // behind him by itself: on the move, a moment after you last turned it (not when he runs at you)
+        if (onFeet && !aiming && !riding && sp > 1f && Time.unscaledTime - hLookAt > 1.2f && !climbing)
+        {
+            float d = Mathf.DeltaAngle(hCamYaw, heroYaw);
+            if (Mathf.Abs(d) < 135f) hCamYaw += d * (1f - Mathf.Exp(-(0.5f + 1.5f * Mathf.InverseLerp(1f, 7f, sp)) * dt));
+            hCamPitch = Mathf.Lerp(hCamPitch, 10f, 1f - Mathf.Exp(-0.7f * dt));
+        }
+        Vector3 want = onFeet ? heroPos + Vector3.up * camHigh : hero.Body.Hips.position + Vector3.up * 0.5f;
+        // a little lag (more up and down: no bob from his steps)
+        Vector3 p = hPivot;
+        p.x = Mathf.SmoothDamp(p.x, want.x, ref camPivotV.x, 0.05f, Mathf.Infinity, dt);
+        p.z = Mathf.SmoothDamp(p.z, want.z, ref camPivotV.z, 0.05f, Mathf.Infinity, dt);
+        p.y = Mathf.SmoothDamp(p.y, want.y, ref camPivotV.y, 0.12f, Mathf.Infinity, dt);
+        if ((p - want).sqrMagnitude > 25f) p = want; // a jump in place (a reset): no long swing
+        hPivot = p;
         var turn = Quaternion.Euler(hCamPitch, hCamYaw, 0f);
-        bool close = heroAim && heroMode == 0;
-        Vector3 at = hPivot - turn * Vector3.forward * (close ? 1.7f : 3.4f) + turn * Vector3.right * (close ? 0.5f : 0.25f) + Vector3.up * 0.1f;
-        // not through a wall: pulled in to what's between
-        if (Physics.Linecast(hPivot, at, out var hit)) at = hit.point + (hPivot - at).normalized * 0.15f;
-        cam.transform.SetPositionAndRotation(at, turn);
+        Vector3 back = -(turn * Vector3.forward);
+        Vector3 focus = hPivot + turn * Vector3.right * camSide;
+        if (Physics.Linecast(hPivot, focus, out var side)) focus = side.point - (focus - hPivot).normalized * 0.12f;
+        // not through a wall: pulled in at once, let out slowly
+        float room = Physics.SphereCast(focus, 0.18f, back, out var hit, camDist) ? Mathf.Max(0.3f, hit.distance) : camDist;
+        camOut = camOut < 0f || room < camOut ? room : Mathf.MoveTowards(camOut, room, 2.5f * dt);
+        cam.transform.SetPositionAndRotation(focus + back * camOut, turn);
+        // a touch wider at a sprint, closer in when aiming
+        if (camFovBase <= 0f) camFov = camFovBase = cam.fieldOfView;
+        float fov = camFovBase + (onFeet && heroTier == 3 && sp > 5f ? 6f : 0f) - (aiming ? 6f : 0f);
+        camFov = Mathf.Lerp(camFov, fov, 1f - Mathf.Exp(-5f * dt));
+        cam.fieldOfView = camFov;
     }
 
     // The stick steers the ragdoll: a lean the way you push it and a helping hand on his hips, to a walking pace.
@@ -1011,6 +1080,7 @@ public partial class Game
                 hDragLast = f.Pos;
                 hCamYaw += d.x * 0.28f;
                 hCamPitch += d.y * 0.22f;
+                if (d.sqrMagnitude > 0.5f) hLookAt = Time.unscaledTime;
             }
         }
         // a PC's keys
@@ -1111,7 +1181,7 @@ public partial class Game
     // turn bent to the stick's way), up to its blend-out mark; then the loop takes over on the same foot.
     GtaAnim.Clip act;
     int actKind;              // 1 start, 2 stop, 3 turn
-    float actT, actYaw, actWarp, actEnd, hNextPhase = -1f;
+    float actT, actYaw, actOff, actEnd, hNextPhase = -1f;
     Vector3 actPos;
     bool actRun, startLeft, actStill;   // actStill: a climb's end that leaves him standing
     float actNextAt, actSpeed;
@@ -1171,6 +1241,7 @@ public partial class Game
         }
         // let go of a start, pushed during a stop: back to the plain moves
         if ((actKind == 1 && !push) || (actKind == 2 && push) || (actKind == 5 && actStill && push && actT / act.Dur > 0.45f)) { act = null; actNextAt = Time.time + 0.25f; return false; }
+        float ph0 = actT / act.Dur;
         actT += dt;
         float ph = actT / act.Dur;
         if (ph >= actEnd)
@@ -1179,18 +1250,33 @@ public partial class Game
             actNextAt = Time.time + 0.35f;
             return false;
         }
+        // steered by the stick as it goes (a start, a landing, a turn, a climb's walk or run on): the clip's way bent
+        // round to the stick's, quickly enough to be there by its end
+        bool steer = push && (actKind == 1 || actKind == 3 || actKind == 4 || (actKind == 5 && !actStill));
+        float wishYaw = Mathf.Atan2(wish.x, wish.z) * Mathf.Rad2Deg;
         var m = GtaAnim.Motion(act, ph);
         if (actKind == 4 && m.sqrMagnitude < 1e-6f)
         {
             // a landing without its own way along the ground: on at the speed he came down with, easing off a little
-            heroVel = fwd * Mathf.Max(actSpeed * Mathf.Lerp(1f, 0.85f, ph), 1f);
+            if (steer) heroYaw = Mathf.MoveTowardsAngle(heroYaw, wishYaw, 320f * dt);
+            heroVel = Quaternion.Euler(0f, heroYaw, 0f) * Vector3.forward * Mathf.Max(actSpeed * Mathf.Lerp(1f, 0.85f, ph), 1f);
             return true;
         }
-        float turn = m.z + actWarp * Mathf.Clamp01(ph / actEnd);
-        Vector3 to = actPos + Quaternion.Euler(0f, actYaw, 0f) * new Vector3(-m.y, 0f, m.x);
-        Vector3 v = new Vector3(to.x - heroPos.x, 0f, to.z - heroPos.z) / Mathf.Max(dt, 1e-3f);
+        if (steer)
+        {
+            float endTurn = GtaAnim.Motion(act, actEnd).z;
+            float target = Mathf.DeltaAngle(actYaw - endTurn, wishYaw);
+            float miss = Mathf.Abs(Mathf.DeltaAngle(actOff, target));
+            // pushed right round the other way in a start: let it go, the plain moves turn him
+            if (actKind == 1 && miss > 110f) { act = null; actNextAt = Time.time + 0.1f; return false; }
+            float remain = Mathf.Max((actEnd - ph) * act.Dur, 0.08f);
+            actOff = Mathf.MoveTowardsAngle(actOff, target, Mathf.Max(miss / remain, actKind == 1 ? 160f : 300f) * dt);
+        }
+        // its root's step this frame (the clip's own frame, where it started) turned by the steering
+        Vector3 d = m - GtaAnim.Motion(act, ph0);
+        Vector3 v = Quaternion.Euler(0f, actYaw + actOff, 0f) * new Vector3(-d.y, 0f, d.x) / Mathf.Max(dt, 1e-3f);
         heroVel = Vector3.ClampMagnitude(v, 9f);
-        heroYaw = actYaw - turn;
+        heroYaw = actYaw + actOff - m.z;
         return true;
     }
 
@@ -1202,8 +1288,8 @@ public partial class Game
         actT = 0f;
         actPos = heroPos;
         actYaw = heroYaw;
-        float clipTurn = GtaAnim.Motion(c, 1f).z;
-        actWarp = kind == 2 || kind >= 4 ? 0f : Mathf.DeltaAngle(clipTurn, leftTurn);
+        // the turn the stick wants beyond the clip's own (VAct bends it round over the clip, and on as it moves)
+        actOff = 0f;
         float b = GtaAnim.Mark(c, 3);
         actEnd = b > 0.05f ? b : 1f;
         return true;

@@ -421,3 +421,15 @@ files (default.xex, the three exported files, the archives) are picked by the la
   (idle_2_aim_fwd_*) when he starts, each shot its fire_* clip (an automatic's looping while held) plus a kick on a
   spring (pistol 7 deg ... sniper 15). Guns: pistol wpi, deagle wp5, SMG wsm, AK war, shotgun wpu, sniper wsr.
 - Phone: male_guns.mdl beside male_move.mdl, and lib_male_guns*.lua beside lib_male_move*.lua.
+- (23:27 user) Bugs: no steering in a landing or a start; falling through what he climbed or jumped against; turned
+  away from walls (couldn't face one to climb); turning not GTA V-like; wants GTA V's camera. Fixes:
+  VAct moves him by the clip's step each frame (not to an absolute track), turned by actOff, which the stick bends
+  toward its way (starts, landings, run turns, climb exits that walk/run on; a start pushed > 110 deg back is let
+  go). Heading = intent (velocity before the wall slide: heroIntent / heroVelSlid), facing = heading (0.05 s), the
+  heading turning at a capped, eased rate (560 deg/s at a walk .. 230 at a sprint, accel-limited), speed off on hard
+  turns (to 60% at 160 deg), a lean into turns about his feet (0.3 x the physical lean, max 12 deg). Ground: a 0.2 m
+  sphere instead of a ray (a climb ends with his middle a few cm short of the edge: the ray missed the top and he
+  dropped), the wall capsule down to 0.3 m in the air (his feet went into a box's top over its edge). Climb probes
+  the stick's way. Camera: eased distance/side/height (aim 1.75 m over the shoulder, 3.3-4.1 m by speed), lagged
+  pivot (more vertically), recentres behind him while running after 1.2 s untouched, sphere-cast pull-in at once and
+  slow let-out, FOV +6 at a sprint, -6 aiming.

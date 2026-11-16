@@ -142,7 +142,9 @@ public partial class Game
         if (!GtaAnim.V || GtaAnim.VClimb.Count == 0 || hero == null) return false;
         Vector3 flat = new Vector3(heroVel.x, 0f, heroVel.z);
         float speed = flat.magnitude;
+        // the way he's facing, or the way the stick pushes him (at a wall he means to climb)
         Vector3 fwd = Quaternion.Euler(0f, heroYaw, 0f) * Vector3.forward;
+        if (hStick.magnitude > 0.2f) fwd = Quaternion.Euler(0f, hCamYaw, 0f) * new Vector3(hStick.x, 0f, hStick.y).normalized;
         float range = 0.25f + (speed > 1.5f ? 1.12f : 0.61f);
         // the wall: the nearest steep face at three heights
         float hitD = float.MaxValue;
