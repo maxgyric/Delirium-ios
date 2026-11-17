@@ -327,7 +327,9 @@ public partial class Game
                 e.Speed = Mathf.Max(e.F("speed", 100f), 1f); // degrees a second
                 e.Wait = e.F(e.Class == "prop_door_rotating" ? "returndelay" : "wait", e.Class == "func_rot_button" ? 1f : -1f);
                 e.Locked = e.Flag(2048);
-                if (e.Class != "func_rot_button" && (e.Flag(1) || e.I("spawnpos") == 1)) SetPos(e, 1f);
+                // a prop door that opens the other way only, or starts open the other way ("spawnpos" 2: open back)
+                if (e.Class == "prop_door_rotating" && (e.I("opendir") == 2 || e.I("spawnpos") == 2)) e.Angle = -e.Angle;
+                if (e.Class != "func_rot_button" && (e.Flag(1) || e.I("spawnpos") == 1 || e.Class == "prop_door_rotating" && e.I("spawnpos") == 2)) SetPos(e, 1f);
                 break;
             }
             case "func_rotating":
@@ -638,7 +640,9 @@ public partial class Game
         if (e.Locked) { Fire(e, "OnLockedUse"); return; }
         if (e.Dir > 0 || (e.Pos >= 1f && e.Dir == 0)) { e.WaitLeft = e.Wait; return; }
         // a door that opens both ways (a prop door's way): away from the hero
-        if (e.Turns && e.Pos <= 0f && e.Class != "func_rot_button" && (e.Class != "prop_door_rotating" || e.I("opendir") == 0) && (e.Class == "prop_door_rotating" || e.Flag(16)) && hero != null && e.T != null)
+        // (Source: a prop door with "opendir" both; a func_door_rotating turning about the up axis that isn't "one way")
+        bool bothWays = e.Class == "prop_door_rotating" ? e.I("opendir") == 0 : e.Class == "func_door_rotating" && !e.Flag(16) && !e.Flag(64) && !e.Flag(128);
+        if (e.Turns && e.Pos <= 0f && bothWays && hero != null && e.T != null)
         {
             var rs = e.T.GetComponentsInChildren<Renderer>();
             if (rs.Length > 0)
@@ -722,6 +726,11 @@ public partial class Game
         e.TrainMax = SrcLen(Mathf.Max(e.F("speed", 100f), e.F("startspeed", 0f)));
         var first = Find(e.Get("target"), e);
         if (first.Count == 0) return;
+        // which way it was built facing: Source's says its +x, but trains are built along their track (a car parented
+        // to it pointing down the rails), so the way of its first stretch: it starts as it was placed, then turns
+        // with the track (a train's MoveTo holds that way)
+        var second = Find(first[0].Get("target"), first[0]);
+        e.MoveTo = second.Count > 0 && second[0] != first[0] ? (SrcPoint(second[0].SrcOrigin) - SrcPoint(first[0].SrcOrigin)).normalized : Vector3.zero;
         TrainTo(e, first[0], true);
         // func_train starts going unless it waits for an input; a tracktrain with a start speed goes
         if (e.Class == "func_train" ? e.Name == "" || !e.Flag(1) : e.F("startspeed") > 0f) e.TrainSpeed = e.Class == "func_train" ? SrcLen(e.F("speed", 100f)) : SrcLen(e.F("startspeed"));
@@ -736,7 +745,9 @@ public partial class Game
     Quaternion TrainFacing(Ent e, Vector3 d)
     {
         if (e.Flag(1)) d.y = 0f; // "no pitch"
-        return d.sqrMagnitude < 1e-6f ? e.T.rotation : Quaternion.LookRotation(d) * Quaternion.Inverse(Quaternion.LookRotation(SrcDir(new Vector3(1f, 0f, 0f)))) * e.HomeRot;
+        Vector3 home = e.MoveTo.sqrMagnitude > 1e-6f ? e.MoveTo : SrcDir(new Vector3(1f, 0f, 0f));
+        if (e.Flag(1)) home.y = 0f;
+        return d.sqrMagnitude < 1e-6f || home.sqrMagnitude < 1e-6f ? e.T.rotation : Quaternion.LookRotation(d) * Quaternion.Inverse(Quaternion.LookRotation(home)) * e.HomeRot;
     }
 
     void TrainTo(Ent e, Ent node, bool jump)

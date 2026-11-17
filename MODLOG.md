@@ -652,3 +652,8 @@ files (default.xex, the three exported files, the archives) are picked by the la
   the piece's frame): trains (and what hangs from them) as Train (brace, knock standing people down), the rest as
   Object (func_rotating knocks down). Static brush entities (func_brush, func_wall_toggle, func_breakable...)
   are back in Delirium's level.
+- (23:00) User: cars stand and drive sideways. gm_stairs: tank_a_1's track runs along y, its car (yaw 270) along
+  it; Source's formula (+x forward) turns the whole train 90 degrees at the start. Now a train's "home" forward
+  is its first stretch's direction (first path_track -> its target): it starts as placed, then turns with the
+  track. Doors: func_door_rotating opens away from the hero only when it turns about up and isn't "one way"
+  (flag 16; before: only WHEN 16 was set); prop_door_rotating opendir 2 / spawnpos 2 open the other way.
