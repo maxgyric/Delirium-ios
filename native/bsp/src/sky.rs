@@ -141,6 +141,17 @@ pub fn environment(entities: &[HashMap<String, String>], exposure: f32) -> Strin
             lines.push(format!("fog={} {} {} {} {} {}", c[0] / 255.0, c[1] / 255.0, c[2] / 255.0, start, end.max(start + 1.0), max));
         }
     }
+    // the 3D skybox's own fog (its sky_camera's, in the skybox's units: as far again times its scale round the map)
+    if let Some(f) = class(entities, "sky_camera").find(|e| e.get("fogenable").map(|v| v == "1").unwrap_or(false)) {
+        let c = f.get("fogcolor").map(|s| nums(s)).unwrap_or_default();
+        let k = f.get("scale").and_then(|v| v.parse::<f32>().ok()).unwrap_or(16.0).max(1.0) * crate::SCALE;
+        if c.len() >= 3 {
+            let start = f.get("fogstart").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0).max(0.0) * k;
+            let end = f.get("fogend").and_then(|v| v.parse::<f32>().ok()).unwrap_or(10000.0) * k;
+            let max = f.get("fogmaxdensity").and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0).clamp(0.0, 1.0);
+            lines.push(format!("skyfog={} {} {} {} {} {}", c[0] / 255.0, c[1] / 255.0, c[2] / 255.0, start, end.max(start + 1.0), max));
+        }
+    }
     if let Some(l) = class(entities, "light_environment").next() {
         let c = l.get("_light").map(|s| nums(s)).unwrap_or_default();
         let a = l.get("angles").map(|s| nums(s)).unwrap_or_default();

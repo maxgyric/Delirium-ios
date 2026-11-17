@@ -68,7 +68,9 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
     for &k in keys {
         let b = &map.batches[&k];
         let nocollide = k & NOCOLLIDE != 0;
-        let k = k & !NOCOLLIDE;
+        let key = k;
+        let sky3d = k & SKY3D != 0;
+        let k = k & !(NOCOLLIDE | SKY3D);
         if b.pos.is_empty() { continue; }
         let m = &map.materials.get(k);
         let name = m.map(|m| m.name.clone()).unwrap_or_else(|| format!("material{k}"));
@@ -112,7 +114,8 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
         let lm_extra = match lm_tex { Some((t, _, _)) => format!(r#","extras":{{"lightmap":{t}}}"#), None => String::new() };
         let c = m.map(|m| m.color).unwrap_or([0.5; 3]);
         let mi = materials.len();
-        if let Some(t) = tex.get(&k) {
+        // (its texture's under its own key: the 3D skybox's and water's with NOCOLLIDE in it)
+        if let Some(t) = tex.get(&key).or_else(|| tex.get(&k)) {
             // its own texture (from the map's pakfile or your game's packs)
             let key = std::rc::Rc::as_ptr(&t.png);
             let ti = match seen.iter().find(|s| s.0 == key) {
@@ -140,7 +143,7 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
                 json(&name), c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0), if alpha < 1.0 { r#","alphaMode":"BLEND""# } else { "" }
             ));
         }
-        let mesh_name = if water || nocollide { format!("{name} [nocollide]") } else { name.clone() };
+        let mesh_name = if sky3d { format!("{name} [sky3d] [nocollide]") } else if water || nocollide { format!("{name} [nocollide]") } else { name.clone() };
         meshes.push(format!(r#"{{"name":{},"primitives":[{{"attributes":{{"POSITION":{a0},"NORMAL":{},"TEXCOORD_0":{}{luv_acc}}},"indices":{},"material":{mi}}}]}}"#, json(&mesh_name), a0 + 1, a0 + 2, a0 + 3));
         nodes.push(format!(r#"{{"name":{},"mesh":{}}}"#, json(&mesh_name), meshes.len() - 1));
         children.push(nodes.len());
@@ -179,6 +182,8 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
 
 /// A batch key's flag: the triangles of models that aren't solid (drawn, not stood on)
 pub const NOCOLLIDE: usize = 1 << 24;
+/// (a batch key's flag: in the 3D skybox, drawn by a camera of its own behind the map, as Source does)
+pub const SKY3D: usize = 1 << 25;
 
 /// The map's models put in its batches (a material each of theirs, after the map's): how many placed, and which
 /// models weren't found or read
@@ -207,6 +212,7 @@ fn add_props(map: &mut Map, content: &content::Content) -> (usize, Vec<String>) 
             Some((_, _, o, k)) => ([(p.origin[0] - o[0]) * k, (p.origin[1] - o[1]) * k, (p.origin[2] - o[2]) * k], p.scale * k, false),
             None => (p.origin, p.scale, p.solid),
         };
+        let flags = if sky.is_some() { NOCOLLIDE | SKY3D } else if solid { 0 } else { NOCOLLIDE };
         let skin = model.skins.get(p.skin).or(model.skins.first());
         for mesh in &model.meshes {
             let ti = skin.and_then(|s| s.get(mesh.material).copied()).unwrap_or(mesh.material);
@@ -215,7 +221,7 @@ fn add_props(map: &mut Map, content: &content::Content) -> (usize, Vec<String>) 
                 map.materials.push(bsp::Material { name: name.clone(), color: [0.7; 3], width: 1, height: 1 });
                 map.materials.len() - 1
             });
-            let key = mi | if solid { 0 } else { NOCOLLIDE };
+            let key = mi | flags;
             let luv = map.prop_luv;
             let b = map.batches.entry(key).or_default();
             for t in &mesh.tris {
@@ -286,7 +292,7 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
     let mut done: std::collections::HashMap<String, Option<std::rc::Rc<Vec<u8>>>> = std::collections::HashMap::new();
     let mut water: Vec<(usize, [f32; 3])> = vec![];
     for &key in map.batches.keys() {
-        let k = key & !NOCOLLIDE;
+        let k = key & !(NOCOLLIDE | SKY3D);
         let Some(m) = map.materials.get(k) else { continue };
         let vmt = content.material(&m.name);
         // water: its colour under the surface (it has no picture of its own)

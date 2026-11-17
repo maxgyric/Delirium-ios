@@ -538,3 +538,16 @@ files (default.xex, the three exported files, the archives) are picked by the la
   maps were in memory at once. A failed load falls back to the default map.
 - Log: sandbox-log-previous.txt keeps the run before (the crash's run); map loads log memory; Application.lowMemory
   is logged and unloads unused assets.
+
+## GMod maps: 3D skybox textured and drawn by its own camera (2026-11-17, later)
+- Bug: to_glb looked textures up by the material index with NOCOLLIDE stripped, but convert stored them under the
+  full key, so every [nocollide] batch (3D skybox, water, non-solid props) lost its texture (flat sun-coloured
+  boxes in bigcity_dusk). Now looked up by the full key first.
+- 3D skybox batches get SKY3D (1<<25): mesh name "[sky3d] [nocollide]". Unity puts them on layer 29 and a child
+  camera ("3D skybox camera", depth -1, far 20000*k) draws only that layer over the 2D sky; the main camera then
+  clears depth only and skips layer 29 (Source's order). Before, the main far plane (fog end, ~640 m) cut the
+  skybox town (out to 1250 m in bigcity_dusk) and its buildings could cut into the map.
+- .env "skyfog=": the sky_camera's fog (distances x its scale). Source's fog caps at fogmaxdensity; Unity's linear
+  can't, so the sky camera gets a line through Source's curve at 30% and 100% of the skybox's farthest distance.
+  SkyCamera swaps RenderSettings fog in OnPreRender/OnPostRender and turns shadows off while it draws.
+- examples/finddbg.rs: material/texture lookup from a .gma's map pakfile (debugging).

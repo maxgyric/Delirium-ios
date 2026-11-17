@@ -453,6 +453,9 @@ public partial class Game
         Bounds b = MapBounds();
         if (!metres && b.size.magnitude > 4000f) root.transform.localScale *= 0.01f;
         root.transform.localScale *= mapScale;
+        // a GMod map's 3D skybox: its own camera draws it (MapLook)
+        foreach (var r in root.GetComponentsInChildren<Renderer>())
+            if (r.gameObject.name.Contains("[sky3d]")) r.gameObject.layer = Sky3DLayer;
         foreach (var mf in root.GetComponentsInChildren<MeshFilter>())
         {
             if (mf.sharedMesh == null || mf.sharedMesh.GetIndexCount(0) < 3) continue;

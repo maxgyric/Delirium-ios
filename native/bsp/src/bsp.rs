@@ -468,7 +468,7 @@ impl Map {
                     };
                     [dot(s, m) + so, dot(tv, m) + to, l[0], l[1]]
                 };
-                let b = batches.entry(if in_sky.is_some() { mat | crate::NOCOLLIDE } else { mat }).or_default();
+                let b = batches.entry(if in_sky.is_some() { mat | crate::NOCOLLIDE | crate::SKY3D } else { mat }).or_default();
                 let place = |v: V3| match in_sky { Some((o, k)) => mul(sub(v, o), k), None => v };
                 let mut tri = |a: V3, bb: V3, c: V3, ua: [f32; 4], ub: [f32; 4], uc: [f32; 4], fallback: V3| {
                     let (a, bb, c) = (place(a), place(bb), place(c));

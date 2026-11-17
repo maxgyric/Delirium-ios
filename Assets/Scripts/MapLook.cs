@@ -18,6 +18,14 @@ public partial class Game
     Material skyMat;
     Texture2D skyTex;
 
+    // A GMod map's 3D skybox (the town round the map, its pieces "[sky3d]" in the .glb, 16 times their size): drawn
+    // by a camera of its own first, then the map over it with the depth cleared, the way Source does. Its buildings
+    // never cut into the map or show through it, its own fog on them, and as far as they go (the map's far plane
+    // and fog had cut them off and flattened them to one colour).
+    public const int Sky3DLayer = 29;
+    Camera skyCam;
+    SkyCamera skyCamLook;
+
     static float[] Nums(string s)
     {
         var parts = s.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
@@ -42,6 +50,8 @@ public partial class Game
             if (sun != null) { lookSunColor = sun.color; lookSunIntensity = sun.intensity; lookSunRot = sun.transform.rotation; }
         }
         // the sandbox's own first (whatever this map has, it starts from there)
+        if (skyCam != null) skyCam.enabled = false;
+        cam.cullingMask = ~0;
         cam.clearFlags = lookClear;
         cam.backgroundColor = lookBack;
         cam.farClipPlane = lookFar;
@@ -57,6 +67,7 @@ public partial class Game
 
         float k = mapRoot != null ? mapRoot.transform.localScale.x : 1f; // the map's size (x2 / ÷2)
         cam.farClipPlane = Mathf.Max(lookFar, 1500f * k);
+        float[] skyFog = null;
         string[] lines;
         try { lines = File.ReadAllLines(env); }
         catch (Exception) { return; }
@@ -98,6 +109,11 @@ public partial class Game
                 cam.farClipPlane = Mathf.Clamp(end * 1.05f, lookFar, 3000f * k);
                 if (RenderSettings.skybox == null) cam.backgroundColor = RenderSettings.fogColor;
             }
+            else if (key == "skyfog")
+            {
+                var f = Nums(val); // r g b start end maxdensity (m): the 3D skybox's
+                if (f.Length >= 5) skyFog = f;
+            }
             else if (key == "sun" && sun != null)
             {
                 var f = Nums(val); // r g b intensity, the way its light goes
@@ -118,5 +134,111 @@ public partial class Game
                 RenderSettings.ambientGroundColor = a * 0.6f;
             }
         }
+        Sky3D(skyFog, k);
+    }
+
+    void Sky3D(float[] fog, float k)
+    {
+        bool any = false;
+        float far = 0f; // how far its farthest piece is
+        if (mapRoot != null)
+            foreach (var r in mapRoot.GetComponentsInChildren<Renderer>())
+                if (r.gameObject.layer == Sky3DLayer)
+                {
+                    any = true;
+                    var b = r.bounds;
+                    far = Mathf.Max(far, new Vector2(Mathf.Max(Mathf.Abs(b.min.x), Mathf.Abs(b.max.x)), Mathf.Max(Mathf.Abs(b.min.z), Mathf.Abs(b.max.z))).magnitude);
+                }
+        if (!any) return;
+        if (skyCam == null)
+        {
+            var go = new GameObject("3D skybox camera");
+            go.transform.SetParent(cam.transform, false);
+            skyCam = go.AddComponent<Camera>();
+            skyCamLook = go.AddComponent<SkyCamera>();
+        }
+        skyCamLook.main = cam;
+        skyCam.CopyFrom(cam);
+        skyCam.transform.localPosition = Vector3.zero;
+        skyCam.transform.localRotation = Quaternion.identity;
+        skyCam.depth = cam.depth - 1f;
+        skyCam.cullingMask = 1 << Sky3DLayer;
+        skyCam.clearFlags = cam.clearFlags; // the 2D sky (or its colour) behind it
+        skyCam.nearClipPlane = 0.5f * k;
+        skyCam.farClipPlane = 20000f * k;
+        skyCam.enabled = true;
+        cam.cullingMask = ~(1 << Sky3DLayer);
+        cam.clearFlags = CameraClearFlags.Depth;
+        skyCamLook.fog = fog != null;
+        if (fog != null)
+        {
+            skyCamLook.fogColor = new Color(fog[0], fog[1], fog[2]);
+            // Source's: from nothing at its start up to its most (often half) at its end, then no more. Unity's
+            // linear fog has no most: a line through Source's at the skybox's nearer and farthest pieces
+            float start = fog[3] * k, end = Mathf.Max(fog[4] * k, start + 1f), most = fog.Length >= 6 ? Mathf.Clamp(fog[5], 0.01f, 1f) : 1f;
+            System.Func<float, float> src = d => most * Mathf.Clamp01((d - start) / (end - start));
+            float d2 = Mathf.Max(far, 1f), d1 = d2 * 0.3f;
+            float f1 = src(d1), f2 = src(d2);
+            float slope = Mathf.Max((f2 - f1) / (d2 - d1), 1e-6f);
+            float s0 = d1 - f1 / slope;
+            skyCamLook.fogStart = s0;
+            skyCamLook.fogEnd = s0 + 1f / slope;
+        }
+    }
+}
+
+// The 3D skybox's camera: the main one's view (its field of view, its picture), its own fog and no shadows of its
+// own while it draws
+public class SkyCamera : MonoBehaviour
+{
+    public Camera main;
+    public bool fog;
+    public Color fogColor;
+    public float fogStart, fogEnd;
+    Camera self;
+    bool wasFog;
+    Color wasColor;
+    float wasStart, wasEnd, wasShadows;
+    FogMode wasMode;
+
+    void LateUpdate()
+    {
+        if (self == null) self = GetComponent<Camera>();
+        if (main != null && self.targetTexture != main.targetTexture) self.targetTexture = main.targetTexture;
+    }
+
+    void OnPreCull()
+    {
+        if (self == null) self = GetComponent<Camera>();
+        if (main != null) self.fieldOfView = main.fieldOfView;
+        wasShadows = QualitySettings.shadowDistance;
+        QualitySettings.shadowDistance = 0f;
+    }
+
+    void OnPreRender()
+    {
+        wasFog = RenderSettings.fog;
+        wasColor = RenderSettings.fogColor;
+        wasStart = RenderSettings.fogStartDistance;
+        wasEnd = RenderSettings.fogEndDistance;
+        wasMode = RenderSettings.fogMode;
+        RenderSettings.fog = fog;
+        if (fog)
+        {
+            RenderSettings.fogMode = FogMode.Linear;
+            RenderSettings.fogColor = fogColor;
+            RenderSettings.fogStartDistance = fogStart;
+            RenderSettings.fogEndDistance = fogEnd;
+        }
+    }
+
+    void OnPostRender()
+    {
+        RenderSettings.fog = wasFog;
+        RenderSettings.fogColor = wasColor;
+        RenderSettings.fogStartDistance = wasStart;
+        RenderSettings.fogEndDistance = wasEnd;
+        RenderSettings.fogMode = wasMode;
+        QualitySettings.shadowDistance = wasShadows;
     }
 }
