@@ -14,6 +14,11 @@ pub struct Entry {
     preload: Vec<u8>,
 }
 
+impl Entry {
+    /// which numbered archive it's in (0x7fff: the dir file itself)
+    pub fn archive(&self) -> u16 { self.archive }
+}
+
 pub struct Vpk {
     dir: PathBuf,
     data_at: u64, // where a dir file's own data starts (archive 0x7fff)

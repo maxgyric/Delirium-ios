@@ -118,8 +118,11 @@ public partial class Game
     // A Garry's Mod (Source) map as a .glb (the native library reads the .bsp and finds its textures: in the map, in
     // the game's packs (*_dir.vpk with their _000.vpk...) and "materials" folders you put anywhere in mods): its bytes,
     // or null and why. Kept in the cache till the map or the packs change (its textures take a while to make).
+    static string bspEnv; // the last converted map's sky, fog and sun (MapLook)
+
     static byte[] BspToGlb(string path, out string note)
     {
+        bspEnv = null;
         note = "";
         string mods = ModsDir();
         long stamp = 0;
@@ -136,6 +139,7 @@ public partial class Game
         if (File.Exists(glb))
         {
             try { note = File.Exists(info) ? File.ReadAllText(info) : "(cached)"; } catch (Exception) { }
+            bspEnv = glb + ".env";
             return File.ReadAllBytes(glb);
         }
         // older conversions of this map: gone
@@ -161,6 +165,7 @@ public partial class Game
         note = System.Text.Encoding.UTF8.GetString(buf, 0, Mathf.Max(0, n));
         if (r < 0) return null;
         try { File.WriteAllText(info, note); } catch (Exception) { }
+        bspEnv = glb + ".env";
         return File.ReadAllBytes(glb);
     }
 
@@ -247,6 +252,12 @@ public partial class Game
                 PlayerPrefs.SetFloat(kPrefMapScale, mapScale);
                 SetMap(made.Root, name);
                 mapTextures = made.Owned.FindAll(o => o is Texture2D).ConvertAll(o => (Texture2D)o);
+                // a GMod map's baked light stays smooth whatever the pixel look
+                foreach (var r in made.Root.GetComponentsInChildren<Renderer>())
+                    foreach (var m in r.sharedMaterials)
+                        if (m != null && m.HasProperty("_LightMap") && m.GetTexture("_LightMap") is Texture2D lm) mapTextures.Remove(lm);
+                // its sky, fog and sun (or the sandbox's own again)
+                if (source) MapLook(bspEnv); else MapLook(null);
                 // pixel art (a Minecraft map): crisp texels unless you say otherwise
                 int small = mapTextures.FindAll(t => Mathf.Max(t.width, t.height) <= 256).Count;
                 pixelTextures = mapTextures.Count > 0 && small * 2 >= mapTextures.Count;
@@ -478,6 +489,7 @@ public partial class Game
     void DefaultMap()
     {
         ClearLevel();
+        MapLook(null);
         PlayerPrefs.DeleteKey(kPrefMap);
         mapPath = "";
         mapScale = 1f;

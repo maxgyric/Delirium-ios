@@ -498,3 +498,15 @@ files (default.xex, the three exported files, the archives) are picked by the la
   150) when the map has a lightmap. Model materials have 1x1 "size" (their UVs are already 0-1). gm_nocheese: 51
   placed, 78.6k triangles, 62/62 textured; renders right (Bikini Bottom, Krusty Krab). gm_stairs / falleritus
   name HL2/CS:S models (props_c17, de_inferno): found once those packs are in mods/gmod.
+- (12:11 user, gm_scrapland) Each map's own skybox and look. sky.rs: worldspawn "skyname" -> skybox/<name>{rt,ft,lf,
+  bk,up,dn} (VMT $basetexture or the .vtf), into a 2048x1024 equirectangular panorama in Source's directions. Face
+  layout from HL2's sky_day01_01 itself (seams 0.3-1 of 255 apart against 7-106 otherwise): Quake 2's st_to_vec but
+  lf = -X, bk = +Y (rt +X, ft -Y); sides half as tall as wide are their upper half, below the horizon the sides'
+  last rows' average (and for a placeholder dn). env_fog_controller (fogenable: colour, start, end, max density),
+  light_environment ("pitch" negative-down or the angles' pitch, yaw; _light colour and brightness/350; _ambient)
+  into "<glb>.env" with "sky=<glb>.sky.png". Water: its $fogcolor as its colour. Sandbox: MapLook.cs applies the
+  .env after a GMod map loads (Delirium/Sky panorama skybox from Resources, linear fog scaled with the map, far
+  clip to the fog's end within 300..3000 m, sun colour/intensity/direction, trilight ambient) and puts the
+  sandbox's own back for any other map. The lightmap texture is kept out of the pixel-art filter.
+- D:\gm_scrapland.gma is over the 400 MB staging limit: the user tests it on the phone (or extracts its .bsp with
+  gmad for me).

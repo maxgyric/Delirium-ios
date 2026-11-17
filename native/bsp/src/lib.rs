@@ -8,6 +8,7 @@
 pub mod bsp;
 pub mod content;
 pub mod gma;
+pub mod sky;
 pub mod studio;
 pub mod vpk;
 pub mod vtf;
@@ -276,10 +277,13 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
     let mut missing = vec![];
     // one decode a texture (materials share them)
     let mut done: std::collections::HashMap<String, Option<std::rc::Rc<Vec<u8>>>> = std::collections::HashMap::new();
+    let mut water: Vec<(usize, [f32; 3])> = vec![];
     for &key in map.batches.keys() {
         let k = key & !NOCOLLIDE;
         let Some(m) = map.materials.get(k) else { continue };
         let vmt = content.material(&m.name);
+        // water: its colour under the surface (it has no picture of its own)
+        if let Some(f) = vmt.as_ref().filter(|v| v.shader.contains("water")).and_then(|v| v.fog) { water.push((k, f)); }
         let base = vmt.as_ref().and_then(|v| v.base.clone()).unwrap_or_else(|| m.name.clone());
         let base = base.replace('\\', "/").to_ascii_lowercase();
         let pic = done.entry(base.clone()).or_insert_with(|| {
@@ -294,16 +298,29 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
             None => if key == k { missing.push(m.name.clone()) },
         }
     }
+    for (k, c) in water { if let Some(m) = map.materials.get_mut(k) { m.color = c; } }
     let glb = to_glb(&map, &tex);
     std::fs::write(glb_path, &glb).map_err(|e| format!("{glb_path}: {e}"))?;
+    // its sky, fog, sun: beside the .glb (".env": key=values; ".sky.png": the panorama)
+    let mut env = sky::environment(&map.entities);
+    let mut sky_name = String::new();
+    if let Some((w, h, rgba, name)) = sky::panorama(&content, &map.entities, 2048) {
+        let png_path = format!("{glb_path}.sky.png");
+        if std::fs::write(&png_path, content::png(w, h, &rgba)).is_ok() {
+            env.push_str(&format!("\nsky={png_path}"));
+            sky_name = name;
+        }
+    }
+    let _ = std::fs::write(format!("{glb_path}.env"), &env);
     let tris: usize = map.batches.values().map(|b| b.pos.len() / 3).sum();
     missing.sort();
     Ok(format!(
-        "{}v{} {} triangles, {} materials, {} textured ({} packs{}); {} models placed{}; {} faces of the 3D skybox and {} tool faces left out{}",
+        "{}v{} {} triangles, {} materials, {} textured ({} packs{}); {} models placed{}; {}{} faces of the 3D skybox and {} tool faces left out{}",
         if from.is_empty() { String::new() } else { format!("{from}: ") }, map.version, tris, map.batches.len(), tex.len(), content.packs(),
         if content.missing_archives > 0 { format!(", {} of their archives missing", content.missing_archives) } else { String::new() },
         placed,
         if unplaced.is_empty() { String::new() } else { format!(" ({} models not found, e.g. {})", unplaced.len(), unplaced.iter().take(2).cloned().collect::<Vec<_>>().join(", ")) },
+        if sky_name.is_empty() { String::new() } else { format!("sky {sky_name}; ") },
         map.skipped.0, map.skipped.1,
         if missing.is_empty() { String::new() } else { format!("; no texture for {} (e.g. {})", missing.len(), missing.iter().take(3).cloned().collect::<Vec<_>>().join(", ")) }
     ))
