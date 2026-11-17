@@ -427,8 +427,11 @@ impl Map {
                     poly.push(add(vertex(vi)?, origin));
                 }
                 if poly.len() < 3 { continue; }
-                let mut normal = p.v3(plane * 20)?;
-                if side != 0 { normal = mul(normal, -1.0); }
+                let normal = p.v3(plane * 20)?;
+                // (its plane already faces its way: planes come in pairs, each and its flip, and a face names its own;
+                // "side" only says which of the pair that is. Turning it round again had turned a third of the map's
+                // faces inside out: seen from behind, gone from the front)
+                let _ = side;
                 // in the 3D skybox: drawn round the map, as big as the sky camera makes it (not stood on)
                 let mut in_sky = None;
                 if let Some((lo, hi)) = sky_box {

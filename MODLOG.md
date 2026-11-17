@@ -552,9 +552,11 @@ files (default.xex, the three exported files, the archives) are picked by the la
   SkyCamera swaps RenderSettings fog in OnPreRender/OnPostRender and turns shadows off while it draws.
 - examples/finddbg.rs: material/texture lookup from a .gma's map pakfile (debugging).
 
-## GMod maps: solid from both sides (2026-11-17, 15:10)
-- User: walks through walls on most maps, and from the other side they're see-through. Source surfaces are
-  one-sided (vbsp removes a brush's faces toward the void / inside other brushes); PhysX queries and Unity's
-  CharacterController sweeps skip a triangle hit from behind. GMod maps' colliders now use a copy of each mesh
-  with every triangle twice (both windings): solid both ways (Models.TwoSided; freed with the map). The drawing
-  stays one-sided like GMod's (from behind a face there's nothing to see, in GMod too).
+## GMod maps: a third of the faces were inside out (2026-11-17, 15:20)
+- User: walls of a house missing from outside, there from inside; walks through them. Cause: dface_t.side is just
+  planenum & 1 (planes come in pairs, n and its flip n^1; a face's planenum is already its own facing plane).
+  The converter flipped the normal again when side == 1, so every face on an odd plane (~32% in bigcity_dusk:
+  9468 of 29583) was wound backwards: culled from the front, drawn from behind, and the CharacterController
+  passed through it from the front. Normal now taken from planes[planenum] as is. Verified by a Workbench render
+  with backface culling at bigcity_dusk's spawn: the missing building walls and curb sides are back.
+- The earlier "two-sided colliders" commit (wrong diagnosis) reverted.
