@@ -560,3 +560,18 @@ files (default.xex, the three exported files, the archives) are picked by the la
   passed through it from the front. Normal now taken from planes[planenum] as is. Verified by a Workbench render
   with backface culling at bigcity_dusk's spawn: the missing building walls and curb sides are back.
 - The earlier "two-sided colliders" commit (wrong diagnosis) reverted.
+
+## GMod Workshop player models (2026-11-17, 16:10)
+- native/bsp/src/player.rs: models(gma) lists an addon's player models from its Lua
+  (player_manager.AddValidModel("Name", "path")), else any .mdl with a pelvis and a head that isn't a weapon,
+  hands or a prop. convert("addon.gma#models/x.mdl") -> a skinned .glb: studio::Model (now with bone parents and
+  poseToBone at mstudiobone_t+96), bind pose = poseToBone inverted (orthonormalized), mesh = LOD 0, first model
+  of each body part, default skin; VVD's 3 weights/vertex -> JOINTS_0 (u16) / WEIGHTS_0; textures from the addon
+  then the packs ($basetexture, or $iris for eyes). Axes: rows (his left, up, forward) with left = L thigh - R
+  thigh levelled, so he faces glTF +Z whatever way the model was built (Prepare only turns him 180).
+- FFI: dgma_models (path|name lines), dmdl_convert (dbsp_error for the line). Example: examples/pm.rs.
+- Models.cs: an addon's maps AND player models are listed one entry each ("addon.gma#maps/x.bsp",
+  "addon.gma#models/y.mdl"), a single-map addon too, shown by their own names ("gm_city  (temp.gma)",
+  "Buddy  (player model, x.gma)"). Player models get Hero / Everyone else; cached as <addon>-<model>_*.mdl.glb.
+- Verified (Kick the Buddy addon): 6055 tris, 42 bones, 3 textures; Blender: faces +Z, textured, a raised arm
+  and a bent knee deform the mesh right.

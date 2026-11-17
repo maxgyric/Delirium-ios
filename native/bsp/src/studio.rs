@@ -42,6 +42,10 @@ pub struct Model {
     /// skin families: texture index for each skin reference
     pub skins: Vec<Vec<usize>>,
     pub bones: Vec<String>,
+    /// each bone's parent (-1: none)
+    pub parents: Vec<i32>,
+    /// each bone's poseToBone (3 rows of 4: the model's space to the bone's, in its bind pose)
+    pub pose_to_bone: Vec<[[f32; 4]; 3]>,
 }
 
 impl Model {
@@ -59,6 +63,13 @@ impl Model {
         // bones (names, for player models)
         let (nb, bi) = (g(156) as usize, g(160) as usize);
         let bones = (0..nb.min(256)).map(|b| { let o = bi + b * 216; text_at(&mdl, o + i32_at(&mdl, o).unwrap_or(0) as usize) }).collect();
+        let parents = (0..nb.min(256)).map(|b| i32_at(&mdl, bi + b * 216 + 4).unwrap_or(-1)).collect();
+        let pose_to_bone = (0..nb.min(256)).map(|b| {
+            let o = bi + b * 216 + 96;
+            let mut m = [[0f32; 4]; 3];
+            for r in 0..3 { for c in 0..4 { m[r][c] = f32_at(&mdl, o + (r * 4 + c) * 4).unwrap_or(if r == c { 1.0 } else { 0.0 }); } }
+            m
+        }).collect();
 
         // materials: each texture name tried in each material folder
         let (nt, ti) = (g(204) as usize, g(208) as usize);
@@ -157,7 +168,7 @@ impl Model {
                 }
             }
         }
-        Ok(Model { vertices, meshes, materials, skins, bones })
+        Ok(Model { vertices, meshes, materials, skins, bones, parents, pose_to_bone })
     }
 }
 

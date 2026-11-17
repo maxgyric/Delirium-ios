@@ -8,6 +8,7 @@
 pub mod bsp;
 pub mod content;
 pub mod gma;
+pub mod player;
 pub mod sky;
 pub mod studio;
 pub mod vpk;
@@ -381,6 +382,47 @@ pub unsafe extern "C" fn dbsp_convert(bsp: *const c_char, glb: *const c_char, ro
         Ok(Ok(s)) => { *ERR.lock().unwrap() = s; 0 }
         Ok(Err(e)) => { *ERR.lock().unwrap() = e; -1 }
         Err(_) => { *ERR.lock().unwrap() = "the map reader failed (a bug: tell Claude which map)".into(); -1 }
+    }
+}
+
+/// For C# (the files list): an addon's player models, "path|name" a line, into `out` (`cap` bytes, 0-terminated):
+/// how many, or -1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dgma_models(gma: *const c_char, out: *mut u8, cap: i32) -> i32 {
+    let p = if gma.is_null() { None } else { unsafe { CStr::from_ptr(gma) }.to_str().ok().map(str::to_owned) };
+    let Some(p) = p else { return -1 };
+    match std::panic::catch_unwind(|| gma::Gma::open(std::path::Path::new(&p)).map(|g| player::models(&g))) {
+        Ok(Ok(list)) => {
+            let text = list.iter().map(|(p, n)| format!("{p}|{}", n.replace(['|', '\n'], " "))).collect::<Vec<_>>().join("\n");
+            let b = text.as_bytes();
+            let n = b.len().min((cap.max(1) - 1) as usize);
+            if !out.is_null() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(b.as_ptr(), out, n);
+                    *out.add(n) = 0;
+                }
+            }
+            list.len() as i32
+        }
+        Ok(Err(e)) => { *ERR.lock().unwrap() = e; -1 }
+        Err(_) => -1,
+    }
+}
+
+/// For C# (Models.cs): a player model ("addon.gma#models/x.mdl") written to `glb` as a rigged .glb, its textures
+/// from the addon and the packs under `roots`. 0, or -1 (dbsp_error says why); dbsp_error has the line either way.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dmdl_convert(spec: *const c_char, glb: *const c_char, roots: *const c_char, max_side: i32) -> i32 {
+    let text = |p: *const c_char| if p.is_null() { None } else { unsafe { CStr::from_ptr(p) }.to_str().ok().map(str::to_owned) };
+    let (Some(s), Some(g)) = (text(spec), text(glb)) else {
+        *ERR.lock().unwrap() = "no path".into();
+        return -1;
+    };
+    let roots: Vec<std::path::PathBuf> = text(roots).unwrap_or_default().split('|').filter(|s| !s.is_empty()).map(std::path::PathBuf::from).collect();
+    match std::panic::catch_unwind(|| player::convert(&s, &g, &roots, max_side.clamp(16, 4096) as usize)) {
+        Ok(Ok(s)) => { *ERR.lock().unwrap() = s; 0 }
+        Ok(Err(e)) => { *ERR.lock().unwrap() = e; -1 }
+        Err(_) => { *ERR.lock().unwrap() = "the model reader failed (a bug: tell Claude which model)".into(); -1 }
     }
 }
 

@@ -78,6 +78,8 @@ public partial class Game
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dbsp_error(byte[] text, int cap);
 
     // a GMod map: a .bsp, or a Workshop addon (.gma) with one in it; one of an addon's several: "x.gma#maps/y.bsp"
+    // a Workshop addon's player model ("addon.gma#models/x.mdl")
+    static bool IsMdl(string path) => path.IndexOf(".gma#", StringComparison.OrdinalIgnoreCase) >= 0 && path.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase);
     static bool IsBsp(string path) => path.EndsWith(".bsp", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".gma", StringComparison.OrdinalIgnoreCase);
     static string FileOf(string path)
     {
@@ -92,27 +94,90 @@ public partial class Game
     }
 
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dgma_maps(byte[] gma, byte[] text, int cap);
+    [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dgma_models(byte[] gma, byte[] text, int cap);
+    [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dmdl_convert(byte[] spec, byte[] glb, byte[] roots, int maxSide);
     static readonly Dictionary<string, string[]> gmaMaps = new Dictionary<string, string[]>();
+    static readonly Dictionary<string, string> modelNames = new Dictionary<string, string>(); // "addon.gma#models/x.mdl" -> "Buddy"
 
-    // An addon's maps (asked once a version of the file): one entry a map when it has more than one
+    static string[] NativeList(Func<byte[], byte[], int, int> ask, string f)
+    {
+        var buf = new byte[65536];
+        int n = ask(System.Text.Encoding.UTF8.GetBytes(f + "\0"), buf, buf.Length);
+        if (n <= 0) return new string[0];
+        int end = Array.IndexOf(buf, (byte)0);
+        return System.Text.Encoding.UTF8.GetString(buf, 0, end < 0 ? buf.Length : end).Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    // An addon's maps and player models (asked once a version of the file): an entry each, "addon.gma#maps/x.bsp"
+    // and "addon.gma#models/y.mdl" (the map's own name shown, whatever the file's called)
     static IEnumerable<string> GmaEntries(string f)
     {
-        string[] maps;
+        string[] items;
         try
         {
             var fi = new FileInfo(f);
             string key = f + "|" + fi.Length + "|" + fi.LastWriteTimeUtc.Ticks;
-            if (!gmaMaps.TryGetValue(key, out maps))
+            if (!gmaMaps.TryGetValue(key, out items))
             {
-                var buf = new byte[16384];
-                int n = dgma_maps(System.Text.Encoding.UTF8.GetBytes(f + "\0"), buf, buf.Length);
-                maps = n > 0 ? System.Text.Encoding.UTF8.GetString(buf, 0, Array.IndexOf(buf, (byte)0)).Split('\n') : new string[0];
-                gmaMaps[key] = maps;
+                var list = new List<string>();
+                try { foreach (var m in NativeList(dgma_maps, f)) list.Add(f + "#" + m); }
+                catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException) { }
+                try
+                {
+                    foreach (var line in NativeList(dgma_models, f))
+                    {
+                        int bar = line.IndexOf('|');
+                        string path = f + "#" + (bar < 0 ? line : line.Substring(0, bar));
+                        modelNames[path] = bar < 0 ? Path.GetFileNameWithoutExtension(line) : line.Substring(bar + 1);
+                        list.Add(path);
+                    }
+                }
+                catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException) { }
+                items = list.ToArray();
+                gmaMaps[key] = items;
             }
         }
-        catch (Exception) { maps = new string[0]; }
-        if (maps.Length <= 1) { yield return f; yield break; }
-        foreach (var m in maps) yield return f + "#" + m;
+        catch (Exception) { items = new string[0]; }
+        if (items.Length == 0) { yield return f; yield break; }
+        foreach (var m in items) yield return m;
+    }
+
+    // A player model from an addon as a rigged .glb (cached like a map): its bytes, or null and why
+    static byte[] MdlToGlb(string path, out string note)
+    {
+        note = "";
+        var fi = new FileInfo(FileOf(path));
+        string cacheName = Path.GetFileNameWithoutExtension(FileOf(path)) + "-" + Path.GetFileNameWithoutExtension(path);
+        string glb = Path.Combine(Application.temporaryCachePath, cacheName + "_" + fi.Length + "_" + fi.LastWriteTimeUtc.Ticks + ".mdl.glb");
+        string info = glb + ".txt";
+        if (File.Exists(glb))
+        {
+            try { note = File.Exists(info) ? File.ReadAllText(info) : "(cached)"; } catch (Exception) { }
+            return File.ReadAllBytes(glb);
+        }
+        try
+        {
+            foreach (var old in Directory.GetFiles(Application.temporaryCachePath, cacheName + "_*.mdl.glb*")) File.Delete(old);
+        }
+        catch (Exception) { }
+        string roots = ModsDir() + "|" + Path.GetDirectoryName(FileOf(path)) + "|" + Application.persistentDataPath;
+        int r;
+        try
+        {
+            r = dmdl_convert(System.Text.Encoding.UTF8.GetBytes(path + "\0"), System.Text.Encoding.UTF8.GetBytes(glb + "\0"),
+                System.Text.Encoding.UTF8.GetBytes(roots + "\0"), 1024);
+        }
+        catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException)
+        {
+            note = "this build can't read GMod player models";
+            return null;
+        }
+        var buf = new byte[2048];
+        int n = dbsp_error(buf, buf.Length);
+        note = System.Text.Encoding.UTF8.GetString(buf, 0, Mathf.Max(0, n));
+        if (r < 0) return null;
+        try { File.WriteAllText(info, note); } catch (Exception) { }
+        return File.ReadAllBytes(glb);
     }
 
     // A Garry's Mod (Source) map as a .glb (the native library reads the .bsp and finds its textures: in the map, in
@@ -263,16 +328,24 @@ public partial class Game
     {
         try
         {
-            string name = MapOf(path) ?? Path.GetFileNameWithoutExtension(path);
+            bool mdl = IsMdl(path);
+            if (mdl && !modelNames.ContainsKey(path)) foreach (var _ in GmaEntries(FileOf(path))) { } // (its name)
+            string name = mdl ? (modelNames.TryGetValue(path, out var mn) ? mn : Path.GetFileNameWithoutExtension(path)) : MapOf(path) ?? Path.GetFileNameWithoutExtension(path);
             bool source = IsBsp(path);
             if (source && kind != 2)
             {
                 filesNote = name + ": a GMod map is a map, not a character.";
                 return false;
             }
+            if (mdl && kind == 2)
+            {
+                filesNote = name + ": a player model is a character, not a map.";
+                return false;
+            }
             string bspNote = "";
             if (kind == 2) Debug.Log("[Sandbox] map " + name + ": loading (memory " + Mem() + ")");
-            byte[] data = source ? BspToGlb(path, out bspNote) : File.ReadAllBytes(path);
+            byte[] data = source ? BspToGlb(path, out bspNote) : mdl ? MdlToGlb(path, out bspNote) : File.ReadAllBytes(path);
+            if (mdl && data != null) Debug.Log("[Sandbox] GMod player model " + name + ": " + bspNote);
             if (kind == 2) Debug.Log("[Sandbox] map " + name + ": " + (data == null ? "not converted" : (data.Length / 1048576) + " MB file") + " (memory " + Mem() + ")");
             if (data == null)
             {
@@ -652,7 +725,7 @@ public partial class Game
         foreach (string f in files)
         {
             long size = 0;
-            try { size = new FileInfo(f).Length; } catch (Exception) { }
+            try { size = new FileInfo(FileOf(f)).Length; } catch (Exception) { }
             GUILayout.Label(ShownName(f) + "  (" + (size / 1048576f).ToString("0.0") + " MB)", lab);
             GUILayout.BeginHorizontal();
             int pick = -1;
@@ -661,7 +734,7 @@ public partial class Game
                 if (GUILayout.Button("Hero", btn, GUILayout.Height(30f))) pick = 0;
                 if (GUILayout.Button("Everyone else", btn, GUILayout.Height(30f))) pick = 1;
             }
-            if (GUILayout.Button(IsBsp(f) ? "Map (GMod)" : "Map", btn, GUILayout.Height(30f))) pick = 2;
+            if (!IsMdl(f) && GUILayout.Button(IsBsp(f) ? "Map (GMod)" : "Map", btn, GUILayout.Height(30f))) pick = 2;
             // a second tap deletes it
             if (GUILayout.Button(removeAsk == f ? "Sure?" : "Remove", removeAsk == f ? btnOn : btn, GUILayout.Width(80f), GUILayout.Height(30f)))
             {
@@ -684,8 +757,8 @@ public partial class Game
     void RemoveFile(string f)
     {
         removeAsk = "";
-        if (PlayerPrefs.GetString(kPrefHeroModel, "") == f) DefaultModel(true);
-        if (PlayerPrefs.GetString(kPrefNpcModel, "") == f) DefaultModel(false);
+        if (FileOf(PlayerPrefs.GetString(kPrefHeroModel, "")) == FileOf(f)) DefaultModel(true);
+        if (FileOf(PlayerPrefs.GetString(kPrefNpcModel, "")) == FileOf(f)) DefaultModel(false);
         if (FileOf(mapPath) == FileOf(f)) DefaultMap();
         f = FileOf(f); // (an addon's map: the whole addon)
         try
@@ -703,7 +776,9 @@ public partial class Game
     // where it is under mods (maps/city.glb); one outside it says so
     string ShownName(string f)
     {
-        if (MapOf(f) != null) return ShownName(FileOf(f)) + " › " + MapOf(f);
+        // an addon's map or player model: its own name first (the file can be called anything: "temp.gma")
+        if (IsMdl(f)) return (modelNames.TryGetValue(f, out var mn) ? mn : Path.GetFileNameWithoutExtension(f)) + "  (player model, " + ShownName(FileOf(f)) + ")";
+        if (MapOf(f) != null) return MapOf(f) + "  (" + ShownName(FileOf(f)) + ")";
         string root = (filesDir ?? "").TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
         if (f.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return f.Substring(root.Length).Replace('\\', '/');
         return Path.GetFileName(f) + (Application.isMobilePlatform ? " (not in mods)" : "");

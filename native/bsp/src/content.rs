@@ -128,7 +128,7 @@ impl<'a> Content<'a> {
             let flag = |k: &str| get(k).map(|v| v.trim() == "1").unwrap_or(false);
             let tint = get("$color").or_else(|| get("$color2")).and_then(|c| color_of(&c)).unwrap_or([1.0; 3]);
             let fog = get("$fogcolor").and_then(|c| color_of(&c));
-            return Some(Vmt { nocull: flag("$nocull"), fog, tint, base: get("$basetexture"), translucent: flag("$translucent"), alphatest: flag("$alphatest"), shader });
+            return Some(Vmt { nocull: flag("$nocull"), fog, tint, base: get("$basetexture").or_else(|| get("$iris")), translucent: flag("$translucent"), alphatest: flag("$alphatest"), shader });
         }
         None
     }
