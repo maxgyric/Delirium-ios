@@ -601,3 +601,15 @@ files (default.xex, the three exported files, the archives) are picked by the la
   buttons only. Maps tab froze ~5 s: each map's thumbnail opened its addon (dgma_file; a Workshop .gma is
   LZMA-packed, unpacked whole on open). Now dgma_thumbs unpacks all of an addon's maps/thumb/*.png at once into
   icons/thumbs-<hash>/, on a Task; tiles show "no picture" until it's done, then pick it up.
+
+## Your GMod addons' folder; addons read in the background (2026-11-17, 18:10)
+- User: ModShelf downloads GMod mods (.gma) into its folder inside LiveContainer, many subfolders; moving them by
+  hand is a pain. "Pick GMod folder..." (Files tab, and the browser's header): a second security-scoped folder
+  bookmark (DeliriumPicker.mm: DP_PickGmodFolder / DP_RestoreGmodFolder / DP_ForgetGmodFolder, bookmarks kept per
+  key); RefreshFiles adds every .gma and .bsp under it (all subfolders). Shown as "GMod folder/...", never
+  removed (Remove says to do it there).
+- Addons.cs: .gma listing moved off the main thread: native dgma_list (one open: "M maps/x.bsp" and
+  "P models/y.mdl|Name" lines, the maps' thumbnails written on the way) on a worker thread, one addon at a time;
+  results cached in temporaryCachePath/addons.txt by path|size|date (next launch: instant). Not-yet-read addons
+  aren't listed; the list is rebuilt when all are done (or every 4 s while reading). dgma_maps/dgma_models no
+  longer called (kept in the library).

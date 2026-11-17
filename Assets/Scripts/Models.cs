@@ -96,51 +96,7 @@ public partial class Game
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dgma_maps(byte[] gma, byte[] text, int cap);
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dgma_models(byte[] gma, byte[] text, int cap);
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dmdl_convert(byte[] spec, byte[] glb, byte[] roots, int maxSide);
-    static readonly Dictionary<string, string[]> gmaMaps = new Dictionary<string, string[]>();
     static readonly Dictionary<string, string> modelNames = new Dictionary<string, string>(); // "addon.gma#models/x.mdl" -> "Buddy"
-
-    static string[] NativeList(Func<byte[], byte[], int, int> ask, string f)
-    {
-        var buf = new byte[65536];
-        int n = ask(System.Text.Encoding.UTF8.GetBytes(f + "\0"), buf, buf.Length);
-        if (n <= 0) return new string[0];
-        int end = Array.IndexOf(buf, (byte)0);
-        return System.Text.Encoding.UTF8.GetString(buf, 0, end < 0 ? buf.Length : end).Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
-    }
-
-    // An addon's maps and player models (asked once a version of the file): an entry each, "addon.gma#maps/x.bsp"
-    // and "addon.gma#models/y.mdl" (the map's own name shown, whatever the file's called)
-    static IEnumerable<string> GmaEntries(string f)
-    {
-        string[] items;
-        try
-        {
-            var fi = new FileInfo(f);
-            string key = f + "|" + fi.Length + "|" + fi.LastWriteTimeUtc.Ticks;
-            if (!gmaMaps.TryGetValue(key, out items))
-            {
-                var list = new List<string>();
-                try { foreach (var m in NativeList(dgma_maps, f)) list.Add(f + "#" + m); }
-                catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException) { }
-                try
-                {
-                    foreach (var line in NativeList(dgma_models, f))
-                    {
-                        int bar = line.IndexOf('|');
-                        string path = f + "#" + (bar < 0 ? line : line.Substring(0, bar));
-                        modelNames[path] = bar < 0 ? Path.GetFileNameWithoutExtension(line) : line.Substring(bar + 1);
-                        list.Add(path);
-                    }
-                }
-                catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException) { }
-                items = list.ToArray();
-                gmaMaps[key] = items;
-            }
-        }
-        catch (Exception) { items = new string[0]; }
-        if (items.Length == 0) { yield return f; yield break; }
-        foreach (var m in items) yield return m;
-    }
 
     // A player model from an addon as a rigged .glb (cached like a map): its bytes, or null and why
     static byte[] MdlToGlb(string path, out string note)
@@ -262,6 +218,12 @@ public partial class Game
                 found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.bsp"));
                 found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.gma"));
             }
+            // your Garry's Mod addons' folder (ModShelf's...), read where it is: its addons and maps, every subfolder
+            if (gmodDir != "" && Directory.Exists(gmodDir))
+            {
+                found.AddRange(Directory.GetFiles(gmodDir, "*.gma", SearchOption.AllDirectories));
+                found.AddRange(Directory.GetFiles(gmodDir, "*.bsp", SearchOption.AllDirectories));
+            }
             // an addon with several maps: each of them
             var listed = new List<string>();
             foreach (var f in found)
@@ -269,7 +231,10 @@ public partial class Game
                 if (f.EndsWith(".gma", StringComparison.OrdinalIgnoreCase)) listed.AddRange(GmaEntries(f));
                 else listed.Add(f);
             }
-            files = listed.ToArray();
+            var unique = new List<string>();
+            var had = new HashSet<string>();
+            foreach (var f in listed) if (had.Add(f)) unique.Add(f);
+            files = unique.ToArray();
             Array.Sort(files, StringComparer.OrdinalIgnoreCase);
             if (!Directory.Exists(filesDir)) filesNote = "No such folder.";
         }
@@ -675,6 +640,7 @@ public partial class Game
     void FilesTab()
     {
         if (GUILayout.Button("Models and maps (pictures)...", btnOn, GUILayout.Height(40f))) OpenBrowser();
+        GmodFolderUi();
         Head("Your files");
         Info("Characters: a rigged human as .glb or .vrm: Mixamo, VRM / Unity humanoid, Unreal, Source, Biped, GTA V, Rigify skeletons " +
              "(a .fbx: in Blender File > Import > FBX, then File > Export > glTF 2.0, format glTF Binary). " +
@@ -759,6 +725,7 @@ public partial class Game
     void RemoveFile(string f)
     {
         removeAsk = "";
+        if (InGmodDir(f)) { filesNote = "That one's in your GMod folder: remove it there (ModShelf...)."; return; }
         if (FileOf(PlayerPrefs.GetString(kPrefHeroModel, "")) == FileOf(f)) DefaultModel(true);
         if (FileOf(PlayerPrefs.GetString(kPrefNpcModel, "")) == FileOf(f)) DefaultModel(false);
         if (FileOf(mapPath) == FileOf(f)) DefaultMap();
@@ -781,6 +748,7 @@ public partial class Game
         // an addon's map or player model: its own name first (the file can be called anything: "temp.gma")
         if (IsMdl(f)) return (modelNames.TryGetValue(f, out var mn) ? mn : Path.GetFileNameWithoutExtension(f)) + "  (player model, " + ShownName(FileOf(f)) + ")";
         if (MapOf(f) != null) return MapOf(f) + "  (" + ShownName(FileOf(f)) + ")";
+        if (InGmodDir(f)) return "GMod folder/" + f.Substring(gmodDir.TrimEnd('/', '\\').Length + 1).Replace('\\', '/');
         string root = (filesDir ?? "").TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
         if (f.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return f.Substring(root.Length).Replace('\\', '/');
         return Path.GetFileName(f) + (Application.isMobilePlatform ? " (not in mods)" : "");

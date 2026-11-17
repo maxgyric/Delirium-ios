@@ -142,6 +142,8 @@ public partial class Game
                 string tdir = ThumbDir(g);
                 string got = Path.Combine(tdir, map + ".png");
                 if (File.Exists(got)) { File.Copy(got, dest, true); return; }
+                // (read with its list: it has none of its own)
+                try { if (addonLists != null && addonLists.ContainsKey(AddonKey(g))) return; } catch (Exception) { }
                 if (!thumbJobs.TryGetValue(g, out var job))
                 {
                     byte[] gb = System.Text.Encoding.UTF8.GetBytes(g + "\0"), db = System.Text.Encoding.UTF8.GetBytes(tdir + "\0");
@@ -369,7 +371,8 @@ public partial class Game
         if (GUI.Button(new Rect(right - 44f, y, 44f, 36f), "X", btn)) { OpenBrowser(); return; }
         if (GUI.Button(new Rect(right - 140f, y, 90f, 36f), "Refresh", btn)) { RefreshFiles(); icons.Clear(); iconTried.Clear(); fileKinds.Clear(); }
         if (CanPick && GUI.Button(new Rect(right - 266f, y, 120f, 36f), "Add files...", btn)) SelectModels();
-        float sx = x + 280f, sw = Mathf.Max(80f, right - 280f - sx);
+        if (CanPick && GUI.Button(new Rect(right - 412f, y, 140f, 36f), gmodDir == "" ? "GMod folder..." : "GMod folder: set", btn)) DP_PickGmodFolder(gameObject.name, nameof(OnPickedGmodFolder));
+        float sx = x + 280f, sw = Mathf.Max(80f, right - (CanPick ? 412f : 140f) - 6f - sx);
         GUI.Label(new Rect(sx, y + 8f, 60f, 24f), "Search", dim);
         browserSearch = GUI.TextField(new Rect(sx + 58f, y + 4f, Mathf.Max(60f, sw - 64f), 30f), browserSearch, txt);
         y += 46f;
@@ -379,6 +382,13 @@ public partial class Game
         var grid = new Rect(x, y, area.width - detailW - 36f, area.yMax - y - 10f);
         var detail = new Rect(grid.xMax + 12f, y, detailW, grid.height);
         var list = Shown();
+        int reading = AddonsReading();
+        if (reading > 0)
+        {
+            GUI.Label(new Rect(grid.x, grid.y, grid.width, 22f), "Reading addons: " + reading + " left (each once; they show up as they're done)", dim);
+            grid.y += 24f;
+            grid.height -= 24f;
+        }
         int per = Mathf.Max(1, Mathf.FloorToInt((grid.width - 14f) / (kTileW + 8f)));
         float contentH = Mathf.Ceil(list.Count / (float)per) * (kTileH + 8f) + 8f;
         // a finger dragged over the grid scrolls it
@@ -445,7 +455,8 @@ public partial class Game
             if (GUI.Button(new Rect(x, y, wd, 44f), "Load map", btn)) Use(f, 2);
             y += 50f;
         }
-        if (GUI.Button(new Rect(x, y, wd, 40f), browserAsk == f ? "Sure? Deletes " + Path.GetFileName(FileOf(f)) : "Remove", browserAsk == f ? btnOn : btn))
+        if (InGmodDir(f)) GUI.Label(new Rect(x, y, wd, 40f), "From your GMod folder (remove it there).", dim);
+        else if (GUI.Button(new Rect(x, y, wd, 40f), browserAsk == f ? "Sure? Deletes " + Path.GetFileName(FileOf(f)) : "Remove", browserAsk == f ? btnOn : btn))
         {
             if (browserAsk == f) { RemoveFile(f); browserSel = ""; browserAsk = ""; GUIUtility.ExitGUI(); }
             else browserAsk = f;

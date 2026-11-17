@@ -469,6 +469,50 @@ pub unsafe extern "C" fn dgma_thumbs(gma: *const c_char, out_dir: *const c_char)
     }
 }
 
+/// For C# (the files list, on a thread of its own): an addon's maps ("M maps/x.bsp") and player models
+/// ("P models/y.mdl|Name") a line each into `out`, its maps' own pictures written to `thumb_dir`/<map>.png on the
+/// way: the addon opened once (a Workshop download unpacks: seconds). How many lines, or -1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dgma_list(gma: *const c_char, thumb_dir: *const c_char, out: *mut u8, cap: i32) -> i32 {
+    let text = |p: *const c_char| if p.is_null() { None } else { unsafe { CStr::from_ptr(p) }.to_str().ok().map(str::to_owned) };
+    let Some(g) = text(gma) else { return -1 };
+    let dir = text(thumb_dir).unwrap_or_default();
+    match std::panic::catch_unwind(|| -> Result<Vec<String>, String> {
+        let a = gma::Gma::open(std::path::Path::new(&g))?;
+        let mut lines = vec![];
+        if !dir.is_empty() { let _ = std::fs::create_dir_all(&dir); }
+        for m in a.maps() {
+            let name = m.trim_start_matches("maps/").trim_end_matches(".bsp").to_string();
+            if !dir.is_empty() {
+                for inside in [format!("maps/thumb/{name}.png"), format!("maps/{name}.png"), format!("maps/thumb/{name}.jpg")] {
+                    if let Some(b) = a.read(&inside) {
+                        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.png")), &b);
+                        break;
+                    }
+                }
+            }
+            lines.push(format!("M {m}"));
+        }
+        for (p, n) in player::models(&a) { lines.push(format!("P {p}|{}", n.replace(['|', '\n'], " "))); }
+        Ok(lines)
+    }) {
+        Ok(Ok(lines)) => {
+            let text = lines.join("\n");
+            let b = text.as_bytes();
+            let n = b.len().min((cap.max(1) - 1) as usize);
+            if !out.is_null() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(b.as_ptr(), out, n);
+                    *out.add(n) = 0;
+                }
+            }
+            lines.len() as i32
+        }
+        Ok(Err(e)) => { *ERR.lock().unwrap() = e; -1 }
+        Err(_) => -1,
+    }
+}
+
 /// The last line (`dbsp_convert`'s) into `out` (`cap` bytes, 0-terminated); its length.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dbsp_error(out: *mut u8, cap: i32) -> i32 {

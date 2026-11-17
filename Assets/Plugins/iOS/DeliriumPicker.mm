@@ -1,6 +1,8 @@
 // The Files app's own picker for Delirium Sandbox (iOS):
 //  - DP_PickFolder: a folder with your game's files, anywhere the Files app reaches (kept open across launches by a
 //    bookmark: DP_RestoreFolder);
+//  - DP_PickGmodFolder: your Garry's Mod addons' folder (ModShelf's, in LiveContainer...), read where it is, also
+//    kept open across launches (DP_RestoreGmodFolder);
 //  - DP_PickModels: .glb / .vrm files (and GMod maps, .bsp / .gma), MOVED into the app's Documents/mods (copied then the original removed when a
 //    plain move isn't allowed there);
 //  - DP_PickPackage: files (a VRChat .unitypackage; a .blend / .zip, with a textures .zip) copied into the app's tmp
@@ -12,11 +14,13 @@ extern UIViewController* UnityGetGLViewController();
 extern "C" void UnitySendMessage(const char* obj, const char* method, const char* msg);
 
 static NSString* const kBookmark = @"delirium.folderBookmark";
-static NSURL* gFolder = nil; // the picked folder, kept accessible
+static NSString* const kGmodBookmark = @"delirium.gmodFolderBookmark";
+static NSMutableDictionary<NSString*, NSURL*>* gKept = nil; // the picked folders (by bookmark key), kept accessible
 
 @interface DPDelegate : NSObject <UIDocumentPickerDelegate>
 @property(nonatomic) BOOL folder;
 @property(nonatomic) BOOL package;
+@property(nonatomic, copy) NSString* key; // a folder's bookmark
 @property(nonatomic, copy) NSString* obj;
 @property(nonatomic, copy) NSString* method;
 @end
@@ -24,11 +28,13 @@ static DPDelegate* gDelegate = nil;
 
 static void DPSend(DPDelegate* d, NSString* msg) { UnitySendMessage(d.obj.UTF8String, d.method.UTF8String, msg.UTF8String); }
 
-static void DPKeep(NSURL* u)
+static void DPKeep(NSString* key, NSURL* u)
 {
-    if (gFolder) [gFolder stopAccessingSecurityScopedResource];
+    if (!gKept) gKept = [NSMutableDictionary dictionary];
+    NSURL* was = gKept[key];
+    if (was) [was stopAccessingSecurityScopedResource];
     [u startAccessingSecurityScopedResource];
-    gFolder = u;
+    gKept[key] = u;
 }
 
 @implementation DPDelegate
@@ -45,10 +51,10 @@ static void DPKeep(NSURL* u)
     {
         NSURL* u = urls.firstObject;
         if (!u) return DPSend(self, @"");
-        DPKeep(u);
+        DPKeep(self.key, u);
         NSError* e = nil;
         NSData* b = [u bookmarkDataWithOptions:0 includingResourceValuesForKeys:nil relativeToURL:nil error:&e];
-        if (b) [[NSUserDefaults standardUserDefaults] setObject:b forKey:kBookmark];
+        if (b) [[NSUserDefaults standardUserDefaults] setObject:b forKey:self.key];
         return DPSend(self, u.path);
     }
     NSString* docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
@@ -102,10 +108,11 @@ static void DPKeep(NSURL* u)
 }
 @end
 
-static void DPPresent(BOOL folder, BOOL package, const char* obj, const char* method)
+static void DPPresent(BOOL folder, BOOL package, const char* obj, const char* method, NSString* key = kBookmark)
 {
     if (!gDelegate) gDelegate = [DPDelegate new];
     gDelegate.folder = folder;
+    gDelegate.key = key;
     gDelegate.package = package;
     gDelegate.obj = [NSString stringWithUTF8String:obj];
     gDelegate.method = [NSString stringWithUTF8String:method];
@@ -126,22 +133,32 @@ extern "C"
     void DP_PickFolder(const char* obj, const char* method) { DPPresent(YES, NO, obj, method); }
     void DP_PickModels(const char* obj, const char* method) { DPPresent(NO, NO, obj, method); }
     void DP_PickPackage(const char* obj, const char* method) { DPPresent(NO, YES, obj, method); }
+    void DP_PickGmodFolder(const char* obj, const char* method) { DPPresent(YES, NO, obj, method, kGmodBookmark); }
 
-    // the folder picked before (another launch), opened again; "" if none
-    const char* DP_RestoreFolder()
+    static const char* DPRestore(NSString* key)
     {
-        NSData* b = [[NSUserDefaults standardUserDefaults] objectForKey:kBookmark];
+        NSData* b = [[NSUserDefaults standardUserDefaults] objectForKey:key];
         if (!b) return strdup("");
         BOOL stale = NO;
         NSError* e = nil;
         NSURL* u = [NSURL URLByResolvingBookmarkData:b options:0 relativeToURL:nil bookmarkDataIsStale:&stale error:&e];
         if (!u) return strdup("");
-        DPKeep(u);
+        DPKeep(key, u);
         if (stale)
         {
             NSData* nb = [u bookmarkDataWithOptions:0 includingResourceValuesForKeys:nil relativeToURL:nil error:nil];
-            if (nb) [[NSUserDefaults standardUserDefaults] setObject:nb forKey:kBookmark];
+            if (nb) [[NSUserDefaults standardUserDefaults] setObject:nb forKey:key];
         }
         return strdup(u.path.UTF8String);
+    }
+
+    // the folder picked before (another launch), opened again; "" if none
+    const char* DP_RestoreFolder() { return DPRestore(kBookmark); }
+    const char* DP_RestoreGmodFolder() { return DPRestore(kGmodBookmark); }
+    void DP_ForgetGmodFolder()
+    {
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:kGmodBookmark];
+        NSURL* was = gKept[kGmodBookmark];
+        if (was) { [was stopAccessingSecurityScopedResource]; [gKept removeObjectForKey:kGmodBookmark]; }
     }
 }

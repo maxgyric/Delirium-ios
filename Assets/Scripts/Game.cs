@@ -39,6 +39,7 @@ public partial class Game : MonoBehaviour
         gameExe = PlayerPrefs.GetString(kPrefExe, DefaultExe());
         dataDir = PlayerPrefs.GetString(kPrefData, DefaultData());
         PathsAtStart();
+        GmodFolderAtStart();
     }
 
     // The game's own log beside the project (in a build: in the app's folder): what Delirium and the sandbox said,
@@ -558,6 +559,7 @@ public partial class Game : MonoBehaviour
     {
         if (!running || nm == null) return;
         SettingsUpdate();
+        AddonsUpdate();
         BrowserUpdate();
         float dt = Time.deltaTime;
         foreach (var m in men) Mind(m, dt);
