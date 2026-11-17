@@ -46,6 +46,70 @@ pub struct Batch {
     pub pos: Vec<V3>,
     pub nrm: Vec<V3>,
     pub uv: Vec<[f32; 2]>,
+    /// where in the lightmap (Map::lightmap's pixels)
+    pub luv: Vec<[f32; 2]>,
+}
+
+/// The map's baked light: every face's lightmap packed into one picture (RGBA, top row first; half its brightness,
+/// the shader doubles it), and where a face without one looks (a white texel).
+pub struct Lightmap {
+    pub w: usize,
+    pub h: usize,
+    pub rgba: Vec<u8>,
+}
+
+// Shelves of faces' lightmaps, left to right, a row at a time (1 texel apart)
+struct Packer {
+    w: usize,
+    h: usize,
+    x: usize,
+    y: usize,
+    row: usize,
+    px: Vec<u8>,
+}
+
+impl Packer {
+    fn new(w: usize) -> Packer {
+        // a white block first: where faces without lightmaps look (half brightness: the shader doubles it)
+        let mut p = Packer { w, h: 0, x: 0, y: 0, row: 0, px: vec![] };
+        p.place(2, 2).map(|(x, y)| p.fill(x, y, 2, 2, |_, _| [128, 128, 128]));
+        p
+    }
+    fn place(&mut self, w: usize, h: usize) -> Option<(usize, usize)> {
+        if w + 2 > self.w { return None; }
+        if self.x + w + 2 > self.w {
+            self.y += self.row;
+            self.x = 0;
+            self.row = 0;
+        }
+        if self.y + h + 2 > 4096 { return None; }
+        let at = (self.x + 1, self.y + 1);
+        self.x += w + 2;
+        self.row = self.row.max(h + 2);
+        let need = (self.y + self.row) * self.w * 4;
+        if self.px.len() < need { self.px.resize(need, 255); }
+        self.h = self.h.max(self.y + self.row);
+        Some(at)
+    }
+    // a face's luxels in, its border repeated outward a texel (no dark seams when filtered)
+    fn fill(&mut self, x0: usize, y0: usize, w: usize, h: usize, f: impl Fn(usize, usize) -> [u8; 3]) {
+        for y in 0..h + 2 {
+            for x in 0..w + 2 {
+                let (sx, sy) = (x.saturating_sub(1).min(w - 1), y.saturating_sub(1).min(h - 1));
+                let c = f(sx, sy);
+                let (px, py) = (x0 + x - 1, y0 + y - 1);
+                let o = (py * self.w + px) * 4;
+                if o + 4 <= self.px.len() { self.px[o..o + 4].copy_from_slice(&[c[0], c[1], c[2], 255]); }
+            }
+        }
+    }
+}
+
+// Source's luxel (RGB times 2^exponent, linear) to the lightmap's byte: gamma, half (overbright x2)
+fn luxel(r: u8, g: u8, b: u8, e: i8) -> [u8; 3] {
+    let k = 2f32.powi(e as i32) / 255.0;
+    let f = |c: u8| ((c as f32 * k).max(0.0).powf(1.0 / 2.2) * 0.5 * 255.0).round().clamp(0.0, 255.0) as u8;
+    [f(r), f(g), f(b)]
 }
 
 pub struct Material {
@@ -56,6 +120,7 @@ pub struct Material {
 }
 
 pub struct Map {
+    pub lightmap: Option<Lightmap>,
     pub version: i32,
     pub materials: Vec<Material>,
     pub batches: HashMap<usize, Batch>,
@@ -150,6 +215,8 @@ impl Map {
         let nodes = lump(5)?;
         let texinfo = lump(6)?;
         let faces = lump(7)?;
+        // the baked light (LDR, or HDR if that's all there is): 4 bytes a luxel
+        let light = { let l = lump(8)?; if l.is_empty() { lump(53)? } else { l } };
         let leaves = lump(10)?;
         let edges = lump(12)?;
         let surfedges = lump(13)?;
@@ -213,6 +280,8 @@ impl Map {
         }
 
         let mut batches: HashMap<usize, Batch> = HashMap::new();
+        let mut pack = Packer::new(2048);
+        let white = [1.0f32, 1.0];
         let mut skipped = (0, 0);
         let vertex = |i: usize| vx.v3(i * 12);
         for (m, origin) in draw {
@@ -252,9 +321,36 @@ impl Map {
                 }
                 let (s, tv) = (ti.v3(t)?, ti.v3(t + 16)?);
                 let (so, to) = (ti.f32(t + 12)?, ti.f32(t + 28)?);
-                let uv = |v: V3| [dot(s, sub(v, origin)) + so, dot(tv, sub(v, origin)) + to];
+                // its lightmap into the picture (style 0's: the first of a bumped face's four)
+                let styles0 = fc.0.get(o + 16).copied().unwrap_or(255);
+                let lofs = fc.i32(o + 20)?;
+                let (lmin, lsize) = ([fc.i32(o + 28)? as f32, fc.i32(o + 32)? as f32], [fc.i32(o + 36)? as usize + 1, fc.i32(o + 40)? as usize + 1]);
+                let mut rect = None;
+                if lofs >= 0 && styles0 != 255 && lsize[0] <= 1024 && lsize[1] <= 1024 && (lofs as usize) + lsize[0] * lsize[1] * 4 <= light.len() {
+                    if let Some((x, y)) = pack.place(lsize[0], lsize[1]) {
+                        let l = &light[lofs as usize..];
+                        pack.fill(x, y, lsize[0], lsize[1], |lx, ly| {
+                            let q = (ly * lsize[0] + lx) * 4;
+                            luxel(l[q], l[q + 1], l[q + 2], l[q + 3] as i8)
+                        });
+                        rect = Some((x as f32, y as f32));
+                    }
+                }
+                let (ls, lt) = (ti.v3(t + 32)?, ti.v3(t + 48)?);
+                let (lso, lto) = (ti.f32(t + 44)?, ti.f32(t + 60)?);
+                let uv = |v: V3| {
+                    let m = sub(v, origin);
+                    let l = match rect {
+                        Some((x, y)) => [
+                            x + (dot(ls, m) + lso - lmin[0] + 0.5).clamp(0.5, lsize[0] as f32 - 0.5),
+                            y + (dot(lt, m) + lto - lmin[1] + 0.5).clamp(0.5, lsize[1] as f32 - 0.5),
+                        ],
+                        None => white,
+                    };
+                    [dot(s, m) + so, dot(tv, m) + to, l[0], l[1]]
+                };
                 let b = batches.entry(mat).or_default();
-                let mut tri = |a: V3, bb: V3, c: V3, ua: [f32; 2], ub: [f32; 2], uc: [f32; 2], fallback: V3| {
+                let mut tri = |a: V3, bb: V3, c: V3, ua: [f32; 4], ub: [f32; 4], uc: [f32; 4], fallback: V3| {
                     // front faces counter-clockwise about the face's normal (glTF's way)
                     let mut n = cross(sub(bb, a), sub(c, a));
                     let len = dot(n, n).sqrt();
@@ -263,7 +359,8 @@ impl Map {
                     let (bb, c, ub, uc, n) = if dot(n, fallback) < 0.0 { (c, bb, uc, ub, mul(n, -1.0)) } else { (bb, c, ub, uc, n) };
                     b.pos.extend([a, bb, c]);
                     b.nrm.extend([n, n, n]);
-                    b.uv.extend([ua, ub, uc]);
+                    b.uv.extend([[ua[0], ua[1]], [ub[0], ub[1]], [uc[0], uc[1]]]);
+                    b.luv.extend([[ua[2], ua[3]], [ub[2], ub[3]], [uc[2], uc[3]]]);
                 };
                 if disp >= 0 && poly.len() == 4 {
                     // a displacement: a (2^power + 1)^2 grid over the face, each point moved by its own offset
@@ -305,7 +402,8 @@ impl Map {
             }
         }
         let pak = (lumps[40].ofs, lumps[40].len); // (a zip: its entries say how they're packed)
-        Ok(Map { version, materials, batches, entities, skipped, pak })
+        let lightmap = (pack.h > 2 && !light.is_empty()).then(|| Lightmap { w: pack.w, h: pack.h, rgba: std::mem::take(&mut pack.px) });
+        Ok(Map { lightmap, version, materials, batches, entities, skipped, pak })
     }
 
     /// Where a player starts (its origin, yaw in degrees), if the map says

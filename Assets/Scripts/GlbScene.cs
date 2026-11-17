@@ -117,7 +117,7 @@ public static class GlbScene
                 if (Json.Int(prims[p], "mode", 4) != 4) continue; // triangles only
                 object a = Json.Get(prims[p], "attributes");
                 if (Json.Int(a, "POSITION") < 0) continue;
-                string key = Json.Int(a, "POSITION") + "/" + Json.Int(a, "NORMAL") + "/" + Json.Int(a, "TEXCOORD_0") + "/" + Json.Int(a, "COLOR_0") + "/" +
+                string key = Json.Int(a, "POSITION") + "/" + Json.Int(a, "NORMAL") + "/" + Json.Int(a, "TEXCOORD_0") + "/" + Json.Int(a, "TEXCOORD_1") + "/" + Json.Int(a, "COLOR_0") + "/" +
                              Json.Int(a, "JOINTS_0") + "/" + Json.Int(a, "WEIGHTS_0");
                 if (!groupOf.TryGetValue(key, out var g)) { groupOf[key] = g = new List<int>(); groups.Add(g); }
                 g.Add(p);
@@ -150,6 +150,14 @@ public static class GlbScene
                     var us = new Vector2[n];
                     for (int v = 0; v < n; v++) us[v] = new Vector2(uv[v * 2], 1f - uv[v * 2 + 1]);
                     m.uv = us;
+                }
+                // a second set: a GMod map's baked light (where each face is in its lightmap)
+                float[] uv1 = glb.Floats(Json.Int(attrs, "TEXCOORD_1"), out int uc1);
+                if (uc1 == 2 && uv1.Length == n * 2)
+                {
+                    var us = new Vector2[n];
+                    for (int v = 0; v < n; v++) us[v] = new Vector2(uv1[v * 2], 1f - uv1[v * 2 + 1]);
+                    m.uv2 = us;
                 }
                 // the vertices' own colours (a map's shading baked into it); white where the file has none
                 float[] col = glb.Floats(Json.Int(attrs, "COLOR_0"), out int cc);
@@ -357,6 +365,19 @@ public static class GlbScene
         int tex = Json.Int(Json.Get(pbr, "baseColorTexture"), "index");
         var main = Picture(glb, tex, textures, made);
         if (main != null) mat.mainTexture = main;
+        // a GMod map's baked light
+        int lightmap = Json.Int(Json.Get(src, "extras"), "lightmap");
+        if (lightmap >= 0 && mat.HasProperty("_LightMap"))
+        {
+            var lm = Picture(glb, lightmap, textures, made);
+            if (lm != null)
+            {
+                lm.filterMode = FilterMode.Bilinear;
+                lm.wrapMode = TextureWrapMode.Clamp;
+                mat.SetTexture("_LightMap", lm);
+                mat.SetFloat("_LightMapOn", 1f);
+            }
+        }
         // what glows (an imported VRChat avatar's emission)
         float[] em = Json.Nums(src, "emissiveFactor");
         if (em != null && em.Length >= 3 && (em[0] > 0f || em[1] > 0f || em[2] > 0f) && mat.HasProperty("_EmissionColor"))

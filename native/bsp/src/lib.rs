@@ -27,6 +27,7 @@ fn gln(v: V3) -> V3 { [v[0], v[2], -v[1]] }
 pub struct Tex {
     pub png: std::rc::Rc<Vec<u8>>, // shared by the materials with the same picture (a map's cubemap copies)
     pub mode: u8,
+    pub tint: [f32; 3], // the material's $color
 }
 
 pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8> {
@@ -40,6 +41,18 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
     let mut images = vec![];
     let mut textures = vec![];
     let mut seen: Vec<(*const Vec<u8>, usize)> = vec![]; // a picture once, its texture's number
+    // the baked light: one picture, every material's "lightmap" (extras) and second texture coordinates
+    let mut lm_tex = None;
+    if let Some(l) = &map.lightmap {
+        let png = content::png(l.w, l.h, &l.rgba);
+        while bin.len() % 4 != 0 { bin.push(0); }
+        let at = bin.len();
+        bin.extend_from_slice(&png);
+        views.push(format!(r#"{{"buffer":0,"byteOffset":{at},"byteLength":{}}}"#, png.len()));
+        images.push(format!(r#"{{"bufferView":{},"mimeType":"image/png","name":"lightmap"}}"#, views.len() - 1));
+        textures.push(format!(r#"{{"source":{}}}"#, images.len() - 1));
+        lm_tex = Some((textures.len() - 1, l.w as f32, l.h as f32));
+    }
     let mut keys: Vec<&usize> = map.batches.keys().collect();
     keys.sort();
     let push = |bytes: &[u8], target: u32, bin: &mut Vec<u8>, views: &mut Vec<String>| -> usize {
@@ -63,12 +76,17 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
         let mut pbytes = Vec::with_capacity(n * 12);
         let mut nbytes = Vec::with_capacity(n * 12);
         let mut ubytes = Vec::with_capacity(n * 8);
+        let mut lbytes = Vec::with_capacity(n * 8);
         for i in 0..n {
             let p = gl(b.pos[i]);
             for a in 0..3 { lo[a] = lo[a].min(p[a]); hi[a] = hi[a].max(p[a]); }
             for v in p { pbytes.extend_from_slice(&v.to_le_bytes()); }
             for v in gln(b.nrm[i]) { nbytes.extend_from_slice(&v.to_le_bytes()); }
             for v in [b.uv[i][0] / w, b.uv[i][1] / h] { ubytes.extend_from_slice(&v.to_le_bytes()); }
+            if let Some((_, lw, lh)) = lm_tex {
+                let l = b.luv.get(i).copied().unwrap_or([1.0, 1.0]);
+                for v in [l[0] / lw, l[1] / lh] { lbytes.extend_from_slice(&v.to_le_bytes()); }
+            }
         }
         let mut ibytes = Vec::with_capacity(n * 4);
         for i in 0..n as u32 { ibytes.extend_from_slice(&i.to_le_bytes()); }
@@ -81,6 +99,12 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
         accessors.push(format!(r#"{{"bufferView":{vn},"componentType":5126,"count":{n},"type":"VEC3"}}"#));
         accessors.push(format!(r#"{{"bufferView":{vu},"componentType":5126,"count":{n},"type":"VEC2"}}"#));
         accessors.push(format!(r#"{{"bufferView":{vi},"componentType":5125,"count":{n},"type":"SCALAR"}}"#));
+        let luv_acc = if lm_tex.is_some() {
+            let vl = push(&lbytes, 34962, &mut bin, &mut views);
+            accessors.push(format!(r#"{{"bufferView":{vl},"componentType":5126,"count":{n},"type":"VEC2"}}"#));
+            format!(r#","TEXCOORD_1":{}"#, accessors.len() - 1)
+        } else { String::new() };
+        let lm_extra = match lm_tex { Some((t, _, _)) => format!(r#","extras":{{"lightmap":{t}}}"#), None => String::new() };
         let c = m.map(|m| m.color).unwrap_or([0.5; 3]);
         let mi = materials.len();
         if let Some(t) = tex.get(&k) {
@@ -100,19 +124,19 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
             let alpha = if water && t.mode == 0 { 0.6 } else { 1.0 };
             let mode = match (t.mode, alpha < 1.0) { (2, _) | (_, true) => r#","alphaMode":"BLEND""#, (1, _) => r#","alphaMode":"MASK","alphaCutoff":0.5"#, _ => "" };
             materials.push(format!(
-                r#"{{"name":{},"pbrMetallicRoughness":{{"baseColorTexture":{{"index":{ti}}},"baseColorFactor":[1,1,1,{alpha}],"metallicFactor":0,"roughnessFactor":0.9}}{mode}}}"#,
-                json(&name)
+                r#"{{"name":{},"pbrMetallicRoughness":{{"baseColorTexture":{{"index":{ti}}},"baseColorFactor":[{},{},{},{alpha}],"metallicFactor":0,"roughnessFactor":0.9}}{mode}{lm_extra}}}"#,
+                json(&name), t.tint[0], t.tint[1], t.tint[2]
             ));
         } else {
             let alpha = if water { 0.6 } else if glass { 0.35 } else { 1.0 };
             let c = if water { [c[0] * 0.6, c[1] * 0.8, c[2].max(0.3)] } else { c };
             materials.push(format!(
-                r#"{{"name":{},"pbrMetallicRoughness":{{"baseColorFactor":[{},{},{},{alpha}],"metallicFactor":0,"roughnessFactor":0.9}}{}}}"#,
+                r#"{{"name":{},"pbrMetallicRoughness":{{"baseColorFactor":[{},{},{},{alpha}],"metallicFactor":0,"roughnessFactor":0.9}}{}{lm_extra}}}"#,
                 json(&name), c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0), if alpha < 1.0 { r#","alphaMode":"BLEND""# } else { "" }
             ));
         }
         let mesh_name = if water { format!("{name} [nocollide]") } else { name.clone() };
-        meshes.push(format!(r#"{{"name":{},"primitives":[{{"attributes":{{"POSITION":{a0},"NORMAL":{},"TEXCOORD_0":{}}},"indices":{},"material":{mi}}}]}}"#, json(&mesh_name), a0 + 1, a0 + 2, a0 + 3));
+        meshes.push(format!(r#"{{"name":{},"primitives":[{{"attributes":{{"POSITION":{a0},"NORMAL":{},"TEXCOORD_0":{}{luv_acc}}},"indices":{},"material":{mi}}}]}}"#, json(&mesh_name), a0 + 1, a0 + 2, a0 + 3));
         nodes.push(format!(r#"{{"name":{},"mesh":{}}}"#, json(&mesh_name), meshes.len() - 1));
         children.push(nodes.len());
     }
@@ -197,7 +221,8 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
         match pic {
             Some(png) => {
                 let mode = match &vmt { Some(v) if v.translucent => 2, Some(v) if v.alphatest => 1, _ => 0 };
-                tex.insert(k, Tex { png: png.clone(), mode });
+                let tint = vmt.as_ref().map(|v| v.tint).unwrap_or([1.0; 3]);
+                tex.insert(k, Tex { png: png.clone(), mode, tint });
             }
             None => missing.push(m.name.clone()),
         }

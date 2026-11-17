@@ -472,3 +472,13 @@ files (default.xex, the three exported files, the archives) are picked by the la
   Compressed BSP lumps ("LZMA" id, size, packed size, 5 properties) and zip LZMA entries (method 14) read too.
   User's samples: gm_stairs (The Ultimate Ragdoll Testing Map, plain .gma) and gm_falleritus8_2008 (an LZMA Workshop
   cache file): both convert and render right. Sandbox: .gma listed as a GMod map, the picker takes .gma.
+- (10:40 user, screenshot of a voxel race map) GMod maps look flat/white, parts and textures missing. Causes: no
+  baked light (Source maps are lit by their lightmaps), no material tint ($color: one white texture tinted per
+  material on such maps), no static props (trees, flags, lights: the next stage). Done: lightmaps (lump 8, or HDR 53
+  when that's all: ColorRGBExp32 -> gamma, half brightness), every face's (style 0; a bumped face's first of four)
+  shelf-packed 2048 wide (to 4096 high) with a 1-texel border, faces without one on a grey (= white doubled) block;
+  TEXCOORD_1 from the lightmap vectors (clamped inside the face's rect), the picture in the .glb and every material's
+  extras.lightmap; GlbScene reads TEXCOORD_1 into uv2 and sets _LightMap/_LightMapOn; Delirium/Lit: emission =
+  albedo x lightmap x 2 x 0.85, albedo x 0.2 for the sun and shadows. $color / $color2 ("[r g b]" or "{255 ...}") as
+  the baseColorFactor. Checked: gm_stairs' lightmap (2048x511) renders with its baked shadow in place;
+  gm_falleritus8 has none (a fullbright map).

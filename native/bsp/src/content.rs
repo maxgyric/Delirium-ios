@@ -114,22 +114,31 @@ impl Content {
             if shader == "patch" {
                 // a cubemap patch (maps/<map>/...): the material it includes, its own $basetexture if inserted
                 let inc = get("include")?;
-                if let Some(b) = get("$basetexture") { return Some(Vmt { base: Some(b), translucent: false, alphatest: false, shader }); }
+                if let Some(b) = get("$basetexture") { return Some(Vmt { tint: [1.0; 3], base: Some(b), translucent: false, alphatest: false, shader }); }
                 path = inc.replace('\\', "/").to_ascii_lowercase();
                 continue;
             }
             let flag = |k: &str| get(k).map(|v| v.trim() == "1").unwrap_or(false);
-            return Some(Vmt { base: get("$basetexture"), translucent: flag("$translucent"), alphatest: flag("$alphatest"), shader });
+            let tint = get("$color").or_else(|| get("$color2")).and_then(|c| color_of(&c)).unwrap_or([1.0; 3]);
+            return Some(Vmt { tint, base: get("$basetexture"), translucent: flag("$translucent"), alphatest: flag("$alphatest"), shader });
         }
         None
     }
 }
 
 pub struct Vmt {
+    pub tint: [f32; 3], // $color (or a model's $color2): "[1 0 0]", "{255 0 0}"
     pub base: Option<String>,
     pub translucent: bool,
     pub alphatest: bool,
     pub shader: String,
+}
+
+/// "[1 0.5 0]" (0-1) or "{255 128 0}" (0-255)
+fn color_of(s: &str) -> Option<[f32; 3]> {
+    let k = if s.trim_start().starts_with('{') { 1.0 / 255.0 } else { 1.0 };
+    let v: Vec<f32> = s.trim_matches(|c: char| c == '[' || c == ']' || c == '{' || c == '}' || c.is_whitespace()).split_whitespace().filter_map(|x| x.parse().ok()).collect();
+    (v.len() >= 3).then(|| [(v[0] * k).clamp(0.0, 1.0), (v[1] * k).clamp(0.0, 1.0), (v[2] * k).clamp(0.0, 1.0)])
 }
 
 /// A VMT's KeyValues flattened: (key, value) for every pair at any depth; the first key is the shader's name
