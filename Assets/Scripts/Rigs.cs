@@ -85,6 +85,46 @@ public partial class Mannequin
         return false;
     }
 
+    // A bone right on top of the one it hangs from or the one hanging from it (a cartoon's spine bones all at one
+    // point, a clavicle on its upper arm, a toe on its foot: GMod's Kick the Buddy) left out: Delirium refuses a
+    // skeleton with two joints at one point ("a joint on its parent's") and fills in the ones it hasn't itself.
+    static void LeaveOutStacked(Dictionary<string, Transform> pick)
+    {
+        if (!pick.TryGetValue("Hips", out var hips) || !pick.TryGetValue("Head", out var head)) return;
+        float eps = Mathf.Max(1e-5f, 0.03f * Vector3.Distance(hips.position, head.position));
+        System.Func<string, string, bool> on = (a, b) => pick.ContainsKey(a) && pick.ContainsKey(b) && Vector3.Distance(pick[a].position, pick[b].position) < eps;
+        // the spine from the hips up: each kept one apart from the last kept
+        var chain = new[] { "Spine", "Spine1", "Spine2", "Spine3", "Neck" };
+        string last = "Hips";
+        foreach (string k in chain)
+        {
+            if (!pick.ContainsKey(k)) continue;
+            if (on(k, last))
+            {
+                // "Spine" is needed: the next one up that's apart takes its place
+                if (k == "Spine")
+                {
+                    string up = null;
+                    foreach (string u in chain) if (u != "Spine" && pick.ContainsKey(u) && !on(u, "Hips")) { up = u; break; }
+                    if (up == null) continue;
+                    pick["Spine"] = pick[up];
+                    pick.Remove(up);
+                    last = "Spine";
+                    continue;
+                }
+                pick.Remove(k);
+                continue;
+            }
+            last = k;
+        }
+        if (pick.ContainsKey("Neck") && on("Neck", "Head")) pick.Remove("Neck");
+        foreach (string side in new[] { "Left", "Right" })
+        {
+            if (on(side + "Shoulder", side + "Arm")) pick.Remove(side + "Shoulder");
+            if (on(side + "ToeBase", side + "Foot")) pick.Remove(side + "ToeBase");
+        }
+    }
+
     /// Finds the model's skeleton by its bones' names and gives them Mixamo's. Null, or what's missing.
     static string Canonicalize(Transform model)
     {
@@ -164,6 +204,7 @@ public partial class Mannequin
                 pick["Spine3"] = chain[n - 1];
             }
         }
+        LeaveOutStacked(pick);
         var missing = new List<string>();
         foreach (string need in new[] { "Hips", "Spine", "Head", "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot",
                                         "LeftArm", "LeftForeArm", "LeftHand", "RightArm", "RightForeArm", "RightHand" })

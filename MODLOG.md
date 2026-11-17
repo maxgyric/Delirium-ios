@@ -575,3 +575,13 @@ files (default.xex, the three exported files, the archives) are picked by the la
   "Buddy  (player model, x.gma)"). Player models get Hero / Everyone else; cached as <addon>-<model>_*.mdl.glb.
 - Verified (Kick the Buddy addon): 6055 tris, 42 bones, 3 textures; Blender: faces +Z, textured, a raised arm
   and a bent knee deform the mesh right.
+
+## Player models: Delirium refused Kick the Buddy (2026-11-17, 16:30)
+- Log: "can't ragdoll Hero: nm_build_fit: joints not finite, or a joint on its parent's". Buddy's Spine, Spine1,
+  Spine2, Spine4 and Neck1 are all at one point (and each clavicle on its upper arm); nm_build_fit refuses two
+  of its 21 joints closer than 1 mm. Rigs.LeaveOutStacked: a spine/neck bone within 3% of the hips-head length
+  of the last kept one, a shoulder on its arm, a toe on its foot are left unmapped (renamed aux by part_for_name),
+  so nm_rig_joints interpolates the spine and neck between Spine and Head and puts the clavicles 30% from the neck.
+  A "Spine" on the hips is replaced by the next spine bone up that's apart.
+- DeliriumRagdolls.LateUpdate: a doll whose character was destroyed this frame is skipped (it threw a
+  NullReferenceException in Doll.Pose and stopped the other dolls' posing; Prune frees it next frame).

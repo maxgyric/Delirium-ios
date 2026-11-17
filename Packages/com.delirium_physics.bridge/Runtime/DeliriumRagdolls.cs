@@ -515,7 +515,7 @@ namespace Delirium.Ragdoll
         void LateUpdate()
         {
             // After the game's animation, so the ragdoll's pose is the one drawn.
-            foreach (var d in dolls) { d.Feed(); d.Pose(); }
+            foreach (var d in dolls) { if (d.Gone) continue; d.Feed(); d.Pose(); } // (one whose character was just destroyed: Prune frees it next frame)
             blends.RemoveAll(b => !b.Apply());
         }
 
