@@ -30,6 +30,7 @@ pub struct Tex {
     pub png: std::rc::Rc<Vec<u8>>, // shared by the materials with the same picture (a map's cubemap copies)
     pub mode: u8,
     pub tint: [f32; 3], // the material's $color
+    pub two_sided: bool, // $nocull
 }
 
 pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8> {
@@ -128,8 +129,8 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
             let alpha = if water && t.mode == 0 { 0.6 } else { 1.0 };
             let mode = match (t.mode, alpha < 1.0) { (2, _) | (_, true) => r#","alphaMode":"BLEND""#, (1, _) => r#","alphaMode":"MASK","alphaCutoff":0.5"#, _ => "" };
             materials.push(format!(
-                r#"{{"name":{},"pbrMetallicRoughness":{{"baseColorTexture":{{"index":{ti}}},"baseColorFactor":[{},{},{},{alpha}],"metallicFactor":0,"roughnessFactor":0.9}}{mode}{lm_extra}}}"#,
-                json(&name), t.tint[0], t.tint[1], t.tint[2]
+                r#"{{"name":{},"pbrMetallicRoughness":{{"baseColorTexture":{{"index":{ti}}},"baseColorFactor":[{},{},{},{alpha}],"metallicFactor":0,"roughnessFactor":0.9}}{mode}{}{lm_extra}}}"#,
+                json(&name), t.tint[0], t.tint[1], t.tint[2], if t.two_sided { r#","doubleSided":true"# } else { "" }
             ));
         } else {
             let alpha = if water { 0.6 } else if glass { 0.35 } else { 1.0 };
@@ -200,6 +201,12 @@ fn add_props(map: &mut Map, content: &content::Content) -> (usize, Vec<String>) 
             continue;
         };
         let r = studio::angle_matrix(p.angles);
+        // one in the 3D skybox: round the map, that much bigger, not stood on
+        let sky = map.sky.filter(|(lo, hi, _, _)| (0..3).all(|a| p.origin[a] >= lo[a] - 1.0 && p.origin[a] <= hi[a] + 1.0));
+        let (origin, scale, solid) = match sky {
+            Some((_, _, o, k)) => ([(p.origin[0] - o[0]) * k, (p.origin[1] - o[1]) * k, (p.origin[2] - o[2]) * k], p.scale * k, false),
+            None => (p.origin, p.scale, p.solid),
+        };
         let skin = model.skins.get(p.skin).or(model.skins.first());
         for mesh in &model.meshes {
             let ti = skin.and_then(|s| s.get(mesh.material).copied()).unwrap_or(mesh.material);
@@ -208,14 +215,14 @@ fn add_props(map: &mut Map, content: &content::Content) -> (usize, Vec<String>) 
                 map.materials.push(bsp::Material { name: name.clone(), color: [0.7; 3], width: 1, height: 1 });
                 map.materials.len() - 1
             });
-            let key = mi | if p.solid { 0 } else { NOCOLLIDE };
+            let key = mi | if solid { 0 } else { NOCOLLIDE };
             let luv = map.prop_luv;
             let b = map.batches.entry(key).or_default();
             for t in &mesh.tris {
                 let v = [&model.vertices[t[0] as usize], &model.vertices[t[1] as usize], &model.vertices[t[2] as usize]];
                 let pos: Vec<bsp::V3> = v.iter().map(|v| {
-                    let q = studio::rotate(&r, [v.pos[0] * p.scale, v.pos[1] * p.scale, v.pos[2] * p.scale]);
-                    [q[0] + p.origin[0], q[1] + p.origin[1], q[2] + p.origin[2]]
+                    let q = studio::rotate(&r, [v.pos[0] * scale, v.pos[1] * scale, v.pos[2] * scale]);
+                    [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]
                 }).collect();
                 let nrm: Vec<bsp::V3> = v.iter().map(|v| studio::rotate(&r, v.nrm)).collect();
                 // front faces counter-clockwise (glTF's), by the vertices' own normals
@@ -293,7 +300,8 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
             Some(png) => {
                 let mode = match &vmt { Some(v) if v.translucent => 2, Some(v) if v.alphatest => 1, _ => 0 };
                 let tint = vmt.as_ref().map(|v| v.tint).unwrap_or([1.0; 3]);
-                tex.insert(key, Tex { png: png.clone(), mode, tint });
+                let two_sided = vmt.as_ref().map(|v| v.nocull).unwrap_or(false);
+                tex.insert(key, Tex { png: png.clone(), mode, tint, two_sided });
             }
             None => if key == k { missing.push(m.name.clone()) },
         }
@@ -302,7 +310,7 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
     let glb = to_glb(&map, &tex);
     std::fs::write(glb_path, &glb).map_err(|e| format!("{glb_path}: {e}"))?;
     // its sky, fog, sun: beside the .glb (".env": key=values; ".sky.png": the panorama)
-    let mut env = sky::environment(&map.entities);
+    let mut env = sky::environment(&map.entities, map.exposure);
     let mut sky_name = String::new();
     if let Some((w, h, rgba, name)) = sky::panorama(&content, &map.entities, 2048) {
         let png_path = format!("{glb_path}.sky.png");
@@ -315,7 +323,7 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
     let tris: usize = map.batches.values().map(|b| b.pos.len() / 3).sum();
     missing.sort();
     Ok(format!(
-        "{}v{} {} triangles, {} materials, {} textured ({} packs{}); {} models placed{}; {}{} faces of the 3D skybox and {} tool faces left out{}",
+        "{}v{} {} triangles, {} materials, {} textured ({} packs{}); {} models placed{}; {}{} faces of the 3D skybox drawn round it, {} tool faces left out{}",
         if from.is_empty() { String::new() } else { format!("{from}: ") }, map.version, tris, map.batches.len(), tex.len(), content.packs(),
         if content.missing_archives > 0 { format!(", {} of their archives missing", content.missing_archives) } else { String::new() },
         placed,

@@ -516,3 +516,10 @@ files (default.xex, the three exported files, the archives) are picked by the la
   Resources.UnloadUnusedAssets + GC.Collect (the static-batched meshes); a replaced character template unloads
   likewise. GMod maps' textures are compressed as they load (Texture2D.Compress: ETC2 on the phone, a quarter to an
   eighth of RGBA32; the lightmap left as is), and a lightmapped GMod map casts no sun shadows (it has its own baked).
+- (13:01 user) "Some maps have a model only from one side"; a dusk map is black in the sandbox but lit in GMod.
+  3D skybox: its faces and models (inside the sky_camera's area) now drawn round the map at the camera's scale
+  ((p - sky_camera) x scale, "scale" or 16), not stood on, lightmapped; gm_construct gets its ring of hills and its
+  mast back. The floating building bits were 3D-skybox props placed raw. Exposure: the baked light's average (every
+  5th luxel's luminance) brought up to 0.22 (x1-6, never darker), as GMod's HDR eye does; the sun and ambient follow
+  (ambient at least 0.45). $nocull materials double-sided. (Faces a map's builder never made, the backs of facades
+  you can't reach, stay missing: GMod draws nothing there either.)

@@ -105,9 +105,10 @@ impl Packer {
     }
 }
 
-// Source's luxel (RGB times 2^exponent, linear) to the lightmap's byte: gamma, half (overbright x2)
-fn luxel(r: u8, g: u8, b: u8, e: i8) -> [u8; 3] {
-    let k = 2f32.powi(e as i32) / 255.0;
+// Source's luxel (RGB times 2^exponent, linear) to the lightmap's byte: brightened by the map's exposure, gamma,
+// half (overbright x2)
+fn luxel(r: u8, g: u8, b: u8, e: i8, exposure: f32) -> [u8; 3] {
+    let k = 2f32.powi(e as i32) / 255.0 * exposure;
     let f = |c: u8| ((c as f32 * k).max(0.0).powf(1.0 / 2.2) * 0.5 * 255.0).round().clamp(0.0, 255.0) as u8;
     [f(r), f(g), f(b)]
 }
@@ -127,6 +128,10 @@ pub struct Map {
     pub entities: Vec<HashMap<String, String>>,
     /// faces left out: (in the 3D skybox, tools / sky / triggers)
     pub skipped: (usize, usize),
+    /// the 3D skybox: its box, its camera, its scale (its faces and models drawn round the map that much bigger)
+    pub sky: Option<(V3, V3, V3, f32)>,
+    /// how much the baked light was brightened (GMod's HDR exposure brings a dark map up: dusk isn't black)
+    pub exposure: f32,
     /// where its pakfile (a zip of its own materials) is in the file
     pub pak: (usize, usize),
     /// its models placed in it (static props, prop_ entities)
@@ -280,6 +285,17 @@ impl Map {
         let faces = lump(7)?;
         // the baked light (LDR, or HDR if that's all there is): 4 bytes a luxel
         let light = { let l = lump(8)?; if l.is_empty() { lump(53)? } else { l } };
+        // the exposure: the light's average brought up to GMod's (its HDR eye adapts), never darkened
+        let exposure = {
+            let (mut sum, mut n) = (0f64, 0f64);
+            for q in (0..light.len() / 4).step_by(5) {
+                let k = 2f32.powi(light[q * 4 + 3] as i8 as i32) / 255.0;
+                let y = 0.2126 * light[q * 4] as f32 + 0.7152 * light[q * 4 + 1] as f32 + 0.0722 * light[q * 4 + 2] as f32;
+                sum += (y * k) as f64;
+                n += 1.0;
+            }
+            if n > 0.0 && sum > 0.0 { (0.22 / (sum / n) as f32).clamp(1.0, 6.0) } else { 1.0 }
+        };
         let leaves = lump(10)?;
         let edges = lump(12)?;
         let surfedges = lump(13)?;
@@ -304,6 +320,9 @@ impl Map {
 
         // the 3D skybox (a small copy of the world around the sky_camera, in an area of its own): its box, to leave
         let leaf_size = if lumps[10].version == 0 { 56 } else { 32 };
+        let sky_cam = entities.iter().find(|e| e.get("classname").map(|c| c == "sky_camera").unwrap_or(false)).and_then(|e| {
+            Some((e.get("origin").and_then(|o| vec3_of(o))?, e.get("scale").and_then(|v| v.parse::<f32>().ok()).filter(|&v| v > 0.5).unwrap_or(16.0)))
+        });
         let sky_box = entities.iter().find(|e| e.get("classname").map(|c| c == "sky_camera").unwrap_or(false)).and_then(|e| e.get("origin").and_then(|o| vec3_of(o))).and_then(|at| {
             // down the tree to the leaf it's in
             let mut n: i32 = md.i32(36).ok()?; // model 0's headnode
@@ -378,9 +397,14 @@ impl Map {
                 if poly.len() < 3 { continue; }
                 let mut normal = p.v3(plane * 20)?;
                 if side != 0 { normal = mul(normal, -1.0); }
+                // in the 3D skybox: drawn round the map, as big as the sky camera makes it (not stood on)
+                let mut in_sky = None;
                 if let Some((lo, hi)) = sky_box {
                     let c = mul(poly.iter().fold([0.0; 3], |a, &v| add(a, v)), 1.0 / poly.len() as f32);
-                    if (0..3).all(|a| c[a] >= lo[a] - 1.0 && c[a] <= hi[a] + 1.0) { skipped.0 += 1; continue; }
+                    if (0..3).all(|a| c[a] >= lo[a] - 1.0 && c[a] <= hi[a] + 1.0) {
+                        skipped.0 += 1;
+                        match sky_cam { Some(cam) => in_sky = Some(cam), None => continue }
+                    }
                 }
                 let (s, tv) = (ti.v3(t)?, ti.v3(t + 16)?);
                 let (so, to) = (ti.f32(t + 12)?, ti.f32(t + 28)?);
@@ -394,7 +418,7 @@ impl Map {
                         let l = &light[lofs as usize..];
                         pack.fill(x, y, lsize[0], lsize[1], |lx, ly| {
                             let q = (ly * lsize[0] + lx) * 4;
-                            luxel(l[q], l[q + 1], l[q + 2], l[q + 3] as i8)
+                            luxel(l[q], l[q + 1], l[q + 2], l[q + 3] as i8, exposure)
                         });
                         rect = Some((x as f32, y as f32));
                     }
@@ -412,8 +436,10 @@ impl Map {
                     };
                     [dot(s, m) + so, dot(tv, m) + to, l[0], l[1]]
                 };
-                let b = batches.entry(mat).or_default();
+                let b = batches.entry(if in_sky.is_some() { mat | crate::NOCOLLIDE } else { mat }).or_default();
+                let place = |v: V3| match in_sky { Some((o, k)) => mul(sub(v, o), k), None => v };
                 let mut tri = |a: V3, bb: V3, c: V3, ua: [f32; 4], ub: [f32; 4], uc: [f32; 4], fallback: V3| {
+                    let (a, bb, c) = (place(a), place(bb), place(c));
                     // front faces counter-clockwise about the face's normal (glTF's way)
                     let mut n = cross(sub(bb, a), sub(c, a));
                     let len = dot(n, n).sqrt();
@@ -485,7 +511,7 @@ impl Map {
         if !light.is_empty() && light.len() >= 4 {
             let (mut sum, mut n) = ([0f64; 3], 0f64);
             for q in (0..light.len() / 4).step_by(7) {
-                let c = luxel(light[q * 4], light[q * 4 + 1], light[q * 4 + 2], light[q * 4 + 3] as i8);
+                let c = luxel(light[q * 4], light[q * 4 + 1], light[q * 4 + 2], light[q * 4 + 3] as i8, exposure);
                 for a in 0..3 { sum[a] += c[a] as f64; }
                 n += 1.0;
             }
@@ -500,7 +526,8 @@ impl Map {
             }
         }
         let lightmap = (pack.h > 2 && !light.is_empty()).then(|| Lightmap { w: pack.w, h: pack.h, rgba: std::mem::take(&mut pack.px) });
-        Ok(Map { lightmap, version, materials, batches, entities, skipped, pak, props, prop_luv })
+        let sky = match (sky_box, sky_cam) { (Some((lo, hi)), Some((o, k))) => Some((lo, hi, o, k)), _ => None };
+        Ok(Map { lightmap, version, materials, batches, entities, skipped, pak, props, prop_luv, sky, exposure })
     }
 
     /// Where a player starts (its origin, yaw in degrees), if the map says

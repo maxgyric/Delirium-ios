@@ -114,20 +114,21 @@ impl Content {
             if shader == "patch" {
                 // a cubemap patch (maps/<map>/...): the material it includes, its own $basetexture if inserted
                 let inc = get("include")?;
-                if let Some(b) = get("$basetexture") { return Some(Vmt { fog: None, tint: [1.0; 3], base: Some(b), translucent: false, alphatest: false, shader }); }
+                if let Some(b) = get("$basetexture") { return Some(Vmt { nocull: false, fog: None, tint: [1.0; 3], base: Some(b), translucent: false, alphatest: false, shader }); }
                 path = inc.replace('\\', "/").to_ascii_lowercase();
                 continue;
             }
             let flag = |k: &str| get(k).map(|v| v.trim() == "1").unwrap_or(false);
             let tint = get("$color").or_else(|| get("$color2")).and_then(|c| color_of(&c)).unwrap_or([1.0; 3]);
             let fog = get("$fogcolor").and_then(|c| color_of(&c));
-            return Some(Vmt { fog, tint, base: get("$basetexture"), translucent: flag("$translucent"), alphatest: flag("$alphatest"), shader });
+            return Some(Vmt { nocull: flag("$nocull"), fog, tint, base: get("$basetexture"), translucent: flag("$translucent"), alphatest: flag("$alphatest"), shader });
         }
         None
     }
 }
 
 pub struct Vmt {
+    pub nocull: bool, // drawn from both sides ($nocull: leaves, fences, signs)
     pub fog: Option<[f32; 3]>, // a water's $fogcolor (the colour under its surface)
     pub tint: [f32; 3], // $color (or a model's $color2): "[1 0 0]", "{255 0 0}"
     pub base: Option<String>,

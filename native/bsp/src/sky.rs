@@ -127,7 +127,7 @@ fn nums(s: &str) -> Vec<f32> { s.split_whitespace().filter_map(|x| x.parse().ok(
 
 /// The map's fog, sun and ambient light as "key=values" lines (Unity's axes: the sun's direction is where its light
 /// goes; distances in metres)
-pub fn environment(entities: &[HashMap<String, String>]) -> String {
+pub fn environment(entities: &[HashMap<String, String>], exposure: f32) -> String {
     let mut lines = vec![];
     fn class<'a>(entities: &'a [HashMap<String, String>], c: &'a str) -> impl Iterator<Item = &'a HashMap<String, String>> + 'a {
         entities.iter().filter(move |e| e.get("classname").map(|x| x == c).unwrap_or(false))
@@ -155,11 +155,12 @@ pub fn environment(entities: &[HashMap<String, String>]) -> String {
         let u = [-f[0], f[2], -f[1]];
         if c.len() >= 3 {
             let bright = c.get(3).copied().unwrap_or(200.0);
-            lines.push(format!("sun={} {} {} {} {} {} {}", c[0] / 255.0, c[1] / 255.0, c[2] / 255.0, (bright / 350.0).clamp(0.3, 1.4), u[0], u[1], u[2]));
+            lines.push(format!("sun={} {} {} {} {} {} {}", c[0] / 255.0, c[1] / 255.0, c[2] / 255.0, (bright / 350.0 * exposure).clamp(0.3, 1.4), u[0], u[1], u[2]));
         }
         let m = l.get("_ambient").map(|s| nums(s)).unwrap_or_default();
         if m.len() >= 3 {
-            let k = (m.get(3).copied().unwrap_or(150.0) / 200.0).clamp(0.3, 1.6);
+            // (brought up with the baked light, and never so dark the people are black shapes)
+            let k = (m.get(3).copied().unwrap_or(150.0) / 200.0 * exposure).clamp(0.45, 1.6);
             lines.push(format!("ambient={} {} {}", (m[0] / 255.0 * k).min(1.0), (m[1] / 255.0 * k).min(1.0), (m[2] / 255.0 * k).min(1.0)));
         }
     }
