@@ -585,3 +585,15 @@ files (default.xex, the three exported files, the archives) are picked by the la
   A "Spine" on the hips is replaced by the next spine bone up that's apart.
 - DeliriumRagdolls.LateUpdate: a doll whose character was destroyed this frame is skipped (it threw a
   NullReferenceException in Doll.Pose and stopped the other dolls' posing; Prune frees it next frame).
+
+## Models browser (2026-11-17, 17:00)
+- Browser.cs: a "Models" button (top bar, and in Files) opens a full-screen browser, GMod spawn-menu style: tabs
+  Player models / Maps, search, a grid of pictures with their names (and Hero / Everyone / Map on the ones in
+  use), the one touched on the right (a character turning in 3D, drag to turn; a map's picture), with
+  Be him (hero) / Everyone else / Load map / Remove.
+- Kind: .gma#*.mdl and .vrm characters, .bsp / .gma#maps maps, a .glb by its JSON ("skins": a character).
+- Pictures cached in temporaryCachePath/icons/<FNV of entry|size|date>.png. Characters: loaded one at a time
+  (0.25 s apart, while the Player models tab is open), Mannequin.Prepare'd, photographed on layer 30
+  (PreviewLayer, at y -3000, main camera excludes it) by a disabled camera into an ARGB RenderTexture (clear
+  alpha 0), fog off for the shot. Maps: the addon's maps/thumb/<map>.png (native dgma_file), a png beside a
+  .bsp, else the main view (sky camera first) 0.8 s after the map first loads (MapIconLater, from UseFile).

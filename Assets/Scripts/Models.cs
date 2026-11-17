@@ -386,6 +386,7 @@ public partial class Game
                         if (m != null && m.HasProperty("_LightMap") && m.GetTexture("_LightMap") is Texture2D lm) mapTextures.Remove(lm);
                 // its sky, fog and sun (or the sandbox's own again)
                 if (source) MapLook(bspEnv); else MapLook(null);
+                StartCoroutine(MapIconLater(path)); // (its picture for the models browser, when it has none)
                 // pixel art (a Minecraft map): crisp texels unless you say otherwise
                 int small = mapTextures.FindAll(t => Mathf.Max(t.width, t.height) <= 256).Count;
                 pixelTextures = mapTextures.Count > 0 && small * 2 >= mapTextures.Count;
@@ -673,6 +674,7 @@ public partial class Game
     // ------------------------------------------------------------------ the menu's tab
     void FilesTab()
     {
+        if (GUILayout.Button("Models and maps (pictures)...", btnOn, GUILayout.Height(40f))) OpenBrowser();
         Head("Your files");
         Info("Characters: a rigged human as .glb or .vrm: Mixamo, VRM / Unity humanoid, Unreal, Source, Biped, GTA V, Rigify skeletons " +
              "(a .fbx: in Blender File > Import > FBX, then File > Export > glTF 2.0, format glTF Binary). " +

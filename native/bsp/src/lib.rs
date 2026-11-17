@@ -426,6 +426,22 @@ pub unsafe extern "C" fn dmdl_convert(spec: *const c_char, glb: *const c_char, r
     }
 }
 
+/// For C# (the models browser): one file of an addon ("maps/thumb/gm_x.png") written to `out_path`. Its size, or -1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dgma_file(gma: *const c_char, path: *const c_char, out_path: *const c_char) -> i32 {
+    let text = |p: *const c_char| if p.is_null() { None } else { unsafe { CStr::from_ptr(p) }.to_str().ok().map(str::to_owned) };
+    let (Some(g), Some(p), Some(o)) = (text(gma), text(path), text(out_path)) else { return -1 };
+    match std::panic::catch_unwind(|| -> Option<usize> {
+        let a = gma::Gma::open(std::path::Path::new(&g)).ok()?;
+        let b = a.read(&p.to_ascii_lowercase())?;
+        std::fs::write(&o, &b).ok()?;
+        Some(b.len())
+    }) {
+        Ok(Some(n)) => n.min(i32::MAX as usize) as i32,
+        _ => -1,
+    }
+}
+
 /// The last line (`dbsp_convert`'s) into `out` (`cap` bytes, 0-terminated); its length.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dbsp_error(out: *mut u8, cap: i32) -> i32 {

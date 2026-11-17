@@ -558,6 +558,7 @@ public partial class Game : MonoBehaviour
     {
         if (!running || nm == null) return;
         SettingsUpdate();
+        BrowserUpdate();
         float dt = Time.deltaTime;
         foreach (var m in men) Mind(m, dt);
         if (heroOn) { HeroUpdate(dt); BikeUpdate(dt); }
@@ -1089,7 +1090,9 @@ public partial class Game : MonoBehaviour
             if (Button(heroNoclip ? "Noclip: on" : "Noclip", 120f)) ToggleNoclip();
             if (Button(bikeState == 1 || bikeBuilding ? "Bike..." : bikeGo == null ? "Bike" : "Next bike", 110f)) BikeButton();
             if (Button("Settings", 100f)) OpenSettings();
+            if (Button(browserOpen ? "Models <" : "Models", 100f)) OpenBrowser();
             FpsGui(w);
+            if (browserOpen) { BrowserGui(w, h); return; } // (the sticks hidden under it)
             HeroGui(w, h);
             if (menuOpen) MenuGui(w, h);
             return;
@@ -1107,6 +1110,7 @@ public partial class Game : MonoBehaviour
         if (tool == Tool.Shoot && Button("Gun: " + weaponLabels[weapon % weaponLabels.Length], 170f)) weapon = (weapon + 1) % weapons.Length;
         if (Button(menuOpen ? "Menu <" : "Menu >", 90f)) menuOpen = !menuOpen;
         if (Button("Settings", 100f)) OpenSettings();
+        if (Button(browserOpen ? "Models <" : "Models", 100f)) OpenBrowser();
         FpsGui(w);
         if (Button("Paths", 80f))
         {
@@ -1122,7 +1126,8 @@ public partial class Game : MonoBehaviour
             string what = m.Killed || st.Dead ? "dead" : m.Rising ? "getting up" : m.FireLeft > 0f ? "burning" : st.Fallen ? "down" : st.Balancing ? "on his feet" : "ragdoll";
             GUI.Label(new Rect(8f, 60f, 300f, 24f), m.Body.name + "  ·  " + what + "  ·  health " + (god ? "unlimited" : Mathf.RoundToInt(m.Health).ToString()), chip);
         }
-        if (menuOpen) MenuGui(w, h);
+        if (browserOpen) BrowserGui(w, h);
+        else if (menuOpen) MenuGui(w, h);
     }
 
     float topX;

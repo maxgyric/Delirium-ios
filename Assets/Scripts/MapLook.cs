@@ -51,7 +51,7 @@ public partial class Game
         }
         // the sandbox's own first (whatever this map has, it starts from there)
         if (skyCam != null) skyCam.enabled = false;
-        cam.cullingMask = ~0;
+        cam.cullingMask = ~(1 << PreviewLayer);
         cam.clearFlags = lookClear;
         cam.backgroundColor = lookBack;
         cam.farClipPlane = lookFar;
@@ -167,7 +167,7 @@ public partial class Game
         skyCam.nearClipPlane = 0.5f * k;
         skyCam.farClipPlane = 20000f * k;
         skyCam.enabled = true;
-        cam.cullingMask = ~(1 << Sky3DLayer);
+        cam.cullingMask = ~((1 << Sky3DLayer) | (1 << PreviewLayer));
         cam.clearFlags = CameraClearFlags.Depth;
         skyCamLook.fog = fog != null;
         if (fog != null)
