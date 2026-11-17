@@ -52,6 +52,8 @@ public partial class Game : MonoBehaviour
         try
         {
             logPath = Application.isEditor ? Path.Combine(Path.GetDirectoryName(Application.dataPath), "sandbox-log.txt") : Path.Combine(Application.persistentDataPath, "sandbox-log.txt");
+            // the run before's kept (when the game was closed by iOS its last lines say what it was doing)
+            try { if (File.Exists(logPath)) File.Copy(logPath, Path.Combine(Path.GetDirectoryName(logPath), "sandbox-log-previous.txt"), true); } catch (Exception) { }
             File.WriteAllText(logPath, "Delirium Sandbox " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + ", Unity " + Application.unityVersion + ", " + Application.platform + "\n");
             Application.logMessageReceivedThreaded += (text, stack, type) =>
             {
@@ -66,6 +68,13 @@ public partial class Game : MonoBehaviour
             };
         }
         catch (Exception) { logPath = ""; }
+        // iOS says the game's using too much memory (before it closes it): said in the log, and whatever's unused let go
+        Application.lowMemory += () =>
+        {
+            Debug.LogWarning("[Sandbox] iOS: memory low (" + UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / 1048576 + " MB in use)");
+            Resources.UnloadUnusedAssets();
+            GC.Collect();
+        };
     }
 
     void Start()

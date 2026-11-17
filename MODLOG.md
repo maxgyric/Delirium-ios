@@ -523,3 +523,18 @@ files (default.xex, the three exported files, the archives) are picked by the la
   5th luxel's luminance) brought up to 0.22 (x1-6, never darker), as GMod's HDR eye does; the sun and ambient follow
   (ambient at least 0.45). $nocull materials double-sided. (Faces a map's builder never made, the backs of facades
   you can't reach, stay missing: GMod draws nothing there either.)
+
+## GMod maps: gm_bigcity_dusk fixes, map-change memory (2026-11-17)
+- HDR-only maps (no LDR lightmap, lump 8 empty): lightmap offsets come from the HDR faces lump (58), not lump 7.
+  Before, bigcity_dusk's faces read luxels from the wrong places (wrong, patchy light).
+- Exposure clamp raised 6 -> 12 (bigcity_dusk: mean luxel 0.019, now x11.4).
+- Lightmap atlas packed tallest-first (2048x3380 -> 2048x1014 for bigcity_dusk; fewer faces lost to the 4096 cap).
+- Scale bug: the 3D skybox (drawn x16 round the town) made MapBounds > 4000 m, so SetMap shrank the map x0.01.
+  GMod maps are already in metres: no auto-shrink for them; MapBounds ignores [nocollide] (sky, water).
+- Memory: the pakfile is indexed, entries unpacked on demand (not all at once); the .gma's map not copied twice.
+  Native peak for bigcity_dusk 328 -> 210 MB.
+- Map change: the old map is freed with DestroyImmediate (objects, owned meshes/textures/materials, static-batch
+  meshes) BEFORE converting/loading the next. Before, Destroy was deferred and UnloadUnusedAssets async, so both
+  maps were in memory at once. A failed load falls back to the default map.
+- Log: sandbox-log-previous.txt keeps the run before (the crash's run); map loads log memory; Application.lowMemory
+  is logged and unloads unused assets.

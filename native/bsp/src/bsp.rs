@@ -284,7 +284,12 @@ impl Map {
         let texinfo = lump(6)?;
         let faces = lump(7)?;
         // the baked light (LDR, or HDR if that's all there is): 4 bytes a luxel
-        let light = { let l = lump(8)?; if l.is_empty() { lump(53)? } else { l } };
+        // the baked light: LDR's, or (an HDR-only map) HDR's, whose faces' places in it are in the HDR faces lump
+        let ldr = lump(8)?;
+        let hdr = ldr.is_empty();
+        let light = if hdr { lump(53)? } else { ldr };
+        let faces_hdr = if hdr { lump(58)? } else { std::borrow::Cow::Borrowed(&[][..]) };
+        let fl = if faces_hdr.len() == faces.len() { R(&faces_hdr) } else { R(&faces) };
         // the exposure: the light's average brought up to GMod's (its HDR eye adapts), never darkened
         let exposure = {
             let (mut sum, mut n) = (0f64, 0f64);
@@ -294,7 +299,7 @@ impl Map {
                 sum += (y * k) as f64;
                 n += 1.0;
             }
-            if n > 0.0 && sum > 0.0 { (0.22 / (sum / n) as f32).clamp(1.0, 6.0) } else { 1.0 }
+            if n > 0.0 && sum > 0.0 { (0.22 / (sum / n) as f32).clamp(1.0, 12.0) } else { 1.0 }
         };
         let leaves = lump(10)?;
         let edges = lump(12)?;
@@ -366,6 +371,33 @@ impl Map {
         let white = [1.0f32, 1.0];
         let mut skipped = (0, 0);
         let vertex = |i: usize| vx.v3(i * 12);
+        // where each face's lightmap goes, planned first: tallest first, so a shelf's faces are about as tall as each
+        // other (in the file's order a big map's wasted half its picture, and ran out of room)
+        let mut planned: HashMap<usize, (usize, usize)> = HashMap::new();
+        {
+            let mut want = vec![];
+            for &(m, _) in &draw {
+                let mo = m * 48;
+                let (first, count) = (md.i32(mo + 40)? as usize, md.i32(mo + 44)? as usize);
+                for f in first..first + count {
+                    let o = f * 56;
+                    let tinfo = fc.i16(o + 10)?;
+                    if tinfo < 0 { continue; }
+                    let t = tinfo as usize * 72;
+                    if ti.i32(t + 64)? & (SURF_SKY2D | SURF_SKY | SURF_TRIGGER | SURF_NODRAW | SURF_HINT | SURF_SKIP) != 0 { continue; }
+                    let styles0 = fl.0.get(o + 16).copied().unwrap_or(255);
+                    let lofs = fl.i32(o + 20)?;
+                    let lsize = [fl.i32(o + 36)? as usize + 1, fl.i32(o + 40)? as usize + 1];
+                    if lofs >= 0 && styles0 != 255 && lsize[0] <= 1024 && lsize[1] <= 1024 && (lofs as usize) + lsize[0] * lsize[1] * 4 <= light.len() {
+                        want.push((f, lsize));
+                    }
+                }
+            }
+            want.sort_by(|a, b| b.1[1].cmp(&a.1[1]).then(b.1[0].cmp(&a.1[0])));
+            for (f, lsize) in want {
+                if let Some(at) = pack.place(lsize[0], lsize[1]) { planned.insert(f, at); }
+            }
+        }
         for (m, origin) in draw {
             let mo = m * 48;
             let (first, count) = (md.i32(mo + 40)? as usize, md.i32(mo + 44)? as usize);
@@ -409,12 +441,12 @@ impl Map {
                 let (s, tv) = (ti.v3(t)?, ti.v3(t + 16)?);
                 let (so, to) = (ti.f32(t + 12)?, ti.f32(t + 28)?);
                 // its lightmap into the picture (style 0's: the first of a bumped face's four)
-                let styles0 = fc.0.get(o + 16).copied().unwrap_or(255);
-                let lofs = fc.i32(o + 20)?;
-                let (lmin, lsize) = ([fc.i32(o + 28)? as f32, fc.i32(o + 32)? as f32], [fc.i32(o + 36)? as usize + 1, fc.i32(o + 40)? as usize + 1]);
+                let styles0 = fl.0.get(o + 16).copied().unwrap_or(255);
+                let lofs = fl.i32(o + 20)?;
+                let (lmin, lsize) = ([fl.i32(o + 28)? as f32, fl.i32(o + 32)? as f32], [fl.i32(o + 36)? as usize + 1, fl.i32(o + 40)? as usize + 1]);
                 let mut rect = None;
                 if lofs >= 0 && styles0 != 255 && lsize[0] <= 1024 && lsize[1] <= 1024 && (lofs as usize) + lsize[0] * lsize[1] * 4 <= light.len() {
-                    if let Some((x, y)) = pack.place(lsize[0], lsize[1]) {
+                    if let Some(&(x, y)) = planned.get(&f) {
                         let l = &light[lofs as usize..];
                         pack.fill(x, y, lsize[0], lsize[1], |lx, ly| {
                             let q = (ly * lsize[0] + lx) * 4;

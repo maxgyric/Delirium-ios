@@ -218,6 +218,49 @@ public partial class Game
     // A file put to use: 0 the hero's model, 1 everyone else's, 2 the map. False: it couldn't be (filesNote says why).
     bool Use(string path, int kind)
     {
+        if (kind != 2 || mapRoot == null) return UseFile(path, kind);
+        // the map in use gone first, there and then: its meshes and textures and the next map's never in memory
+        // together (map after map, a phone ran out of it and the game was closed)
+        FreeMapNow();
+        if (UseFile(path, kind)) return true;
+        string why = filesNote;
+        DefaultMap();
+        filesNote = why;
+        return false;
+    }
+
+    static string Mem() => (UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / 1048576) + " MB (reserved " + (UnityEngine.Profiling.Profiler.GetTotalReservedMemoryLong() / 1048576) + " MB)";
+
+    void FreeMapNow()
+    {
+        Debug.Log("[Sandbox] map " + mapName + " freed (memory " + Mem() + ")");
+        // the meshes its renderers draw: its own and the batches made of them (not freed with their objects)
+        var meshes = new HashSet<Mesh>();
+        foreach (var mf in mapRoot.GetComponentsInChildren<MeshFilter>(true))
+            if (mf.sharedMesh != null) meshes.Add(mf.sharedMesh);
+        DeliriumRagdolls.SandboxForget();
+        DestroyImmediate(mapRoot);
+        mapRoot = null;
+        mapName = "";
+        foreach (var c in level)
+            if (c != null) DestroyImmediate(c.gameObject);
+        level.Clear();
+        if (mapOwned != null)
+        {
+            foreach (var o in mapOwned)
+                if (o != null) DestroyImmediate(o);
+            mapOwned = null;
+        }
+        foreach (var m in meshes)
+            if (m != null) DestroyImmediate(m);
+        mapTextures = new List<Texture2D>();
+        DeliriumRagdolls.SandboxForget();
+        GC.Collect();
+        Resources.UnloadUnusedAssets();
+    }
+
+    bool UseFile(string path, int kind)
+    {
         try
         {
             string name = MapOf(path) ?? Path.GetFileNameWithoutExtension(path);
@@ -228,7 +271,9 @@ public partial class Game
                 return false;
             }
             string bspNote = "";
+            if (kind == 2) Debug.Log("[Sandbox] map " + name + ": loading (memory " + Mem() + ")");
             byte[] data = source ? BspToGlb(path, out bspNote) : File.ReadAllBytes(path);
+            if (kind == 2) Debug.Log("[Sandbox] map " + name + ": " + (data == null ? "not converted" : (data.Length / 1048576) + " MB file") + " (memory " + Mem() + ")");
             if (data == null)
             {
                 filesNote = name + ": " + bspNote;
@@ -253,7 +298,7 @@ public partial class Game
                 if (path != mapPath) mapScale = 1f; // another map: its own size
                 mapPath = path;
                 PlayerPrefs.SetFloat(kPrefMapScale, mapScale);
-                SetMap(made.Root, name);
+                SetMap(made.Root, name, source);
                 mapOwned = made.Owned;
                 // a GMod map lit by its own baked light: its shadows are in it, it casts none of the sun's (a big
                 // map drawn again into the shadow map every frame cost a lot)
@@ -274,6 +319,7 @@ public partial class Game
                 Pixels();
                 PlayerPrefs.SetString(kPrefMap, path);
                 if (source) Debug.Log("[Sandbox] GMod map " + name + ": " + bspNote);
+                Debug.Log("[Sandbox] map " + name + " in (memory " + Mem() + ")");
                 filesNote = "Map: " + name + (source ? " (GMod map: " + bspNote + ")" : "") + " (" + made.Triangles + " triangles, " + made.Textures + " textures" +
                             (made.TexturesFailed > 0 ? ", " + made.TexturesFailed + " didn't load: " + made.TextureWhy : "") +
                             (made.SeeThrough > 0 ? ", " + made.SeeThrough + " see-through materials" : "") +
@@ -397,14 +443,15 @@ public partial class Game
     }
 
     // ------------------------------------------------------------------ the map
-    void SetMap(GameObject root, string name)
+    void SetMap(GameObject root, string name, bool metres = false)
     {
         ClearLevel();
         mapRoot = root;
         mapName = name;
-        // a file in centimetres: a hundred times a town
+        // a file in centimetres: a hundred times a town (a GMod map's already in metres: its 3D skybox, drawn 16 times
+        // its size round the town, would have made it look like one)
         Bounds b = MapBounds();
-        if (b.size.magnitude > 4000f) root.transform.localScale *= 0.01f;
+        if (!metres && b.size.magnitude > 4000f) root.transform.localScale *= 0.01f;
         root.transform.localScale *= mapScale;
         foreach (var mf in root.GetComponentsInChildren<MeshFilter>())
         {
@@ -428,6 +475,8 @@ public partial class Game
         if (mapRoot != null)
             foreach (var r in mapRoot.GetComponentsInChildren<Renderer>())
             {
+                // a GMod map's sky (its 3D skybox round the town) and water: not the ground you play on
+                if (r.gameObject.name.Contains("[nocollide]")) continue;
                 if (any) b.Encapsulate(r.bounds);
                 else b = r.bounds;
                 any = true;

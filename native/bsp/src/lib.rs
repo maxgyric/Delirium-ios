@@ -270,7 +270,7 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
             let models = g.order.iter().filter(|p| p.ends_with(".mdl")).count();
             return Err(if models > 0 { format!("\"{}\" has no map ({models} models: player models aren't read yet)", g.name) } else { format!("\"{}\" has no map in it", g.name) });
         };
-        let d = g.read(m).unwrap_or_default().to_vec();
+        let d = g.read(m).unwrap_or_default();
         let from = format!("{} ({}{})", m.trim_start_matches("maps/"), g.name, if maps.len() > 1 { format!(", one of its {} maps", maps.len()) } else { String::new() });
         (d, Some(g), from)
     } else {
@@ -323,8 +323,8 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
     let tris: usize = map.batches.values().map(|b| b.pos.len() / 3).sum();
     missing.sort();
     Ok(format!(
-        "{}v{} {} triangles, {} materials, {} textured ({} packs{}); {} models placed{}; {}{} faces of the 3D skybox drawn round it, {} tool faces left out{}",
-        if from.is_empty() { String::new() } else { format!("{from}: ") }, map.version, tris, map.batches.len(), tex.len(), content.packs(),
+        "{}v{}, light x{:.1}, {} triangles, {} materials, {} textured ({} packs{}); {} models placed{}; {}{} faces of the 3D skybox drawn round it, {} tool faces left out{}",
+        if from.is_empty() { String::new() } else { format!("{from}: ") }, map.version, map.exposure, tris, map.batches.len(), tex.len(), content.packs(),
         if content.missing_archives > 0 { format!(", {} of their archives missing", content.missing_archives) } else { String::new() },
         placed,
         if unplaced.is_empty() { String::new() } else { format!(" ({} models not found, e.g. {})", unplaced.len(), unplaced.iter().take(2).cloned().collect::<Vec<_>>().join(", ")) },
