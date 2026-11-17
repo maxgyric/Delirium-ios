@@ -253,6 +253,9 @@ public partial class Game
         }
         foreach (var m in meshes)
             if (m != null) DestroyImmediate(m);
+        foreach (var m in twoSided)
+            if (m != null) DestroyImmediate(m);
+        twoSided.Clear();
         mapTextures = new List<Texture2D>();
         DeliriumRagdolls.SandboxForget();
         GC.Collect();
@@ -461,7 +464,7 @@ public partial class Game
             if (mf.sharedMesh == null || mf.sharedMesh.GetIndexCount(0) < 3) continue;
             if (mf.gameObject.name.Contains("[nocollide]")) continue; // a GMod map's water: drawn, not stood on
             var col = mf.gameObject.AddComponent<MeshCollider>();
-            col.sharedMesh = mf.sharedMesh;
+            col.sharedMesh = metres ? TwoSided(mf.sharedMesh) : mf.sharedMesh;
             level.Add(col);
             DeliriumRagdolls.SandboxWarm(col); // its triangles ready for Delirium (no hitch at the first ragdoll)
         }
@@ -469,6 +472,30 @@ public partial class Game
         // The same picture; a map of hundreds of pieces far cheaper to draw. (Its colliders keep their own meshes.)
         StaticBatchingUtility.Combine(root);
         PlaceOnMap();
+    }
+
+    // A GMod map's surfaces are drawn from one side (the side you're meant to see: a brush's other faces were taken
+    // out when the map was made), and the hero's mover, like PhysX's queries, goes through a triangle from behind.
+    // Solid both ways for the physics: a copy with each triangle twice, once each way round.
+    List<Mesh> twoSided = new List<Mesh>();
+
+    Mesh TwoSided(Mesh m)
+    {
+        var t = m.triangles;
+        var both = new int[t.Length * 2];
+        Array.Copy(t, both, t.Length);
+        for (int i = 0; i < t.Length; i += 3)
+        {
+            both[t.Length + i] = t[i];
+            both[t.Length + i + 1] = t[i + 2];
+            both[t.Length + i + 2] = t[i + 1];
+        }
+        var c = new Mesh { name = m.name + " (both sides)" };
+        if (m.vertexCount > 65000) c.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        c.vertices = m.vertices;
+        c.triangles = both;
+        twoSided.Add(c);
+        return c;
     }
 
     Bounds MapBounds()
@@ -556,6 +583,9 @@ public partial class Game
             mapOwned = null;
         }
         mapTextures = new List<Texture2D>();
+        foreach (var m in twoSided)
+            if (m != null) Destroy(m);
+        twoSided.Clear();
         DeliriumRagdolls.SandboxForget();
         Resources.UnloadUnusedAssets();
         GC.Collect();

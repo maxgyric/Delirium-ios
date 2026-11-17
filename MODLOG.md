@@ -551,3 +551,10 @@ files (default.xex, the three exported files, the archives) are picked by the la
   can't, so the sky camera gets a line through Source's curve at 30% and 100% of the skybox's farthest distance.
   SkyCamera swaps RenderSettings fog in OnPreRender/OnPostRender and turns shadows off while it draws.
 - examples/finddbg.rs: material/texture lookup from a .gma's map pakfile (debugging).
+
+## GMod maps: solid from both sides (2026-11-17, 15:10)
+- User: walks through walls on most maps, and from the other side they're see-through. Source surfaces are
+  one-sided (vbsp removes a brush's faces toward the void / inside other brushes); PhysX queries and Unity's
+  CharacterController sweeps skip a triangle hit from behind. GMod maps' colliders now use a copy of each mesh
+  with every triangle twice (both windings): solid both ways (Models.TwoSided; freed with the map). The drawing
+  stays one-sided like GMod's (from behind a face there's nothing to see, in GMod too).
