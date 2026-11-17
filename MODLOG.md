@@ -458,3 +458,11 @@ files (default.xex, the three exported files, the archives) are picked by the la
   info_player_start. gm_construct: 29k triangles, 184 materials, 492 skybox faces out; renders right (pond, hills).
   Sandbox: .bsp in the files list (Map only), converted on use (dbsp_convert -> temporaryCachePath), a "GMod map
   (.bsp)..." button (the same picker, now taking .bsp), no colliders on [nocollide] meshes.
+- Stage 2, textures: vpk.rs (v1/v2 dir trees, archives beside, preload bytes), content.rs (the pakfile zip:
+  stored/deflate; packs: garrysmod first, then hl2, then the rest; loose folders with "materials"; VMT KeyValues:
+  $basetexture, $translucent, $alphatest, "patch" includes; PNG writer: Sub filter, zlib level 3), vtf.rs (7.0-7.5,
+  resources in 7.3+, the largest mip <= 512, DXT1/3/5 and 8-bit formats to RGBA). A picture once in the .glb however
+  many materials (cubemap patches) use it. gm_construct with garrysmod + hl2_misc + hl2_textures: 181 of 184
+  materials textured (glass and water's beneath have none), 16.5 MB, 0.75 s here; renders right. On the phone the
+  .glb is cached (temporaryCachePath, keyed by the map's size/time and the packs in mods) and its line kept.
+  Packs looked for under Documents/mods (any depth to 4), the map's folder and Documents.

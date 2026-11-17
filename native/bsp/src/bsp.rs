@@ -62,6 +62,8 @@ pub struct Map {
     pub entities: Vec<HashMap<String, String>>,
     /// faces left out: (in the 3D skybox, tools / sky / triggers)
     pub skipped: (usize, usize),
+    /// where its pakfile (a zip of its own materials) is in the file
+    pub pak: (usize, usize),
 }
 
 const SURF_SKY2D: i32 = 0x2;
@@ -296,7 +298,8 @@ impl Map {
                 }
             }
         }
-        Ok(Map { version, materials, batches, entities, skipped })
+        let pak = (lumps[40].ofs, lumps[40].len);
+        Ok(Map { version, materials, batches, entities, skipped, pak })
     }
 
     /// Where a player starts (its origin, yaw in degrees), if the map says

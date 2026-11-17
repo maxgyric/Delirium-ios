@@ -12,3 +12,4 @@ name = "delirium_bsp"
 crate-type = ["rlib"]
 
 [dependencies]
+miniz_oxide = "0.8"

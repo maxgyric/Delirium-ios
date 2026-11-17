@@ -74,31 +74,57 @@ public partial class Game
 #else
     const string BspDll = "delirium_bsp";
 #endif
-    [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dbsp_convert(byte[] bsp, byte[] glb);
+    [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dbsp_convert(byte[] bsp, byte[] glb, byte[] roots, int maxSide);
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dbsp_error(byte[] text, int cap);
 
     static bool IsBsp(string path) => path.EndsWith(".bsp", StringComparison.OrdinalIgnoreCase);
 
-    // A Garry's Mod (Source) map as a .glb (the native library reads the .bsp; written to the cache, read back):
-    // its bytes, or null and why.
+    // A Garry's Mod (Source) map as a .glb (the native library reads the .bsp and finds its textures: in the map, in
+    // the game's packs (*_dir.vpk with their _000.vpk...) and "materials" folders you put anywhere in mods): its bytes,
+    // or null and why. Kept in the cache till the map or the packs change (its textures take a while to make).
     static byte[] BspToGlb(string path, out string note)
     {
         note = "";
-        string glb = Path.Combine(Application.temporaryCachePath, Path.GetFileNameWithoutExtension(path) + ".bsp.glb");
+        string mods = ModsDir();
+        long stamp = 0;
+        try
+        {
+            if (Directory.Exists(mods))
+                foreach (var f in Directory.GetFiles(mods, "*.vpk", SearchOption.AllDirectories)) stamp += new FileInfo(f).Length % 1000003;
+        }
+        catch (Exception) { }
+        var fi = new FileInfo(path);
+        string glb = Path.Combine(Application.temporaryCachePath, Path.GetFileNameWithoutExtension(path) + "_" + fi.Length + "_" + fi.LastWriteTimeUtc.Ticks + "_" + stamp + ".bsp.glb");
+        string info = glb + ".txt";
+        if (File.Exists(glb))
+        {
+            try { note = File.Exists(info) ? File.ReadAllText(info) : "(cached)"; } catch (Exception) { }
+            return File.ReadAllBytes(glb);
+        }
+        // older conversions of this map: gone
+        try
+        {
+            foreach (var old in Directory.GetFiles(Application.temporaryCachePath, Path.GetFileNameWithoutExtension(path) + "_*.bsp.glb*")) File.Delete(old);
+        }
+        catch (Exception) { }
+        string roots = mods + "|" + Path.GetDirectoryName(path) + "|" + Application.persistentDataPath;
         int r;
-        try { r = dbsp_convert(System.Text.Encoding.UTF8.GetBytes(path + "\0"), System.Text.Encoding.UTF8.GetBytes(glb + "\0")); }
+        try
+        {
+            r = dbsp_convert(System.Text.Encoding.UTF8.GetBytes(path + "\0"), System.Text.Encoding.UTF8.GetBytes(glb + "\0"),
+                System.Text.Encoding.UTF8.GetBytes(roots + "\0"), 512);
+        }
         catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException)
         {
             note = "this build can't read GMod maps";
             return null;
         }
-        var buf = new byte[1024];
+        var buf = new byte[2048];
         int n = dbsp_error(buf, buf.Length);
         note = System.Text.Encoding.UTF8.GetString(buf, 0, Mathf.Max(0, n));
         if (r < 0) return null;
-        byte[] data = File.ReadAllBytes(glb);
-        try { File.Delete(glb); } catch (Exception) { }
-        return data;
+        try { File.WriteAllText(info, note); } catch (Exception) { }
+        return File.ReadAllBytes(glb);
     }
 
     void RefreshFiles()
@@ -181,7 +207,7 @@ public partial class Game
                 Pixels();
                 PlayerPrefs.SetString(kPrefMap, path);
                 if (source) Debug.Log("[Sandbox] GMod map " + name + ": " + bspNote);
-                filesNote = "Map: " + name + (source ? " (GMod map: shapes and colours; textures to come)" : "") + " (" + made.Triangles + " triangles, " + made.Textures + " textures" +
+                filesNote = "Map: " + name + (source ? " (GMod map: " + bspNote + ")" : "") + " (" + made.Triangles + " triangles, " + made.Textures + " textures" +
                             (made.TexturesFailed > 0 ? ", " + made.TexturesFailed + " didn't load: " + made.TextureWhy : "") +
                             (made.SeeThrough > 0 ? ", " + made.SeeThrough + " see-through materials" : "") +
                             (made.Coloured > 0 ? ", shading in " + made.Coloured + " meshes" : "") + ").";

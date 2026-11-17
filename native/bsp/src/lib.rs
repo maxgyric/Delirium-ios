@@ -2,10 +2,13 @@
 //! .glb the sandbox loads like any other map (GlbScene), cached beside its other files. Nothing of the game is in
 //! here; the map is yours.
 //!
-//! Stage 1: the map's shape (brushes, brush entities, displacements), each material's average colour, its texture
-//! coordinates, where you start (Spawn). Water is drawn but not stood on ([nocollide] in its name).
+//! The map's shape (brushes, brush entities, displacements), its textures (its pakfile's, your game's packs'), where
+//! you start (Spawn). Water is drawn but not stood on ([nocollide] in its name).
 
 pub mod bsp;
+pub mod content;
+pub mod vpk;
+pub mod vtf;
 
 use bsp::{Map, V3};
 use std::ffi::{CStr, c_char};
@@ -19,7 +22,13 @@ fn gl(v: V3) -> V3 { [v[0] * SCALE, v[2] * SCALE, -v[1] * SCALE] }
 fn gln(v: V3) -> V3 { [v[0], v[2], -v[1]] }
 
 /// The map as a .glb: a mesh a material, its nodes under one root, a "Spawn" node where you start.
-pub fn to_glb(map: &Map) -> Vec<u8> {
+/// A material's picture for the .glb: its PNG, and how it's drawn (0 opaque, 1 cut out, 2 see-through)
+pub struct Tex {
+    pub png: std::rc::Rc<Vec<u8>>, // shared by the materials with the same picture (a map's cubemap copies)
+    pub mode: u8,
+}
+
+pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8> {
     let mut bin: Vec<u8> = vec![];
     let mut accessors = vec![];
     let mut views = vec![];
@@ -27,6 +36,9 @@ pub fn to_glb(map: &Map) -> Vec<u8> {
     let mut materials = vec![];
     let mut nodes = vec![];
     let mut children = vec![];
+    let mut images = vec![];
+    let mut textures = vec![];
+    let mut seen: Vec<(*const Vec<u8>, usize)> = vec![]; // a picture once, its texture's number
     let mut keys: Vec<&usize> = map.batches.keys().collect();
     keys.sort();
     let push = |bytes: &[u8], target: u32, bin: &mut Vec<u8>, views: &mut Vec<String>| -> usize {
@@ -69,13 +81,35 @@ pub fn to_glb(map: &Map) -> Vec<u8> {
         accessors.push(format!(r#"{{"bufferView":{vu},"componentType":5126,"count":{n},"type":"VEC2"}}"#));
         accessors.push(format!(r#"{{"bufferView":{vi},"componentType":5125,"count":{n},"type":"SCALAR"}}"#));
         let c = m.map(|m| m.color).unwrap_or([0.5; 3]);
-        let alpha = if water { 0.6 } else if glass { 0.35 } else { 1.0 };
-        let c = if water { [c[0] * 0.6, c[1] * 0.8, c[2].max(0.3)] } else { c };
         let mi = materials.len();
-        materials.push(format!(
-            r#"{{"name":{},"pbrMetallicRoughness":{{"baseColorFactor":[{},{},{},{alpha}],"metallicFactor":0,"roughnessFactor":0.9}}{}}}"#,
-            json(&name), c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0), if alpha < 1.0 { r#","alphaMode":"BLEND""# } else { "" }
-        ));
+        if let Some(t) = tex.get(&k) {
+            // its own texture (from the map's pakfile or your game's packs)
+            let key = std::rc::Rc::as_ptr(&t.png);
+            let ti = match seen.iter().find(|s| s.0 == key) {
+                Some(s) => s.1,
+                None => {
+                    let vimg = push(&t.png, 0, &mut bin, &mut views);
+                    if let Some(v) = views.last_mut() { *v = v.replace(r#","target":0"#, ""); }
+                    images.push(format!(r#"{{"bufferView":{vimg},"mimeType":"image/png"}}"#));
+                    textures.push(format!(r#"{{"source":{}}}"#, images.len() - 1));
+                    seen.push((key, textures.len() - 1));
+                    textures.len() - 1
+                }
+            };
+            let alpha = if water && t.mode == 0 { 0.6 } else { 1.0 };
+            let mode = match (t.mode, alpha < 1.0) { (2, _) | (_, true) => r#","alphaMode":"BLEND""#, (1, _) => r#","alphaMode":"MASK","alphaCutoff":0.5"#, _ => "" };
+            materials.push(format!(
+                r#"{{"name":{},"pbrMetallicRoughness":{{"baseColorTexture":{{"index":{ti}}},"baseColorFactor":[1,1,1,{alpha}],"metallicFactor":0,"roughnessFactor":0.9}}{mode}}}"#,
+                json(&name)
+            ));
+        } else {
+            let alpha = if water { 0.6 } else if glass { 0.35 } else { 1.0 };
+            let c = if water { [c[0] * 0.6, c[1] * 0.8, c[2].max(0.3)] } else { c };
+            materials.push(format!(
+                r#"{{"name":{},"pbrMetallicRoughness":{{"baseColorFactor":[{},{},{},{alpha}],"metallicFactor":0,"roughnessFactor":0.9}}{}}}"#,
+                json(&name), c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0), if alpha < 1.0 { r#","alphaMode":"BLEND""# } else { "" }
+            ));
+        }
         let mesh_name = if water { format!("{name} [nocollide]") } else { name.clone() };
         meshes.push(format!(r#"{{"name":{},"primitives":[{{"attributes":{{"POSITION":{a0},"NORMAL":{},"TEXCOORD_0":{}}},"indices":{},"material":{mi}}}]}}"#, json(&mesh_name), a0 + 1, a0 + 2, a0 + 3));
         nodes.push(format!(r#"{{"name":{},"mesh":{}}}"#, json(&mesh_name), meshes.len() - 1));
@@ -92,8 +126,10 @@ pub fn to_glb(map: &Map) -> Vec<u8> {
     nodes.insert(0, format!(r#"{{"name":"bsp","children":[{}]}}"#, kids.join(",")));
     while bin.len() % 4 != 0 { bin.push(0); }
     let json_text = format!(
-        r#"{{"asset":{{"version":"2.0","generator":"Delirium Sandbox (Source map)"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{}],"meshes":[{}],"materials":[{}],"accessors":[{}],"bufferViews":[{}],"buffers":[{{"byteLength":{}}}]}}"#,
-        nodes.join(","), meshes.join(","), materials.join(","), accessors.join(","), views.join(","), bin.len()
+        r#"{{"asset":{{"version":"2.0","generator":"Delirium Sandbox (Source map)"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{}],"meshes":[{}],"materials":[{}],{}"accessors":[{}],"bufferViews":[{}],"buffers":[{{"byteLength":{}}}]}}"#,
+        nodes.join(","), meshes.join(","), materials.join(","),
+        if images.is_empty() { String::new() } else { format!(r#""images":[{}],"textures":[{}],"#, images.join(","), textures.join(",")) },
+        accessors.join(","), views.join(","), bin.len()
     );
     let mut j = json_text.into_bytes();
     while j.len() % 4 != 0 { j.push(b' '); }
@@ -125,28 +161,60 @@ fn json(s: &str) -> String {
     o
 }
 
-/// A .bsp file to a .glb file: a line about it (triangles, materials), or the reason it couldn't be.
-pub fn convert(bsp_path: &str, glb_path: &str) -> Result<String, String> {
+/// A .bsp file to a .glb file, its textures looked for in its pakfile and under `roots` (your game's packs and
+/// folders): a line about it (triangles, materials, textures found), or the reason it couldn't be.
+pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max_side: usize) -> Result<String, String> {
     let data = std::fs::read(bsp_path).map_err(|e| format!("{bsp_path}: {e}"))?;
     let map = Map::read(&data)?;
-    let glb = to_glb(&map);
+    let pak = data.get(map.pak.0..map.pak.0 + map.pak.1).unwrap_or_default();
+    let content = content::Content::new(pak, roots);
+    let mut tex = std::collections::HashMap::new();
+    let mut missing = vec![];
+    // one decode a texture (materials share them)
+    let mut done: std::collections::HashMap<String, Option<std::rc::Rc<Vec<u8>>>> = std::collections::HashMap::new();
+    for &k in map.batches.keys() {
+        let Some(m) = map.materials.get(k) else { continue };
+        let vmt = content.material(&m.name);
+        let base = vmt.as_ref().and_then(|v| v.base.clone()).unwrap_or_else(|| m.name.clone());
+        let base = base.replace('\\', "/").to_ascii_lowercase();
+        let pic = done.entry(base.clone()).or_insert_with(|| {
+            content.find(&format!("materials/{}.vtf", base.trim_end_matches(".vtf"))).and_then(|v| vtf::decode(&v, max_side).ok()).map(|(w, h, rgba)| std::rc::Rc::new(content::png(w, h, &rgba)))
+        });
+        match pic {
+            Some(png) => {
+                let mode = match &vmt { Some(v) if v.translucent => 2, Some(v) if v.alphatest => 1, _ => 0 };
+                tex.insert(k, Tex { png: png.clone(), mode });
+            }
+            None => missing.push(m.name.clone()),
+        }
+    }
+    let glb = to_glb(&map, &tex);
     std::fs::write(glb_path, &glb).map_err(|e| format!("{glb_path}: {e}"))?;
     let tris: usize = map.batches.values().map(|b| b.pos.len() / 3).sum();
-    Ok(format!("v{} {} triangles, {} materials, {} faces of the 3D skybox and {} tool faces left out", map.version, tris, map.batches.len(), map.skipped.0, map.skipped.1))
+    missing.sort();
+    Ok(format!(
+        "v{} {} triangles, {} materials, {} textured ({} packs{}); {} faces of the 3D skybox and {} tool faces left out{}",
+        map.version, tris, map.batches.len(), tex.len(), content.packs(),
+        if content.missing_archives > 0 { format!(", {} of their archives missing", content.missing_archives) } else { String::new() },
+        map.skipped.0, map.skipped.1,
+        if missing.is_empty() { String::new() } else { format!("; no texture for {} (e.g. {})", missing.len(), missing.iter().take(3).cloned().collect::<Vec<_>>().join(", ")) }
+    ))
 }
 
 static ERR: Mutex<String> = Mutex::new(String::new());
 
-/// For C# (Models.cs): `bsp` (a .bsp) written to `glb` (a .glb). 0, or -1 (dbsp_error says why); `dbsp_error`
+/// For C# (Models.cs): `bsp` (a .bsp) written to `glb` (a .glb), its textures from its pakfile and the packs and
+/// folders under `roots` ('|' between them), no bigger than `max_side`. 0, or -1 (dbsp_error says why); `dbsp_error`
 /// afterwards has the line about it either way.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn dbsp_convert(bsp: *const c_char, glb: *const c_char) -> i32 {
+pub unsafe extern "C" fn dbsp_convert(bsp: *const c_char, glb: *const c_char, roots: *const c_char, max_side: i32) -> i32 {
     let text = |p: *const c_char| if p.is_null() { None } else { unsafe { CStr::from_ptr(p) }.to_str().ok().map(str::to_owned) };
     let (Some(b), Some(g)) = (text(bsp), text(glb)) else {
         *ERR.lock().unwrap() = "no path".into();
         return -1;
     };
-    match std::panic::catch_unwind(|| convert(&b, &g)) {
+    let roots: Vec<std::path::PathBuf> = text(roots).unwrap_or_default().split('|').filter(|s| !s.is_empty()).map(std::path::PathBuf::from).collect();
+    match std::panic::catch_unwind(|| convert(&b, &g, &roots, max_side.clamp(16, 4096) as usize)) {
         Ok(Ok(s)) => { *ERR.lock().unwrap() = s; 0 }
         Ok(Err(e)) => { *ERR.lock().unwrap() = e; -1 }
         Err(_) => { *ERR.lock().unwrap() = "the map reader failed (a bug: tell Claude which map)".into(); -1 }
