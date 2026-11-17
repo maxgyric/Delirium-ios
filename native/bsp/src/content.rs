@@ -18,6 +18,7 @@ pub fn read_zip(z: &[u8]) -> HashMap<String, Vec<u8>> {
         if z.get(at..at + 4) != Some(&[0x50, 0x4b, 0x01, 0x02]) { break; }
         let method = u16_at(at + 10);
         let csize = u32_at(at + 20);
+        let full = u32_at(at + 24);
         let (nlen, xlen, clen) = (u16_at(at + 28), u16_at(at + 30), u16_at(at + 32));
         let local = u32_at(at + 42);
         let name = String::from_utf8_lossy(z.get(at + 46..at + 46 + nlen).unwrap_or_default()).replace('\\', "/").to_ascii_lowercase();
@@ -28,7 +29,16 @@ pub fn read_zip(z: &[u8]) -> HashMap<String, Vec<u8>> {
         let bytes = match method {
             0 => d.to_vec(),
             8 => match miniz_oxide::inflate::decompress_to_vec(d) { Ok(b) => b, Err(_) => continue },
-            _ => continue, // LZMA (14): not read yet
+            14 => {
+                // zip's LZMA: 4 bytes (version, properties' size), 5 properties, the stream; its size the entry's
+                if d.len() < 9 { continue; }
+                let size = full as u64;
+                let mut alone = d[4..9].to_vec();
+                alone.extend_from_slice(&size.to_le_bytes());
+                alone.extend_from_slice(&d[9..]);
+                match crate::gma::unlzma(&alone) { Ok(b) => b, Err(_) => continue }
+            }
+            _ => continue,
         };
         out.insert(name, bytes);
     }
@@ -37,6 +47,7 @@ pub fn read_zip(z: &[u8]) -> HashMap<String, Vec<u8>> {
 
 pub struct Content {
     pak: HashMap<String, Vec<u8>>,
+    gma: Option<crate::gma::Gma>, // the addon the map came in
     vpks: Vec<Vpk>,
     loose: Vec<PathBuf>,
     pub missing_archives: usize,
@@ -57,7 +68,7 @@ fn scan(root: &Path, depth: usize, vpks: &mut Vec<PathBuf>, loose: &mut Vec<Path
 }
 
 impl Content {
-    pub fn new(pakfile: &[u8], roots: &[PathBuf]) -> Content {
+    pub fn new(pakfile: &[u8], roots: &[PathBuf], gma: Option<crate::gma::Gma>) -> Content {
         let (mut vp, mut loose) = (vec![], vec![]);
         for r in roots { scan(r, 4, &mut vp, &mut loose); }
         vp.sort();
@@ -74,7 +85,7 @@ impl Content {
                 vpks.push(v);
             }
         }
-        Content { pak: read_zip(pakfile), vpks, loose, missing_archives }
+        Content { pak: read_zip(pakfile), gma, vpks, loose, missing_archives }
     }
 
     pub fn packs(&self) -> usize { self.vpks.len() }
@@ -82,6 +93,7 @@ impl Content {
     pub fn find(&self, path: &str) -> Option<Vec<u8>> {
         let path = path.replace('\\', "/").to_ascii_lowercase();
         if let Some(b) = self.pak.get(&path) { return Some(b.clone()); }
+        if let Some(b) = self.gma.as_ref().and_then(|g| g.read(&path)) { return Some(b.to_vec()); }
         for v in &self.vpks {
             if let Some(b) = v.read(&path) { return Some(b); }
         }

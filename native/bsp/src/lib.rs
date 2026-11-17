@@ -7,6 +7,7 @@
 
 pub mod bsp;
 pub mod content;
+pub mod gma;
 pub mod vpk;
 pub mod vtf;
 
@@ -164,10 +165,23 @@ fn json(s: &str) -> String {
 /// A .bsp file to a .glb file, its textures looked for in its pakfile and under `roots` (your game's packs and
 /// folders): a line about it (triangles, materials, textures found), or the reason it couldn't be.
 pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max_side: usize) -> Result<String, String> {
-    let data = std::fs::read(bsp_path).map_err(|e| format!("{bsp_path}: {e}"))?;
+    // a Workshop addon (.gma, maybe LZMA-packed): its first map, its own files first for its textures
+    let (data, gma, from) = if bsp_path.to_ascii_lowercase().ends_with(".gma") {
+        let g = gma::Gma::open(std::path::Path::new(bsp_path))?;
+        let maps = g.maps();
+        let Some(m) = maps.first() else {
+            let models = g.order.iter().filter(|p| p.ends_with(".mdl")).count();
+            return Err(if models > 0 { format!("\"{}\" has no map ({models} models: player models aren't read yet)", g.name) } else { format!("\"{}\" has no map in it", g.name) });
+        };
+        let d = g.read(m).unwrap_or_default().to_vec();
+        let from = format!("{} ({}{})", m.trim_start_matches("maps/"), g.name, if maps.len() > 1 { format!(", 1 of {} maps", maps.len()) } else { String::new() });
+        (d, Some(g), from)
+    } else {
+        (std::fs::read(bsp_path).map_err(|e| format!("{bsp_path}: {e}"))?, None, String::new())
+    };
     let map = Map::read(&data)?;
     let pak = data.get(map.pak.0..map.pak.0 + map.pak.1).unwrap_or_default();
-    let content = content::Content::new(pak, roots);
+    let content = content::Content::new(pak, roots, gma);
     let mut tex = std::collections::HashMap::new();
     let mut missing = vec![];
     // one decode a texture (materials share them)
@@ -193,8 +207,8 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
     let tris: usize = map.batches.values().map(|b| b.pos.len() / 3).sum();
     missing.sort();
     Ok(format!(
-        "v{} {} triangles, {} materials, {} textured ({} packs{}); {} faces of the 3D skybox and {} tool faces left out{}",
-        map.version, tris, map.batches.len(), tex.len(), content.packs(),
+        "{}v{} {} triangles, {} materials, {} textured ({} packs{}); {} faces of the 3D skybox and {} tool faces left out{}",
+        if from.is_empty() { String::new() } else { format!("{from}: ") }, map.version, tris, map.batches.len(), tex.len(), content.packs(),
         if content.missing_archives > 0 { format!(", {} of their archives missing", content.missing_archives) } else { String::new() },
         map.skipped.0, map.skipped.1,
         if missing.is_empty() { String::new() } else { format!("; no texture for {} (e.g. {})", missing.len(), missing.iter().take(3).cloned().collect::<Vec<_>>().join(", ")) }

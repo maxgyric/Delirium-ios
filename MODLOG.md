@@ -466,3 +466,9 @@ files (default.xex, the three exported files, the archives) are picked by the la
   materials textured (glass and water's beneath have none), 16.5 MB, 0.75 s here; renders right. On the phone the
   .glb is cached (temporaryCachePath, keyed by the map's size/time and the packs in mods) and its line kept.
   Packs looked for under Documents/mods (any depth to 4), the map's folder and Documents.
+- (03:11 user) GMA. gma.rs: GMAD v1-3 (required content list in v>1, name, description, author, version, the file
+  table {index, path, i64 size, crc} till index 0, then the bytes), LZMA "alone" Workshop downloads unpacked
+  (lzma-rs). A .gma's first maps/*.bsp converted, the addon's own files searched for textures (after the pakfile).
+  Compressed BSP lumps ("LZMA" id, size, packed size, 5 properties) and zip LZMA entries (method 14) read too.
+  User's samples: gm_stairs (The Ultimate Ragdoll Testing Map, plain .gma) and gm_falleritus8_2008 (an LZMA Workshop
+  cache file): both convert and render right. Sandbox: .gma listed as a GMod map, the picker takes .gma.

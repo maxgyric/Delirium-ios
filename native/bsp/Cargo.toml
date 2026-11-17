@@ -13,3 +13,4 @@ crate-type = ["rlib"]
 
 [dependencies]
 miniz_oxide = "0.8"
+lzma-rs = "0.3"

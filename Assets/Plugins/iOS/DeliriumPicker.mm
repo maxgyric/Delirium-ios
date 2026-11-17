@@ -1,7 +1,7 @@
 // The Files app's own picker for Delirium Sandbox (iOS):
 //  - DP_PickFolder: a folder with your game's files, anywhere the Files app reaches (kept open across launches by a
 //    bookmark: DP_RestoreFolder);
-//  - DP_PickModels: .glb / .vrm files (and GMod maps, .bsp), MOVED into the app's Documents/mods (copied then the original removed when a
+//  - DP_PickModels: .glb / .vrm files (and GMod maps, .bsp / .gma), MOVED into the app's Documents/mods (copied then the original removed when a
 //    plain move isn't allowed there);
 //  - DP_PickPackage: files (a VRChat .unitypackage; a .blend / .zip, with a textures .zip) copied into the app's tmp
 //    folder for the import to read.
@@ -59,9 +59,9 @@ static void DPKeep(NSURL* u)
     for (NSURL* u in urls)
     {
         NSString* ext = u.pathExtension.lowercaseString;
-        if (![ext isEqualToString:@"glb"] && ![ext isEqualToString:@"vrm"] && ![ext isEqualToString:@"bsp"])
+        if (![ext isEqualToString:@"glb"] && ![ext isEqualToString:@"vrm"] && ![ext isEqualToString:@"bsp"] && ![ext isEqualToString:@"gma"])
         {
-            [notes addObject:[u.lastPathComponent stringByAppendingString:@" isn't a .glb, .vrm or .bsp"]];
+            [notes addObject:[u.lastPathComponent stringByAppendingString:@" isn't a .glb, .vrm, .bsp or .gma"]];
             continue;
         }
         if ([u.path hasPrefix:mods]) continue; // already there

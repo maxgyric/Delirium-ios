@@ -77,7 +77,8 @@ public partial class Game
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dbsp_convert(byte[] bsp, byte[] glb, byte[] roots, int maxSide);
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dbsp_error(byte[] text, int cap);
 
-    static bool IsBsp(string path) => path.EndsWith(".bsp", StringComparison.OrdinalIgnoreCase);
+    // a GMod map: a .bsp, or a Workshop addon (.gma) with one in it
+    static bool IsBsp(string path) => path.EndsWith(".bsp", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".gma", StringComparison.OrdinalIgnoreCase);
 
     // A Garry's Mod (Source) map as a .glb (the native library reads the .bsp and finds its textures: in the map, in
     // the game's packs (*_dir.vpk with their _000.vpk...) and "materials" folders you put anywhere in mods): its bytes,
@@ -138,6 +139,7 @@ public partial class Game
                 found.AddRange(Directory.GetFiles(filesDir, "*.glb", SearchOption.AllDirectories));
                 found.AddRange(Directory.GetFiles(filesDir, "*.vrm", SearchOption.AllDirectories)); // VRM avatars are .glb inside
                 found.AddRange(Directory.GetFiles(filesDir, "*.bsp", SearchOption.AllDirectories)); // Garry's Mod / Source maps
+                found.AddRange(Directory.GetFiles(filesDir, "*.gma", SearchOption.AllDirectories)); // Workshop addons with a map
             }
             // VRChat packages to import (put there by hand)
             var pk = new List<string>();
@@ -152,6 +154,7 @@ public partial class Game
                 found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.glb"));
                 found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.vrm"));
                 found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.bsp"));
+                found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.gma"));
             }
             files = found.ToArray();
             Array.Sort(files, StringComparer.OrdinalIgnoreCase);
@@ -469,7 +472,8 @@ public partial class Game
         Info("Characters: a rigged human as .glb or .vrm: Mixamo, VRM / Unity humanoid, Unreal, Source, Biped, GTA V, Rigify skeletons " +
              "(a .fbx: in Blender File > Import > FBX, then File > Export > glTF 2.0, format glTF Binary). " +
              "Maps: any .glb; its meshes are the ground and walls. An object named Spawn marks where you start. " +
-             "Garry's Mod / Source maps: the .bsp from garrysmod/maps (or a Workshop map's).");
+             "Garry's Mod / Source maps: a .bsp (garrysmod/maps) or a Workshop addon .gma with a map in it (steamapps/workshop/content/4000, garrysmod/cache/workshop). " +
+             "Their textures: put GMod's .vpk packs (garrysmod_*.vpk, sourceengine/hl2_*.vpk...) in mods/gmod.");
         if (Application.isMobilePlatform)
             Info("Select model: pick .glb / .vrm files anywhere in the Files app: they're moved into Delirium Sandbox > mods (folders inside it are fine, e.g. mods/maps).");
         else
@@ -480,7 +484,7 @@ public partial class Game
             if (dir != filesDir) filesDir = dir;
         }
         if (CanPick && GUILayout.Button("Select model...", btn, GUILayout.Height(36f))) SelectModels(); // moved into mods
-        if (CanPick && GUILayout.Button("GMod map (.bsp)...", btn, GUILayout.Height(36f))) SelectModels(); // the same picker: a .bsp goes to mods too
+        if (CanPick && GUILayout.Button("GMod map (.bsp / .gma)...", btn, GUILayout.Height(36f))) SelectModels(); // the same picker: they go to mods too
         if (GUILayout.Button("Refresh", btn, GUILayout.Height(32f)))
         {
             filesDir = filesDir.Trim().Trim('"');

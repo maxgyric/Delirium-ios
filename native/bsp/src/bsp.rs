@@ -130,14 +130,20 @@ impl Map {
                 Lump { ofs: a as usize, len: b as usize, version: c }
             };
         }
-        let lump = |i: usize| -> Result<&[u8], String> {
+        let lump = |i: usize| -> Result<std::borrow::Cow<[u8]>, String> {
             let l = lumps[i];
             let d = data.get(l.ofs..l.ofs + l.len).ok_or(format!("bsp: lump {i} past the end"))?;
-            // compressed lumps ("LZMA" header): not read yet
-            if d.len() >= 4 && &d[0..4] == b"LZMA" { return Err(format!("bsp: lump {i} is compressed (LZMA): not read yet")); }
-            Ok(d)
+            // a compressed lump: "LZMA", its size, the stream's, 5 property bytes, the stream (as an .lzma file)
+            if d.len() >= 17 && &d[0..4] == b"LZMA" {
+                let size = u32::from_le_bytes(d[4..8].try_into().unwrap()) as u64;
+                let mut alone = d[12..17].to_vec();
+                alone.extend_from_slice(&size.to_le_bytes());
+                alone.extend_from_slice(&d[17..]);
+                return crate::gma::unlzma(&alone).map(std::borrow::Cow::Owned).map_err(|e| format!("bsp: lump {i}: {e}"));
+            }
+            Ok(std::borrow::Cow::Borrowed(d))
         };
-        let entities = parse_entities(&String::from_utf8_lossy(lump(0)?));
+        let entities = parse_entities(&String::from_utf8_lossy(&lump(0)?));
         let planes = lump(1)?;
         let texdata = lump(2)?;
         let verts = lump(3)?;
@@ -153,7 +159,7 @@ impl Map {
         let strdata = lump(43)?;
         let strtable = lump(44)?;
         let (p, tx, vx, nd, ti, fc, lf, ed, se, md, di, dv, sd, st) =
-            (R(planes), R(texdata), R(verts), R(nodes), R(texinfo), R(faces), R(leaves), R(edges), R(surfedges), R(models), R(dispinfo), R(dispverts), R(strdata), R(strtable));
+            (R(&planes), R(&texdata), R(&verts), R(&nodes), R(&texinfo), R(&faces), R(&leaves), R(&edges), R(&surfedges), R(&models), R(&dispinfo), R(&dispverts), R(&strdata), R(&strtable));
 
         // materials
         let mut materials = vec![];
@@ -298,7 +304,7 @@ impl Map {
                 }
             }
         }
-        let pak = (lumps[40].ofs, lumps[40].len);
+        let pak = (lumps[40].ofs, lumps[40].len); // (a zip: its entries say how they're packed)
         Ok(Map { version, materials, batches, entities, skipped, pak })
     }
 
