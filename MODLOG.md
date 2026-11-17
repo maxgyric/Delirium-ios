@@ -597,3 +597,7 @@ files (default.xex, the three exported files, the archives) are picked by the la
   (PreviewLayer, at y -3000, main camera excludes it) by a disabled camera into an ARGB RenderTexture (clear
   alpha 0), fog off for the shot. Maps: the addon's maps/thumb/<map>.png (native dgma_file), a png beside a
   .bsp, else the main view (sky camera first) 0.8 s after the map first loads (MapIconLater, from UseFile).
+- (17:30) The turning 3D preview on the right removed (its buttons didn't fit): name, file, in use, and the
+  buttons only. Maps tab froze ~5 s: each map's thumbnail opened its addon (dgma_file; a Workshop .gma is
+  LZMA-packed, unpacked whole on open). Now dgma_thumbs unpacks all of an addon's maps/thumb/*.png at once into
+  icons/thumbs-<hash>/, on a Task; tiles show "no picture" until it's done, then pick it up.

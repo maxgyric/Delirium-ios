@@ -117,6 +117,17 @@ public partial class Game
         return null;
     }
 
+    readonly Dictionary<string, System.Threading.Tasks.Task> thumbJobs = new Dictionary<string, System.Threading.Tasks.Task>();
+    [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dgma_thumbs(byte[] gma, byte[] outDir);
+
+    // where an addon's map pictures are unpacked to (a new version of the file, a new folder)
+    static string ThumbDir(string gma) => Path.Combine(IconDir(), "thumbs-" + Path.GetFileNameWithoutExtension(IconPath(gma)));
+
+    bool ThumbJobRunning(string f)
+    {
+        return f.IndexOf(".gma", StringComparison.OrdinalIgnoreCase) >= 0 && thumbJobs.TryGetValue(FileOf(f), out var j) && !j.IsCompleted;
+    }
+
     void FindMapThumb(string f, string dest)
     {
         try
@@ -125,8 +136,18 @@ public partial class Game
             string map = MapOf(f) ?? Path.GetFileNameWithoutExtension(f);
             if (f.IndexOf(".gma", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                foreach (string inside in new[] { "maps/thumb/" + map + ".png", "maps/" + map + ".png", "maps/thumb/" + map + ".jpg" })
-                    if (dgma_file(System.Text.Encoding.UTF8.GetBytes(FileOf(f) + "\0"), System.Text.Encoding.UTF8.GetBytes(inside + "\0"), System.Text.Encoding.UTF8.GetBytes(dest + "\0")) > 0) return;
+                // the addon's pictures, all its maps' at once, on a thread of its own (opening a Workshop download
+                // unpacks it: seconds, the game stood still for them)
+                string g = FileOf(f);
+                string tdir = ThumbDir(g);
+                string got = Path.Combine(tdir, map + ".png");
+                if (File.Exists(got)) { File.Copy(got, dest, true); return; }
+                if (!thumbJobs.TryGetValue(g, out var job))
+                {
+                    byte[] gb = System.Text.Encoding.UTF8.GetBytes(g + "\0"), db = System.Text.Encoding.UTF8.GetBytes(tdir + "\0");
+                    thumbJobs[g] = System.Threading.Tasks.Task.Run(() => { try { dgma_thumbs(gb, db); } catch (Exception) { } });
+                }
+                if (!thumbJobs[g].IsCompleted) iconTried.Remove(f + "|thumb"); // (looked at again when it's done)
                 return;
             }
             string dir = Path.GetDirectoryName(f) ?? "";
@@ -140,13 +161,6 @@ public partial class Game
     void BrowserUpdate()
     {
         if (!browserOpen) return;
-        // the turning preview
-        if (previewGo != null)
-        {
-            if (!previewDragging) previewYaw += 25f * Time.unscaledDeltaTime;
-            previewGo.transform.rotation = Quaternion.Euler(0f, previewYaw, 0f);
-            Photograph(previewGo, previewRT, previewYaw);
-        }
         // the next character without a picture (a few frames apart: each is a load)
         iconWait -= Time.unscaledDeltaTime;
         if (iconWait > 0f || browserTab != 0) return;
@@ -283,6 +297,8 @@ public partial class Game
         string p = IconPath(f);
         if (File.Exists(p) || cam == null) yield break;
         FindMapThumb(f, p);
+        while (ThumbJobRunning(f)) yield return null; // (its addon's own picture still being unpacked)
+        FindMapThumb(f, p);
         if (File.Exists(p)) yield break;
         var rt = RenderTexture.GetTemporary(384, 216, 24, RenderTextureFormat.ARGB32);
         var was = cam.targetTexture;
@@ -359,7 +375,7 @@ public partial class Game
         y += 46f;
 
         // the detail on the right, the grid on the left
-        float detailW = Mathf.Min(330f, area.width * 0.36f);
+        float detailW = Mathf.Min(260f, area.width * 0.3f);
         var grid = new Rect(x, y, area.width - detailW - 36f, area.yMax - y - 10f);
         var detail = new Rect(grid.xMax + 12f, y, detailW, grid.height);
         var list = Shown();
@@ -399,74 +415,42 @@ public partial class Game
     void DetailGui(Rect d)
     {
         GUI.Box(d, GUIContent.none, chip);
+        if (previewGo != null) ClosePreview();
         if (browserSel == "" || Array.IndexOf(files, browserSel) < 0)
         {
-            GUI.Label(new Rect(d.x + 12f, d.y + 12f, d.width - 24f, 80f), "Touch a picture to see it here.", dim);
-            if (previewGo != null) ClosePreview();
+            GUI.Label(new Rect(d.x + 12f, d.y + 12f, d.width - 24f, 80f), "Touch a picture.", dim);
             return;
         }
         string f = browserSel;
         int kind = KindOf(f);
         float y = d.y + 10f, x = d.x + 10f, wd = d.width - 20f;
-        if (kind == 1)
-        {
-            ShowPreview(f);
-            var pv = new Rect(x, y, wd, wd);
-            if (previewGo != null && previewRT != null)
-            {
-                GUI.DrawTexture(pv, previewRT, ScaleMode.ScaleToFit, true);
-                // a drag across him turns him
-                var e = Event.current;
-                if (e.type == EventType.MouseDown && pv.Contains(e.mousePosition)) previewDragging = true;
-                if (e.type == EventType.MouseUp) previewDragging = false;
-                if (previewDragging && e.type == EventType.MouseDrag) { previewYaw -= e.delta.x * 0.8f; e.Use(); }
-            }
-            else
-            {
-                var icon = IconOf(f);
-                if (icon != null) GUI.DrawTexture(pv, icon, ScaleMode.ScaleToFit, true);
-            }
-            y += wd + 6f;
-        }
-        else
-        {
-            if (previewGo != null) ClosePreview();
-            var icon = IconOf(f);
-            float ph = wd * 0.5625f;
-            if (icon != null) GUI.DrawTexture(new Rect(x, y, wd, ph), icon, ScaleMode.ScaleToFit, true);
-            else GUI.Label(new Rect(x, y, wd, ph), "Its picture is made the first time you load it.", tileNone);
-            y += ph + 6f;
-        }
         GUI.Label(new Rect(x, y, wd, 30f), NameOf(f), new GUIStyle(label) { fontStyle = FontStyle.Bold });
-        y += 28f;
+        y += 30f;
         long size = 0;
         try { size = new FileInfo(FileOf(f)).Length; } catch (Exception) { }
         string from = Path.GetFileName(FileOf(f)) + "  ·  " + (size / 1048576f).ToString("0.0") + " MB" + (IsMdl(f) ? "  ·  GMod player model" : IsBsp(f) ? "  ·  GMod map" : "");
         GUI.Label(new Rect(x, y, wd, 40f), from, dim);
-        y += 40f;
+        y += 42f;
         string use = InUseAs(f);
-        if (use != "") { GUI.Label(new Rect(x, y, wd, 22f), "In use: " + use, lab); y += 24f; }
+        if (use != "") { GUI.Label(new Rect(x, y, wd, 22f), "In use: " + use, lab); y += 26f; }
         if (kind == 1)
         {
-            if (GUI.Button(new Rect(x, y, wd, 40f), "Be him (hero)", btn)) { Use(f, 0); }
-            y += 46f;
-            if (GUI.Button(new Rect(x, y, wd, 40f), "Everyone else", btn)) { Use(f, 1); }
-            y += 46f;
+            if (GUI.Button(new Rect(x, y, wd, 44f), "Be him (hero)", btn)) Use(f, 0);
+            y += 50f;
+            if (GUI.Button(new Rect(x, y, wd, 44f), "Everyone else", btn)) Use(f, 1);
+            y += 50f;
         }
         else
         {
-            if (GUI.Button(new Rect(x, y, wd, 40f), "Load map", btn))
-            {
-                Use(f, 2);
-            }
-            y += 46f;
+            if (GUI.Button(new Rect(x, y, wd, 44f), "Load map", btn)) Use(f, 2);
+            y += 50f;
         }
-        if (GUI.Button(new Rect(x, y, wd, 34f), browserAsk == f ? "Sure? Deletes " + Path.GetFileName(FileOf(f)) : "Remove", browserAsk == f ? btnOn : btn))
+        if (GUI.Button(new Rect(x, y, wd, 40f), browserAsk == f ? "Sure? Deletes " + Path.GetFileName(FileOf(f)) : "Remove", browserAsk == f ? btnOn : btn))
         {
-            if (browserAsk == f) { ClosePreview(); RemoveFile(f); browserSel = ""; browserAsk = ""; GUIUtility.ExitGUI(); }
+            if (browserAsk == f) { RemoveFile(f); browserSel = ""; browserAsk = ""; GUIUtility.ExitGUI(); }
             else browserAsk = f;
         }
-        y += 40f;
+        y += 46f;
         if (filesNote != "") GUI.Label(new Rect(x, y, wd, d.yMax - y - 6f), filesNote, dim);
     }
 }

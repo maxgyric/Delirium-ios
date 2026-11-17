@@ -442,6 +442,33 @@ pub unsafe extern "C" fn dgma_file(gma: *const c_char, path: *const c_char, out_
     }
 }
 
+/// For C# (the models browser, on a thread of its own): every map's own picture in an addon (maps/thumb/<map>.png)
+/// written to `out_dir`/<map>.png, the addon opened once (a Workshop download is LZMA-packed: seconds to unpack).
+/// How many, or -1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dgma_thumbs(gma: *const c_char, out_dir: *const c_char) -> i32 {
+    let text = |p: *const c_char| if p.is_null() { None } else { unsafe { CStr::from_ptr(p) }.to_str().ok().map(str::to_owned) };
+    let (Some(g), Some(o)) = (text(gma), text(out_dir)) else { return -1 };
+    match std::panic::catch_unwind(|| -> Option<i32> {
+        let a = gma::Gma::open(std::path::Path::new(&g)).ok()?;
+        let _ = std::fs::create_dir_all(&o);
+        let mut n = 0;
+        for m in a.maps() {
+            let name = m.trim_start_matches("maps/").trim_end_matches(".bsp").to_string();
+            for inside in [format!("maps/thumb/{name}.png"), format!("maps/{name}.png"), format!("maps/thumb/{name}.jpg")] {
+                if let Some(b) = a.read(&inside) {
+                    if std::fs::write(std::path::Path::new(&o).join(format!("{name}.png")), &b).is_ok() { n += 1; }
+                    break;
+                }
+            }
+        }
+        Some(n)
+    }) {
+        Ok(Some(n)) => n,
+        _ => -1,
+    }
+}
+
 /// The last line (`dbsp_convert`'s) into `out` (`cap` bytes, 0-terminated); its length.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dbsp_error(out: *mut u8, cap: i32) -> i32 {
