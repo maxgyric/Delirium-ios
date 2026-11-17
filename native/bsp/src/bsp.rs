@@ -129,6 +129,69 @@ pub struct Map {
     pub skipped: (usize, usize),
     /// where its pakfile (a zip of its own materials) is in the file
     pub pak: (usize, usize),
+    /// its models placed in it (static props, prop_ entities)
+    pub props: Vec<Prop>,
+    /// where in the lightmap a model's light is (the map's average: they have no lightmap of their own)
+    pub prop_luv: [f32; 2],
+}
+
+pub struct Prop {
+    pub model: String,
+    pub origin: V3,
+    pub angles: V3,
+    pub skin: usize,
+    pub solid: bool,
+    pub scale: f32,
+}
+
+// The game lump's static props ("sprp"): its model names, its leaves, then each prop (as long as its version says)
+fn static_props(data: &[u8], game: &[u8]) -> Vec<Prop> {
+    let mut out = vec![];
+    let r = R(game);
+    let Ok(n) = r.i32(0) else { return out };
+    for k in 0..(n.max(0) as usize).min(64) {
+        let e = 4 + k * 16;
+        let Some(id) = game.get(e..e + 4) else { break };
+        if id != b"prps" && id != b"sprp" { continue; }
+        let (flags, version) = (r.u16(e + 4).unwrap_or(0), r.u16(e + 6).unwrap_or(0) as usize);
+        let (ofs, len) = (r.i32(e + 8).unwrap_or(0) as usize, r.i32(e + 12).unwrap_or(0) as usize);
+        let Some(raw) = data.get(ofs..ofs + len) else { continue };
+        let body: std::borrow::Cow<[u8]> = if flags & 1 != 0 && raw.len() >= 17 && &raw[0..4] == b"LZMA" {
+            let size = u32::from_le_bytes(raw[4..8].try_into().unwrap()) as u64;
+            let mut alone = raw[12..17].to_vec();
+            alone.extend_from_slice(&size.to_le_bytes());
+            alone.extend_from_slice(&raw[17..]);
+            match crate::gma::unlzma(&alone) { Ok(b) => std::borrow::Cow::Owned(b), Err(_) => continue }
+        } else {
+            std::borrow::Cow::Borrowed(raw)
+        };
+        let b = R(&body);
+        let Ok(nd) = b.i32(0) else { continue };
+        let names: Vec<String> = (0..nd.max(0) as usize).map(|i| {
+            let o = 4 + i * 128;
+            String::from_utf8_lossy(body.get(o..o + 128).unwrap_or_default().split(|&c| c == 0).next().unwrap_or_default()).replace('\\', "/").to_ascii_lowercase()
+        }).collect();
+        let mut at = 4 + names.len() * 128;
+        let nl = b.i32(at).unwrap_or(0).max(0) as usize;
+        at += 4 + nl * 2;
+        let np = b.i32(at).unwrap_or(0).max(0) as usize;
+        at += 4;
+        if np == 0 { continue; }
+        // each prop's size: its version's, or what's left shared out
+        let stride = match version { 4 => 56, 5 => 60, 6 => 64, 7 | 8 => 68, 9 => 72, 10 => 76, 11 => 80, _ => 0 };
+        let stride = if stride * np == body.len() - at || stride == 0 { if stride == 0 { (body.len() - at) / np } else { stride } } else { (body.len() - at) / np };
+        for i in 0..np {
+            let o = at + i * stride;
+            let (Ok(origin), Ok(angles), Ok(t)) = (b.v3(o), b.v3(o + 12), b.u16(o + 24)) else { break };
+            let solid = body.get(o + 30).copied().unwrap_or(6) != 0;
+            let skin = b.i32(o + 32).unwrap_or(0).max(0) as usize;
+            let scale = if version >= 11 && stride >= 80 { b.f32(o + stride - 4).unwrap_or(1.0) } else { 1.0 };
+            if let Some(m) = names.get(t as usize) {
+                out.push(Prop { model: m.clone(), origin, angles, skin, solid, scale: if scale > 0.01 && scale < 100.0 { scale } else { 1.0 } });
+            }
+        }
+    }
+    out
 }
 
 const SURF_SKY2D: i32 = 0x2;
@@ -402,8 +465,42 @@ impl Map {
             }
         }
         let pak = (lumps[40].ofs, lumps[40].len); // (a zip: its entries say how they're packed)
+        // the models in it: static props, and prop_ entities with a model
+        let mut props = lump(35).map(|g| static_props(data, &g)).unwrap_or_default();
+        for e in &entities {
+            let class = e.get("classname").map(String::as_str).unwrap_or("");
+            let Some(model) = e.get("model").filter(|m| m.to_ascii_lowercase().ends_with(".mdl")) else { continue };
+            if !class.starts_with("prop_") { continue; }
+            props.push(Prop {
+                model: model.replace('\\', "/").to_ascii_lowercase(),
+                origin: e.get("origin").and_then(|o| vec3_of(o)).unwrap_or([0.0; 3]),
+                angles: e.get("angles").and_then(|o| vec3_of(o)).unwrap_or([0.0; 3]),
+                skin: e.get("skin").and_then(|s| s.parse().ok()).unwrap_or(0),
+                solid: e.get("solid").map(|s| s != "0").unwrap_or(true),
+                scale: e.get("modelscale").and_then(|s| s.parse().ok()).filter(|&v: &f32| v > 0.01).unwrap_or(1.0),
+            });
+        }
+        // the models' light: the map's average luxel, in a block of its own
+        let mut prop_luv = [1.0f32, 1.0];
+        if !light.is_empty() && light.len() >= 4 {
+            let (mut sum, mut n) = ([0f64; 3], 0f64);
+            for q in (0..light.len() / 4).step_by(7) {
+                let c = luxel(light[q * 4], light[q * 4 + 1], light[q * 4 + 2], light[q * 4 + 3] as i8);
+                for a in 0..3 { sum[a] += c[a] as f64; }
+                n += 1.0;
+            }
+            if n > 0.0 {
+                let avg = [(sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8];
+                // a little brighter than the average (it counts the dark undersides too)
+                let lift = |c: u8| ((c as f32 * 1.3).min(150.0)) as u8;
+                if let Some((x, y)) = pack.place(2, 2) {
+                    pack.fill(x, y, 2, 2, |_, _| [lift(avg[0]), lift(avg[1]), lift(avg[2])]);
+                    prop_luv = [x as f32 + 1.0, y as f32 + 1.0];
+                }
+            }
+        }
         let lightmap = (pack.h > 2 && !light.is_empty()).then(|| Lightmap { w: pack.w, h: pack.h, rgba: std::mem::take(&mut pack.px) });
-        Ok(Map { lightmap, version, materials, batches, entities, skipped, pak })
+        Ok(Map { lightmap, version, materials, batches, entities, skipped, pak, props, prop_luv })
     }
 
     /// Where a player starts (its origin, yaw in degrees), if the map says

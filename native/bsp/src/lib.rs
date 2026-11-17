@@ -8,6 +8,7 @@
 pub mod bsp;
 pub mod content;
 pub mod gma;
+pub mod studio;
 pub mod vpk;
 pub mod vtf;
 
@@ -64,6 +65,8 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
     };
     for &k in keys {
         let b = &map.batches[&k];
+        let nocollide = k & NOCOLLIDE != 0;
+        let k = k & !NOCOLLIDE;
         if b.pos.is_empty() { continue; }
         let m = &map.materials.get(k);
         let name = m.map(|m| m.name.clone()).unwrap_or_else(|| format!("material{k}"));
@@ -135,7 +138,7 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
                 json(&name), c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0), if alpha < 1.0 { r#","alphaMode":"BLEND""# } else { "" }
             ));
         }
-        let mesh_name = if water { format!("{name} [nocollide]") } else { name.clone() };
+        let mesh_name = if water || nocollide { format!("{name} [nocollide]") } else { name.clone() };
         meshes.push(format!(r#"{{"name":{},"primitives":[{{"attributes":{{"POSITION":{a0},"NORMAL":{},"TEXCOORD_0":{}{luv_acc}}},"indices":{},"material":{mi}}}]}}"#, json(&mesh_name), a0 + 1, a0 + 2, a0 + 3));
         nodes.push(format!(r#"{{"name":{},"mesh":{}}}"#, json(&mesh_name), meshes.len() - 1));
         children.push(nodes.len());
@@ -172,6 +175,65 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
     out
 }
 
+/// A batch key's flag: the triangles of models that aren't solid (drawn, not stood on)
+pub const NOCOLLIDE: usize = 1 << 24;
+
+/// The map's models put in its batches (a material each of theirs, after the map's): how many placed, and which
+/// models weren't found or read
+fn add_props(map: &mut Map, content: &content::Content) -> (usize, Vec<String>) {
+    use std::collections::HashMap;
+    let props = std::mem::take(&mut map.props);
+    let mut models: HashMap<String, Option<studio::Model>> = HashMap::new();
+    let mut mats: HashMap<String, usize> = HashMap::new();
+    let mut placed = 0;
+    let mut missing = vec![];
+    let find = |p: &str| content.find(p);
+    let exists = |p: &str| content.find(p).is_some();
+    for p in &props {
+        let model = models.entry(p.model.clone()).or_insert_with(|| match studio::Model::read(&p.model, &find, &exists) {
+            Ok(m) => Some(m),
+            Err(_) => None,
+        });
+        let Some(model) = model.as_ref() else {
+            if !missing.contains(&p.model) { missing.push(p.model.clone()); }
+            continue;
+        };
+        let r = studio::angle_matrix(p.angles);
+        let skin = model.skins.get(p.skin).or(model.skins.first());
+        for mesh in &model.meshes {
+            let ti = skin.and_then(|s| s.get(mesh.material).copied()).unwrap_or(mesh.material);
+            let Some(name) = model.materials.get(ti) else { continue };
+            let mi = *mats.entry(name.clone()).or_insert_with(|| {
+                map.materials.push(bsp::Material { name: name.clone(), color: [0.7; 3], width: 1, height: 1 });
+                map.materials.len() - 1
+            });
+            let key = mi | if p.solid { 0 } else { NOCOLLIDE };
+            let luv = map.prop_luv;
+            let b = map.batches.entry(key).or_default();
+            for t in &mesh.tris {
+                let v = [&model.vertices[t[0] as usize], &model.vertices[t[1] as usize], &model.vertices[t[2] as usize]];
+                let pos: Vec<bsp::V3> = v.iter().map(|v| {
+                    let q = studio::rotate(&r, [v.pos[0] * p.scale, v.pos[1] * p.scale, v.pos[2] * p.scale]);
+                    [q[0] + p.origin[0], q[1] + p.origin[1], q[2] + p.origin[2]]
+                }).collect();
+                let nrm: Vec<bsp::V3> = v.iter().map(|v| studio::rotate(&r, v.nrm)).collect();
+                // front faces counter-clockwise (glTF's), by the vertices' own normals
+                let face = bsp::cross([pos[1][0] - pos[0][0], pos[1][1] - pos[0][1], pos[1][2] - pos[0][2]], [pos[2][0] - pos[0][0], pos[2][1] - pos[0][1], pos[2][2] - pos[0][2]]);
+                let avg = [nrm[0][0] + nrm[1][0] + nrm[2][0], nrm[0][1] + nrm[1][1] + nrm[2][1], nrm[0][2] + nrm[1][2] + nrm[2][2]];
+                let order = if bsp::dot(face, avg) < 0.0 { [0, 2, 1] } else { [0, 1, 2] };
+                for &i in &order {
+                    b.pos.push(pos[i]);
+                    b.nrm.push(nrm[i]);
+                    b.uv.push(v[i].uv);
+                    b.luv.push(luv);
+                }
+            }
+        }
+        placed += 1;
+    }
+    (placed, missing)
+}
+
 fn json(s: &str) -> String {
     let mut o = String::from("\"");
     for c in s.chars() {
@@ -206,14 +268,16 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
     } else {
         (std::fs::read(bsp_path).map_err(|e| format!("{bsp_path}: {e}"))?, None, String::new())
     };
-    let map = Map::read(&data)?;
+    let mut map = Map::read(&data)?;
     let pak = data.get(map.pak.0..map.pak.0 + map.pak.1).unwrap_or_default();
     let content = content::Content::new(pak, roots, gma);
+    let (placed, unplaced) = add_props(&mut map, &content);
     let mut tex = std::collections::HashMap::new();
     let mut missing = vec![];
     // one decode a texture (materials share them)
     let mut done: std::collections::HashMap<String, Option<std::rc::Rc<Vec<u8>>>> = std::collections::HashMap::new();
-    for &k in map.batches.keys() {
+    for &key in map.batches.keys() {
+        let k = key & !NOCOLLIDE;
         let Some(m) = map.materials.get(k) else { continue };
         let vmt = content.material(&m.name);
         let base = vmt.as_ref().and_then(|v| v.base.clone()).unwrap_or_else(|| m.name.clone());
@@ -225,9 +289,9 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
             Some(png) => {
                 let mode = match &vmt { Some(v) if v.translucent => 2, Some(v) if v.alphatest => 1, _ => 0 };
                 let tint = vmt.as_ref().map(|v| v.tint).unwrap_or([1.0; 3]);
-                tex.insert(k, Tex { png: png.clone(), mode, tint });
+                tex.insert(key, Tex { png: png.clone(), mode, tint });
             }
-            None => missing.push(m.name.clone()),
+            None => if key == k { missing.push(m.name.clone()) },
         }
     }
     let glb = to_glb(&map, &tex);
@@ -235,9 +299,11 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
     let tris: usize = map.batches.values().map(|b| b.pos.len() / 3).sum();
     missing.sort();
     Ok(format!(
-        "{}v{} {} triangles, {} materials, {} textured ({} packs{}); {} faces of the 3D skybox and {} tool faces left out{}",
+        "{}v{} {} triangles, {} materials, {} textured ({} packs{}); {} models placed{}; {} faces of the 3D skybox and {} tool faces left out{}",
         if from.is_empty() { String::new() } else { format!("{from}: ") }, map.version, tris, map.batches.len(), tex.len(), content.packs(),
         if content.missing_archives > 0 { format!(", {} of their archives missing", content.missing_archives) } else { String::new() },
+        placed,
+        if unplaced.is_empty() { String::new() } else { format!(" ({} models not found, e.g. {})", unplaced.len(), unplaced.iter().take(2).cloned().collect::<Vec<_>>().join(", ")) },
         map.skipped.0, map.skipped.1,
         if missing.is_empty() { String::new() } else { format!("; no texture for {} (e.g. {})", missing.len(), missing.iter().take(3).cloned().collect::<Vec<_>>().join(", ")) }
     ))

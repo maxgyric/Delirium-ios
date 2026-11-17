@@ -488,3 +488,13 @@ files (default.xex, the three exported files, the archives) are picked by the la
   map of a multi-map addon is its own entry ("addon.gma › gm_y"), cached per map; removing one removes the addon.
   gm_natural_disaster_survival: 108k triangles, 193/193 materials textured from the addon itself, lightmap; renders
   in colour (red/white barriers, orange and blue buildings, trees are brushes here).
+- (11:22 user) gm_nocheese.gma: "No meshes in the file". The map is all models (51 static props, every brush face
+  a tool face). Stage 3, models: studio.rs reads a .mdl (v44-49: textures + material folders, skin families, body
+  parts -> first model -> meshes), its .vvd (LOD 0 through the fixups) and .vtx (v7; LOD 0; strip groups 25 or 33
+  bytes, by which fits; trilists) into triangles with their materials. bsp.rs: the game lump's static props
+  ("sprp", flags bit 1 LZMA; v4-11 by their stride; origin, angles, model, skin, solid, v11 scale) and prop_*
+  entities with a model; placed with Source's AngleMatrix, oriented by their vertex normals, smooth normals kept,
+  non-solid ones "[nocollide]" (batch key flag 1<<24), lit by a block of the map's average luxel (x1.3, at most
+  150) when the map has a lightmap. Model materials have 1x1 "size" (their UVs are already 0-1). gm_nocheese: 51
+  placed, 78.6k triangles, 62/62 textured; renders right (Bikini Bottom, Krusty Krab). gm_stairs / falleritus
+  name HL2/CS:S models (props_c17, de_inferno): found once those packs are in mods/gmod.
