@@ -645,3 +645,10 @@ files (default.xex, the three exported files, the archives) are picked by the la
   turning toward it at 120 deg/s (orientationtype 0 / flag 16: fixed); facing = R(dir) R(src +x)^-1 home.
   phys_motor: turns attach1 (a func_physbox) about the line origin->"axis" at "speed" deg/s (flag 1 on;
   TurnOn/TurnOff/SetSpeed). trigger_push speed capped at 40 m/s.
+- (21:55) Trains: facing now Source's (origin -> the point "wheels" units further along the track, every step,
+  set at once) instead of turning 120 deg/s toward the next node (the car swung and slid sideways round corners
+  and on the turnaround). Ragdolls meet moving parts: every MeshCollider of a moving entity (kMoving classes, or
+  anything with a parentname) is registered with Delirium as a mover box (RegisterMover: mesh bounds, centre in
+  the piece's frame): trains (and what hangs from them) as Train (brace, knock standing people down), the rest as
+  Object (func_rotating knocks down). Static brush entities (func_brush, func_wall_toggle, func_breakable...)
+  are back in Delirium's level.

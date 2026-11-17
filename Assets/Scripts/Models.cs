@@ -504,13 +504,14 @@ public partial class Game
         var still = new List<GameObject>();
         foreach (var mf in root.GetComponentsInChildren<MeshFilter>())
         {
-            bool part = ents.Count > 0 && EntOfObject(mf.gameObject) != null;
+            var partOf = ents.Count > 0 ? EntOfObject(mf.gameObject) : null;
+            bool part = partOf != null;
             if (!part) still.Add(mf.gameObject);
             if (mf.sharedMesh == null || mf.sharedMesh.GetIndexCount(0) < 3) continue;
             if (mf.gameObject.name.Contains("[nocollide]")) continue; // a GMod map's water: drawn, not stood on
             var col = mf.gameObject.AddComponent<MeshCollider>();
             col.sharedMesh = mf.sharedMesh;
-            if (part) continue; // (one that moves: not in Delirium's still world)
+            if (EntMoves(partOf)) continue; // (one that moves: not in Delirium's still world; a moving box of its own)
             level.Add(col);
             DeliriumRagdolls.SandboxWarm(col); // its triangles ready for Delirium (no hitch at the first ragdoll)
         }

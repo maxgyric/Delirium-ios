@@ -15,6 +15,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using Delirium.Ragdoll;
 using UnityEngine;
 
 public partial class Game
@@ -169,6 +170,9 @@ public partial class Game
     {
         foreach (var e in ents)
             if (e.Audio != null) Destroy(e.Audio.gameObject);
+        foreach (var t in entMovers)
+            if (t != null) try { nm?.UnregisterCar(t); } catch (Exception) { }
+        entMovers.Clear();
         ents.Clear();
         entOfT.Clear();
         entsByName.Clear();
@@ -178,6 +182,16 @@ public partial class Game
     }
 
     readonly Dictionary<Transform, Ent> entOfT = new Dictionary<Transform, Ent>();
+    readonly List<Transform> entMovers = new List<Transform>(); // given to Delirium as moving boxes
+
+    static readonly HashSet<string> kMoving = new HashSet<string>
+    {
+        "func_door", "func_door_rotating", "prop_door_rotating", "func_movelinear", "func_water_analog", "func_tracktrain",
+        "func_train", "func_rotating", "func_physbox", "func_physbox_multiplayer", "func_button", "func_rot_button", "momentary_rot_button",
+    };
+
+    // one that moves (or hangs from one that might): not in Delirium's still world, but a moving box of its own
+    static bool EntMoves(Ent e) => e != null && (kMoving.Contains(e.Class) || e.Get("parentname") != "");
 
     // the entity an object of the map is part of, or null
     Ent EntOfObject(GameObject g)
@@ -230,6 +244,30 @@ public partial class Game
             }
         }
         foreach (var e in ents) Setup(e);
+        // the ragdolls meet the moving parts: a box each of their pieces (trains hit like trains, the rest like objects)
+        var given = new HashSet<Transform>();
+        foreach (var e in ents)
+        {
+            if (e.T == null || !EntMoves(e) || e.Class == "func_button" || e.Class == "func_rot_button") continue;
+            bool train = e.Class == "func_tracktrain" || e.Class == "func_train";
+            for (var up = e.T.parent; up != null && !train; up = up.parent)
+                if (entOfT.TryGetValue(up, out var pe) && (pe.Class == "func_tracktrain" || pe.Class == "func_train")) train = true;
+            foreach (var mc in e.T.GetComponentsInChildren<MeshCollider>(true))
+            {
+                if (mc.sharedMesh == null || !given.Add(mc.transform)) continue;
+                var mb = mc.sharedMesh.bounds;
+                var size = Vector3.Scale(mb.size, mc.transform.lossyScale);
+                if (size.x < 0.05f && size.y < 0.05f && size.z < 0.05f) continue;
+                try
+                {
+                    nm?.RegisterMover(mc.transform, train ? DeliriumRagdolls.MoverKind.Train : DeliriumRagdolls.MoverKind.Object,
+                        new Vector3(Mathf.Abs(size.x), Mathf.Abs(size.y), Mathf.Abs(size.z)), false, train, train || e.Class == "func_rotating", mb.center);
+                    entMovers.Add(mc.transform);
+                }
+                catch (Exception ex) { Debug.LogWarning("[Sandbox] map mover " + e.Class + ": " + ex.Message); }
+            }
+        }
+        if (entMovers.Count > 0) Debug.Log("[Sandbox] map: " + entMovers.Count + " moving pieces given to Delirium");
         // the start: logic_auto's outputs
         foreach (var e in ents)
             if (e.Class == "logic_auto")
@@ -709,8 +747,8 @@ public partial class Game
             // (Source: its origin onto the node, turned toward the next one)
             e.T.position = TrainSpot(e, node);
             var next = Find(node.Get("target"), node);
-            if (TrainTurns(e) && next.Count > 0) e.T.rotation = TrainFacing(e, TrainSpot(e, next[0]) - e.T.position);
             if (next.Count > 0) e.Path = next[0];
+            if (TrainTurns(e) && next.Count > 0) e.T.rotation = TrainFacing(e, AheadOnTrack(e, 1f) - e.T.position);
         }
     }
 
@@ -725,10 +763,12 @@ public partial class Game
             Vector3 to = TrainSpot(e, goal);
             Vector3 d = to - e.T.position;
             float dist = d.magnitude;
-            // facing the way it goes (a tracktrain, unless its orientation is fixed)
-            if (TrainTurns(e) && dist > 0.05f)
-                e.T.rotation = Quaternion.RotateTowards(e.T.rotation, TrainFacing(e, e.TrainSpeed > 0 ? d : -d), 120f * dt);
-            if (dist > left) { e.T.position += d / dist * left; return; }
+            if (dist > left)
+            {
+                e.T.position += d / dist * left;
+                TrainFace(e);
+                return;
+            }
             e.T.position = to;
             left -= dist;
             // the node passed: its outputs, its speed, the next one
@@ -745,6 +785,36 @@ public partial class Game
             else e.Path = goal;
             if (e.Class == "func_train" && wait != 0f) { e.TrainSpeed = 0f; if (wait > 0f) ioQueue.Add((entClock + wait, e, "!self", "Start", "")); return; }
         }
+        TrainFace(e);
+    }
+
+    // Source's: facing from its origin to the point its "wheels" (length) further along the track, every step: it
+    // turns as it goes round a corner, never sideways
+    void TrainFace(Ent e)
+    {
+        if (!TrainTurns(e)) return;
+        Vector3 ahead = AheadOnTrack(e, e.TrainSpeed >= 0f ? 1f : -1f);
+        Vector3 d = ahead - e.T.position;
+        if (d.sqrMagnitude > 1e-6f) e.T.rotation = TrainFacing(e, e.TrainSpeed >= 0f ? d : -d);
+    }
+
+    Vector3 AheadOnTrack(Ent e, float way)
+    {
+        float left = SrcLen(Mathf.Max(e.F("wheels", 50f), 8f));
+        Vector3 p = e.T.position;
+        Ent goal = way > 0 ? e.Path : PrevNode(e.Path);
+        for (int guard = 0; guard < 16 && goal != null; guard++)
+        {
+            Vector3 to = TrainSpot(e, goal);
+            float dist = Vector3.Distance(p, to);
+            if (dist >= left) return p + (to - p) / Mathf.Max(dist, 1e-6f) * left;
+            left -= dist;
+            p = to;
+            if (way > 0) { var n = Find(goal.Get("target"), goal); goal = n.Count > 0 ? n[0] : null; }
+            else goal = PrevNode(goal);
+        }
+        // the track's end: on along its last stretch
+        return p + (p - e.T.position).normalized * left;
     }
 
     Ent PrevNode(Ent node)
