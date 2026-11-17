@@ -1081,6 +1081,7 @@ public partial class Game
     Vector2 BtnAim(float w, float h) => new Vector2(w - 185f, h - 170f);
     Vector2 BtnDrunk(float w, float h) => new Vector2(w - 80f, h - 200f);
     Vector2 BtnFire(float w, float h) => new Vector2(85f, 150f); // top left: the stick's thumb, off the camera's side
+    Vector2 BtnUse(float w, float h) => new Vector2(w - 290f, h - 125f); // (shown by a map's button or door in reach)
 
     struct Finger
     {
@@ -1126,12 +1127,14 @@ public partial class Game
         if (!Has(hDownId)) hDownId = kNone;
         if (!Has(radialFinger)) radialFinger = -99;
 
+        if (Input.GetKeyDown(KeyCode.E)) UseNow();
         hStick = Vector2.zero;
         foreach (var f in fingers)
         {
             if (f.Began && !OverUi(f.Screen))
             {
                 if (RadialTap(f.Pos, f.Id, w, h)) { } // the VRChat avatar's Expressions button and its wheel
+                else if (useTarget != null && Vector2.Distance(f.Pos, BtnUse(w, h)) < kBtnR + 6f) UseNow(); // a map's button, a door
                 else if (BikeTap(f.Pos, f.Id, w, h)) { } // Ride, Off (Gas and Brake are Jump's and Sprint's places)
                 else if (Vector2.Distance(f.Pos, BtnJump(w, h)) < kBtnR + 6f) { hJumpReq = true; hJumpId = f.Id; }
                 else if (Vector2.Distance(f.Pos, BtnAim(w, h)) < kBtnR + 6f) { if (heroMode == 0 && !kGuns[weapon % kGuns.Length].Fists) heroAim = !heroAim; }
@@ -1222,6 +1225,7 @@ public partial class Game
         Disc(BtnJump(w, h), kBtnR, heroNoclip && hJumpId != kNone ? lit : knob * new Color(1f, 1f, 1f, 0.6f), heroNoclip ? "Up" : "Jump");
         if (!fists) Disc(BtnAim(w, h), kBtnR, heroAim ? lit : knob * new Color(1f, 1f, 1f, 0.6f), "Aim");
         if (fists && heroMode == 0) Disc(BtnFire(w, h), kBtnR, new Color(1f, 0.45f, 0.35f, 0.6f), "Punch");
+        if (useTarget != null && !riding) Disc(BtnUse(w, h), kBtnR, new Color(1f, 0.85f, 0.3f, 0.7f), "Use");
         if (heroNoclip) Disc(BtnDrunk(w, h), kBtnR, hDownId != kNone ? lit : knob * new Color(1f, 1f, 1f, 0.6f), "Down");
         else Disc(BtnDrunk(w, h), kBtnR, heroDrunk ? lit : knob * new Color(1f, 1f, 1f, 0.6f), "Drunk");
         if (heroAim)

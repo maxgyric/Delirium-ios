@@ -126,6 +126,10 @@ pub struct Map {
     pub materials: Vec<Material>,
     pub batches: HashMap<usize, Batch>,
     pub entities: Vec<HashMap<String, String>>,
+    /// the same entities with every key in order, repeated ones too (outputs: "OnPressed" a line each)
+    pub entities_kv: Vec<Vec<(String, String)>>,
+    /// each brush model's box (its own space: a brush entity's origin moves it)
+    pub model_bounds: Vec<(V3, V3)>,
     /// faces left out: (in the 3D skybox, tools / sky / triggers)
     pub skipped: (usize, usize),
     /// the 3D skybox: its box, its camera, its scale (its faces and models drawn round the map that much bigger)
@@ -147,6 +151,8 @@ pub struct Prop {
     pub skin: usize,
     pub solid: bool,
     pub scale: f32,
+    /// the entity it is when it can move or be told to (prop_door_rotating, a named prop_dynamic): its own meshes
+    pub ent: Option<usize>,
 }
 
 // The game lump's static props ("sprp"): its model names, its leaves, then each prop (as long as its version says)
@@ -192,7 +198,7 @@ fn static_props(data: &[u8], game: &[u8]) -> Vec<Prop> {
             let skin = b.i32(o + 32).unwrap_or(0).max(0) as usize;
             let scale = if version >= 11 && stride >= 80 { b.f32(o + stride - 4).unwrap_or(1.0) } else { 1.0 };
             if let Some(m) = names.get(t as usize) {
-                out.push(Prop { model: m.clone(), origin, angles, skin, solid, scale: if scale > 0.01 && scale < 100.0 { scale } else { 1.0 } });
+                out.push(Prop { model: m.clone(), origin, angles, skin, solid, scale: if scale > 0.01 && scale < 100.0 { scale } else { 1.0 }, ent: None });
             }
         }
     }
@@ -205,6 +211,45 @@ const SURF_TRIGGER: i32 = 0x40;
 const SURF_NODRAW: i32 = 0x80;
 const SURF_HINT: i32 = 0x100;
 const SURF_SKIP: i32 = 0x200;
+
+/// The entities as parse_entities finds them (the same blocks, in the same order) with all their keys, in order
+pub fn parse_entities_kv(text: &str) -> Vec<Vec<(String, String)>> {
+    let mut out = vec![];
+    let mut cur: Option<Vec<(String, String)>> = None;
+    let mut key: Option<String> = None;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' => cur = Some(vec![]),
+            '}' => {
+                if let Some(e) = cur.take() { out.push(e); }
+                key = None;
+            }
+            '"' => {
+                let mut s = String::new();
+                for c in chars.by_ref() {
+                    if c == '"' { break; }
+                    s.push(c);
+                }
+                if let Some(e) = cur.as_mut() {
+                    match key.take() {
+                        None => key = Some(s),
+                        Some(k) => e.push((k, s)),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Brush entities that move or are told to (their faces get meshes of their own, "[ent N]")
+pub fn is_mover(class: &str) -> bool {
+    matches!(class, "func_door" | "func_door_rotating" | "func_button" | "func_rot_button" | "momentary_rot_button" | "func_movelinear"
+        | "func_tracktrain" | "func_train" | "func_rotating" | "func_brush" | "func_wall_toggle" | "func_platrot" | "func_water_analog"
+        | "func_breakable" | "func_breakable_surf" | "func_physbox" | "func_physbox_multiplayer" | "func_lookdoor" | "func_illusionary")
+}
 
 pub fn parse_entities(text: &str) -> Vec<HashMap<String, String>> {
     let mut out = vec![];
@@ -276,7 +321,9 @@ impl Map {
             }
             Ok(std::borrow::Cow::Borrowed(d))
         };
-        let entities = parse_entities(&String::from_utf8_lossy(&lump(0)?));
+        let ent_text = String::from_utf8_lossy(&lump(0)?).into_owned();
+        let entities = parse_entities(&ent_text);
+        let entities_kv = parse_entities_kv(&ent_text);
         let planes = lump(1)?;
         let texdata = lump(2)?;
         let verts = lump(3)?;
@@ -354,8 +401,8 @@ impl Map {
         });
 
         // which brush models to draw: the world (0) and the brush entities that aren't triggers or tools
-        let mut draw: Vec<(usize, V3)> = vec![(0, [0.0; 3])];
-        for e in &entities {
+        let mut draw: Vec<(usize, V3, usize)> = vec![(0, [0.0; 3], 0)];
+        for (ei, e) in entities.iter().enumerate() {
             let Some(m) = e.get("model").and_then(|m| m.strip_prefix('*')).and_then(|m| m.parse::<usize>().ok()) else { continue };
             let class = e.get("classname").map(String::as_str).unwrap_or("");
             if class.starts_with("trigger_") || class.starts_with("func_areaportal") || class == "func_occluder" || class == "func_clip_vphysics" || class == "func_viscluster" || class == "func_precipitation" || class.starts_with("env_") {
@@ -363,7 +410,8 @@ impl Map {
             }
             if e.get("rendermode").map(|v| v == "10").unwrap_or(false) { continue; } // "don't render"
             let origin = e.get("origin").and_then(|o| vec3_of(o)).unwrap_or([0.0; 3]);
-            draw.push((m, origin));
+            // one that moves or is told to: its own meshes ("[ent N]")
+            draw.push((m, origin, if is_mover(class) { crate::ent_key(ei) } else { 0 }));
         }
 
         let mut batches: HashMap<usize, Batch> = HashMap::new();
@@ -376,7 +424,7 @@ impl Map {
         let mut planned: HashMap<usize, (usize, usize)> = HashMap::new();
         {
             let mut want = vec![];
-            for &(m, _) in &draw {
+            for &(m, _, _) in &draw {
                 let mo = m * 48;
                 let (first, count) = (md.i32(mo + 40)? as usize, md.i32(mo + 44)? as usize);
                 for f in first..first + count {
@@ -398,7 +446,7 @@ impl Map {
                 if let Some(at) = pack.place(lsize[0], lsize[1]) { planned.insert(f, at); }
             }
         }
-        for (m, origin) in draw {
+        for (m, origin, ek) in draw {
             let mo = m * 48;
             let (first, count) = (md.i32(mo + 40)? as usize, md.i32(mo + 44)? as usize);
             for f in first..first + count {
@@ -471,7 +519,7 @@ impl Map {
                     };
                     [dot(s, m) + so, dot(tv, m) + to, l[0], l[1]]
                 };
-                let b = batches.entry(if in_sky.is_some() { mat | crate::NOCOLLIDE | crate::SKY3D } else { mat }).or_default();
+                let b = batches.entry(if in_sky.is_some() { mat | crate::NOCOLLIDE | crate::SKY3D } else { mat | ek }).or_default();
                 let place = |v: V3| match in_sky { Some((o, k)) => mul(sub(v, o), k), None => v };
                 let mut tri = |a: V3, bb: V3, c: V3, ua: [f32; 4], ub: [f32; 4], uc: [f32; 4], fallback: V3| {
                     let (a, bb, c) = (place(a), place(bb), place(c));
@@ -528,10 +576,12 @@ impl Map {
         let pak = (lumps[40].ofs, lumps[40].len); // (a zip: its entries say how they're packed)
         // the models in it: static props, and prop_ entities with a model
         let mut props = lump(35).map(|g| static_props(data, &g)).unwrap_or_default();
-        for e in &entities {
+        for (ei, e) in entities.iter().enumerate() {
             let class = e.get("classname").map(String::as_str).unwrap_or("");
             let Some(model) = e.get("model").filter(|m| m.to_ascii_lowercase().ends_with(".mdl")) else { continue };
             if !class.starts_with("prop_") { continue; }
+            // a door, or a prop that's named or hangs from something (told to move, show, hide): its own meshes
+            let ent = (class == "prop_door_rotating" || class == "prop_dynamic" && (e.contains_key("targetname") || e.contains_key("parentname"))).then_some(ei);
             props.push(Prop {
                 model: model.replace('\\', "/").to_ascii_lowercase(),
                 origin: e.get("origin").and_then(|o| vec3_of(o)).unwrap_or([0.0; 3]),
@@ -539,6 +589,7 @@ impl Map {
                 skin: e.get("skin").and_then(|s| s.parse().ok()).unwrap_or(0),
                 solid: e.get("solid").map(|s| s != "0").unwrap_or(true),
                 scale: e.get("modelscale").and_then(|s| s.parse().ok()).filter(|&v: &f32| v > 0.01).unwrap_or(1.0),
+                ent,
             });
         }
         // the models' light: the map's average luxel, in a block of its own
@@ -562,7 +613,8 @@ impl Map {
         }
         let lightmap = (pack.h > 2 && !light.is_empty()).then(|| Lightmap { w: pack.w, h: pack.h, rgba: std::mem::take(&mut pack.px) });
         let sky = match (sky_box, sky_cam) { (Some((lo, hi)), Some((o, k))) => Some((lo, hi, o, k)), _ => None };
-        Ok(Map { lightmap, version, materials, batches, entities, skipped, pak, props, prop_luv, sky, exposure })
+        let model_bounds = (0..md.0.len() / 48).map(|m| (md.v3(m * 48).unwrap_or([0.0; 3]), md.v3(m * 48 + 12).unwrap_or([0.0; 3]))).collect();
+        Ok(Map { lightmap, version, materials, batches, entities, entities_kv, model_bounds, skipped, pak, props, prop_luv, sky, exposure })
     }
 
     /// Where a player starts (its origin, yaw in degrees), if the map says

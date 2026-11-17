@@ -563,6 +563,7 @@ public partial class Game : MonoBehaviour
         BrowserUpdate();
         float dt = Time.deltaTime;
         foreach (var m in men) Mind(m, dt);
+        EntsUpdate(dt); // (a GMod map's doors, lifts, trains, timers: before the hero, who rides them)
         if (heroOn) { HeroUpdate(dt); BikeUpdate(dt); }
         else Pointer();
         GtaSoundsUpdate();

@@ -613,3 +613,27 @@ files (default.xex, the three exported files, the archives) are picked by the la
   results cached in temporaryCachePath/addons.txt by path|size|date (next launch: instant). Not-yet-read addons
   aren't listed; the list is rebuilt when all are done (or every 4 s while reading). dgma_maps/dgma_models no
   longer called (kept in the library).
+
+## GMod maps' working parts (entities) (2026-11-17, 21:40)
+- Converter: Map.entities_kv (all keys in order, outputs repeated), model_bounds (lump 14). Brush entities that
+  move or are told to (is_mover: func_door*, func_button, func_rot_button, func_movelinear, func_tracktrain,
+  func_train, func_rotating, func_brush, func_wall_toggle, func_illusionary, func_breakable, func_physbox...) and
+  prop_door_rotating / named prop_dynamic get their own batches: key | ent_key(i) ((i+1)<<32; MAT_MASK 0xffffff),
+  mesh "... [ent i]". Beside the glb: ".ents" (key\tvalue lines, "#mins"/"#maxs" brush box in Source units
+  with origin, "--" after each; i = order) and ".sounds/<path>" (every .wav/.mp3/.ogg value found via content).
+  Cache name now *_e1.bsp.glb (old ones re-converted).
+- MapEnts.cs: ents read; "[ent i]" meshes grouped under "ent i ..." (pivot at origin), kinematic Rigidbody, their
+  colliders not in Delirium's level, not static-batched. I/O queue (delays, times, !self/!activator/wildcards,
+  AddOutput). Classes: func_door / func_water_analog / func_button / func_movelinear (move along movedir by
+  |size·dir| - lip; wait; toggle; locked), func_door_rotating / prop_door_rotating / func_rot_button (axis flags,
+  distance; prop doors open away from the hero), func_rotating, func_tracktrain / func_train + path_track /
+  path_corner (OnPass, speed, wait), func_brush / func_wall_toggle (Enable/Disable/Toggle, StartDisabled,
+  Solidity), func_illusionary (not solid), ambient_generic (PCM .wav read by hand -> AudioClip; flags 1 everywhere,
+  16 start silent, 32 not looped; radius; PlaySound/StopSound/ToggleSound/Volume), logic_auto, logic_relay,
+  logic_timer, logic_case (InValue, PickRandom), logic_branch, math_counter, point_teleport, trigger_once /
+  multiple / teleport (to its target's place and yaw) / push / hurt (>=100 kills); Kill, FireUserN.
+- The hero: a lift or train under him carries him (its matrix change applied to heroPos/yaw); "Use" button
+  (yellow, beside Aim; E on a keyboard) when a usable button/door is within 1.6 m of his chest and not behind
+  the camera; touch-opening doors and touch buttons on entering their box.
+- Not yet: particles (info_particle_system .pcf), env_sprite glows, NPC/vehicle entities, soundscripts
+  (named sounds, not files), momentary_rot_button's position, func_physbox physics.

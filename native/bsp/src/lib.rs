@@ -71,7 +71,8 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
         let nocollide = k & NOCOLLIDE != 0;
         let key = k;
         let sky3d = k & SKY3D != 0;
-        let k = k & !(NOCOLLIDE | SKY3D);
+        let ent = ent_of(k);
+        let k = k & MAT_MASK;
         if b.pos.is_empty() { continue; }
         let m = &map.materials.get(k);
         let name = m.map(|m| m.name.clone()).unwrap_or_else(|| format!("material{k}"));
@@ -145,6 +146,8 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
             ));
         }
         let mesh_name = if sky3d { format!("{name} [sky3d] [nocollide]") } else if water || nocollide { format!("{name} [nocollide]") } else { name.clone() };
+        // (an entity's own: the sandbox moves it, shows it, hides it as the map says)
+        let mesh_name = match ent { Some(e) => format!("{mesh_name} [ent {e}]"), None => mesh_name };
         meshes.push(format!(r#"{{"name":{},"primitives":[{{"attributes":{{"POSITION":{a0},"NORMAL":{},"TEXCOORD_0":{}{luv_acc}}},"indices":{},"material":{mi}}}]}}"#, json(&mesh_name), a0 + 1, a0 + 2, a0 + 3));
         nodes.push(format!(r#"{{"name":{},"mesh":{}}}"#, json(&mesh_name), meshes.len() - 1));
         children.push(nodes.len());
@@ -185,6 +188,10 @@ pub fn to_glb(map: &Map, tex: &std::collections::HashMap<usize, Tex>) -> Vec<u8>
 pub const NOCOLLIDE: usize = 1 << 24;
 /// (a batch key's flag: in the 3D skybox, drawn by a camera of its own behind the map, as Source does)
 pub const SKY3D: usize = 1 << 25;
+/// (a batch key's material: its low bits; an entity's own meshes have its index + 1 from bit 32: ent_key)
+pub const MAT_MASK: usize = 0x00ff_ffff;
+pub fn ent_key(i: usize) -> usize { (i + 1) << 32 }
+pub fn ent_of(key: usize) -> Option<usize> { let e = key >> 32; (e > 0).then(|| e - 1) }
 
 /// The map's models put in its batches (a material each of theirs, after the map's): how many placed, and which
 /// models weren't found or read
@@ -213,7 +220,7 @@ fn add_props(map: &mut Map, content: &content::Content) -> (usize, Vec<String>) 
             Some((_, _, o, k)) => ([(p.origin[0] - o[0]) * k, (p.origin[1] - o[1]) * k, (p.origin[2] - o[2]) * k], p.scale * k, false),
             None => (p.origin, p.scale, p.solid),
         };
-        let flags = if sky.is_some() { NOCOLLIDE | SKY3D } else if solid { 0 } else { NOCOLLIDE };
+        let flags = (if sky.is_some() { NOCOLLIDE | SKY3D } else if solid { 0 } else { NOCOLLIDE }) | p.ent.map(ent_key).unwrap_or(0);
         let skin = model.skins.get(p.skin).or(model.skins.first());
         for mesh in &model.meshes {
             let ti = skin.and_then(|s| s.get(mesh.material).copied()).unwrap_or(mesh.material);
@@ -265,6 +272,43 @@ fn json(s: &str) -> String {
 
 /// A .bsp file to a .glb file, its textures looked for in its pakfile and under `roots` (your game's packs and
 /// folders): a line about it (triangles, materials, textures found), or the reason it couldn't be.
+/// The entities (each "key<TAB>value" a line, its brush model's box as "#mins"/"#maxs" in Source's units, a line
+/// "--" after each, in the map's order: "[ent N]" in a mesh's name is the Nth) and the sounds they name
+fn write_entities(map: &Map, content: &content::Content, glb_path: &str) -> usize {
+    let mut out = String::new();
+    let mut wanted: Vec<String> = vec![];
+    for kv in &map.entities_kv {
+        let mut origin = [0f32; 3];
+        let mut model = None;
+        for (k, v) in kv {
+            out.push_str(&format!("{}\t{}\n", k.replace(['\t', '\n'], " "), v.replace(['\t', '\n'], " ")));
+            let kl = k.to_ascii_lowercase();
+            if kl == "origin" { if let Some(o) = bsp::vec3_of(v) { origin = o; } }
+            if kl == "model" { model = v.strip_prefix('*').and_then(|m| m.parse::<usize>().ok()); }
+            // a sound file it plays ("message" of an ambient_generic, a door's or button's noise)
+            let vl = v.to_ascii_lowercase();
+            if vl.ends_with(".wav") || vl.ends_with(".mp3") || vl.ends_with(".ogg") {
+                let p = vl.trim_start_matches(|c: char| !c.is_ascii_alphanumeric()).replace('\\', "/");
+                if !wanted.contains(&p) { wanted.push(p); }
+            }
+        }
+        if let Some(&(lo, hi)) = model.and_then(|m| map.model_bounds.get(m)) {
+            out.push_str(&format!("#mins\t{} {} {}\n#maxs\t{} {} {}\n", lo[0] + origin[0], lo[1] + origin[1], lo[2] + origin[2], hi[0] + origin[0], hi[1] + origin[1], hi[2] + origin[2]));
+        }
+        out.push_str("--\n");
+    }
+    let _ = std::fs::write(format!("{glb_path}.ents"), &out);
+    let dir = std::path::PathBuf::from(format!("{glb_path}.sounds"));
+    let mut n = 0;
+    for p in wanted {
+        let Some(b) = content.find(&format!("sound/{p}")) else { continue };
+        let to = dir.join(&p);
+        if let Some(d) = to.parent() { let _ = std::fs::create_dir_all(d); }
+        if std::fs::write(&to, &b).is_ok() { n += 1; }
+    }
+    n
+}
+
 pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max_side: usize) -> Result<String, String> {
     // a Workshop addon (.gma, maybe LZMA-packed): the map asked for ("addon.gma#maps/x.bsp") or its first, its own
     // files first for its textures
@@ -293,7 +337,7 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
     let mut done: std::collections::HashMap<String, Option<std::rc::Rc<Vec<u8>>>> = std::collections::HashMap::new();
     let mut water: Vec<(usize, [f32; 3])> = vec![];
     for &key in map.batches.keys() {
-        let k = key & !(NOCOLLIDE | SKY3D);
+        let k = key & MAT_MASK;
         let Some(m) = map.materials.get(k) else { continue };
         let vmt = content.material(&m.name);
         // water: its colour under the surface (it has no picture of its own)
@@ -327,16 +371,19 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
         }
     }
     let _ = std::fs::write(format!("{glb_path}.env"), &env);
+    // its entities (buttons, doors, lifts, sounds, triggers...) for the sandbox to run: ".ents", and the sounds they
+    // play beside it (".sounds/<path>")
+    let sounds = write_entities(&map, &content, glb_path);
     let tris: usize = map.batches.values().map(|b| b.pos.len() / 3).sum();
     missing.sort();
     Ok(format!(
-        "{}v{}, light x{:.1}, {} triangles, {} materials, {} textured ({} packs{}); {} models placed{}; {}{} faces of the 3D skybox drawn round it, {} tool faces left out{}",
+        "{}v{}, light x{:.1}, {} triangles, {} materials, {} textured ({} packs{}); {} models placed{}; {}{} faces of the 3D skybox drawn round it, {} tool faces left out; {} entities, {} sounds{}",
         if from.is_empty() { String::new() } else { format!("{from}: ") }, map.version, map.exposure, tris, map.batches.len(), tex.len(), content.packs(),
         if content.missing_archives > 0 { format!(", {} of their archives missing", content.missing_archives) } else { String::new() },
         placed,
         if unplaced.is_empty() { String::new() } else { format!(" ({} models not found, e.g. {})", unplaced.len(), unplaced.iter().take(2).cloned().collect::<Vec<_>>().join(", ")) },
         if sky_name.is_empty() { String::new() } else { format!("sky {sky_name}; ") },
-        map.skipped.0, map.skipped.1,
+        map.skipped.0, map.skipped.1, map.entities_kv.len(), sounds,
         if missing.is_empty() { String::new() } else { format!("; no texture for {} (e.g. {})", missing.len(), missing.iter().take(3).cloned().collect::<Vec<_>>().join(", ")) }
     ))
 }

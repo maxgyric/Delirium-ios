@@ -143,6 +143,7 @@ public partial class Game
     static byte[] BspToGlb(string path, out string note)
     {
         bspEnv = null;
+        bspEnts = null;
         note = "";
         string mods = ModsDir();
         long stamp = 0;
@@ -154,7 +155,9 @@ public partial class Game
         catch (Exception) { }
         var fi = new FileInfo(FileOf(path));
         string cacheName = Path.GetFileNameWithoutExtension(FileOf(path)) + (MapOf(path) != null ? "-" + MapOf(path) : "");
-        string glb = Path.Combine(Application.temporaryCachePath, cacheName + "_" + fi.Length + "_" + fi.LastWriteTimeUtc.Ticks + "_" + stamp + ".bsp.glb");
+        // (_e1: a map's entities beside it, its moving parts in meshes of their own)
+        string glb = Path.Combine(Application.temporaryCachePath, cacheName + "_" + fi.Length + "_" + fi.LastWriteTimeUtc.Ticks + "_" + stamp + "_e1.bsp.glb");
+        bspEnts = glb + ".ents";
         string info = glb + ".txt";
         if (File.Exists(glb))
         {
@@ -166,6 +169,7 @@ public partial class Game
         try
         {
             foreach (var old in Directory.GetFiles(Application.temporaryCachePath, cacheName + "_*.bsp.glb*")) File.Delete(old);
+            foreach (var old in Directory.GetDirectories(Application.temporaryCachePath, cacheName + "_*.bsp.glb.sounds")) Directory.Delete(old, true);
         }
         catch (Exception) { }
         string roots = mods + "|" + Path.GetDirectoryName(FileOf(path)) + "|" + Application.persistentDataPath;
@@ -268,6 +272,7 @@ public partial class Game
         foreach (var mf in mapRoot.GetComponentsInChildren<MeshFilter>(true))
             if (mf.sharedMesh != null) meshes.Add(mf.sharedMesh);
         DeliriumRagdolls.SandboxForget();
+        EntsClear();
         DestroyImmediate(mapRoot);
         mapRoot = null;
         mapName = "";
@@ -494,19 +499,27 @@ public partial class Game
         // a GMod map's 3D skybox: its own camera draws it (MapLook)
         foreach (var r in root.GetComponentsInChildren<Renderer>())
             if (r.gameObject.name.Contains("[sky3d]")) r.gameObject.layer = Sky3DLayer;
+        // a GMod map's working parts (buttons, doors, lifts...): their meshes gathered, one object each (MapEnts)
+        if (metres) EntsBuild(root, bspEnts); else EntsClear();
+        var still = new List<GameObject>();
         foreach (var mf in root.GetComponentsInChildren<MeshFilter>())
         {
+            bool part = ents.Count > 0 && EntOfObject(mf.gameObject) != null;
+            if (!part) still.Add(mf.gameObject);
             if (mf.sharedMesh == null || mf.sharedMesh.GetIndexCount(0) < 3) continue;
             if (mf.gameObject.name.Contains("[nocollide]")) continue; // a GMod map's water: drawn, not stood on
             var col = mf.gameObject.AddComponent<MeshCollider>();
             col.sharedMesh = mf.sharedMesh;
+            if (part) continue; // (one that moves: not in Delirium's still world)
             level.Add(col);
             DeliriumRagdolls.SandboxWarm(col); // its triangles ready for Delirium (no hitch at the first ragdoll)
         }
         // the map never moves: its meshes drawn as a few big batches (one per material) instead of one call each.
         // The same picture; a map of hundreds of pieces far cheaper to draw. (Its colliders keep their own meshes.)
-        StaticBatchingUtility.Combine(root);
+        // Its working parts move: not batched.
+        StaticBatchingUtility.Combine(still.ToArray(), root);
         PlaceOnMap();
+        EntsStart();
     }
 
     Bounds MapBounds()
@@ -578,6 +591,7 @@ public partial class Game
 
     void ClearLevel()
     {
+        EntsClear();
         foreach (var c in level)
             if (c != null) Destroy(c.gameObject);
         level.Clear();
