@@ -637,3 +637,11 @@ files (default.xex, the three exported files, the archives) are picked by the la
   the camera; touch-opening doors and touch buttons on entering their box.
 - Not yet: particles (info_particle_system .pcf), env_sprite glows, NPC/vehicle entities, soundscripts
   (named sounds, not files), momentary_rot_button's position, func_physbox physics.
+- (22:30) gm_stairs (user's ragdoll test map): func_tanktrain (= tracktrain, added to is_mover; cache _e2) with
+  invisible brushes and prop_dynamic cars / a train001 and trigger_hurt parented to it. EntsStart now parents
+  first (an entity without meshes gets an empty pivot "ent i ..."), then records home pose and each box in its
+  own T space (LocalBox: triggers on trains move and turn with them), then runs Setup (trains jump to their first
+  path_track with their children). Tracktrains: placed at node + "height", facing the next node at once, then
+  turning toward it at 120 deg/s (orientationtype 0 / flag 16: fixed); facing = R(dir) R(src +x)^-1 home.
+  phys_motor: turns attach1 (a func_physbox) about the line origin->"axis" at "speed" deg/s (flag 1 on;
+  TurnOn/TurnOff/SetSpeed). trigger_push speed capped at 40 m/s.

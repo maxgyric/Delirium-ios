@@ -156,7 +156,7 @@ public partial class Game
         var fi = new FileInfo(FileOf(path));
         string cacheName = Path.GetFileNameWithoutExtension(FileOf(path)) + (MapOf(path) != null ? "-" + MapOf(path) : "");
         // (_e1: a map's entities beside it, its moving parts in meshes of their own)
-        string glb = Path.Combine(Application.temporaryCachePath, cacheName + "_" + fi.Length + "_" + fi.LastWriteTimeUtc.Ticks + "_" + stamp + "_e1.bsp.glb");
+        string glb = Path.Combine(Application.temporaryCachePath, cacheName + "_" + fi.Length + "_" + fi.LastWriteTimeUtc.Ticks + "_" + stamp + "_e2.bsp.glb");
         bspEnts = glb + ".ents";
         string info = glb + ".txt";
         if (File.Exists(glb))

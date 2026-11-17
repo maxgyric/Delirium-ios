@@ -35,6 +35,7 @@ public partial class Game
         public Transform T;              // its own meshes (or a pivot of its own), null if it has none
         public Vector3 SrcOrigin, SrcMins, SrcMaxs;
         public bool HasBox, Enabled = true, Killed, Locked, Inside;
+        public Bounds LocalBox;          // its box in T's space (it moves with it: a trigger on a train)
         public Vector3 HomePos;          // T's place and turn when closed
         public Quaternion HomeRot;
         // doors, buttons, movelinear: 0 closed .. 1 open; Dir +1 opening, -1 closing
@@ -45,6 +46,8 @@ public partial class Game
         public bool Turns;
         // func_rotating
         public float Spin, SpinTarget, SpinMax;
+        public Ent Attached;             // phys_motor: what it turns
+        public Vector3 Hub;              // phys_motor: a point on its axis (world)
         // trains
         public Ent Path;
         public float TrainSpeed, TrainMax;
@@ -130,6 +133,7 @@ public partial class Game
         foreach (var x in ents)
         {
             x.Class = x.Get("classname").ToLowerInvariant();
+            if (x.Class == "func_tanktrain") x.Class = "func_tracktrain"; // (a tracktrain that can be shot)
             x.Name = x.Get("targetname");
             x.SrcOrigin = Vec(x.Get("origin"));
             if (x.Name != "")
@@ -197,18 +201,35 @@ public partial class Game
                 var rb = e.T.gameObject.AddComponent<Rigidbody>();
                 rb.isKinematic = true;
                 rb.useGravity = false;
-                e.HomePos = e.T.position;
-                e.HomeRot = e.T.rotation;
             }
-            Setup(e);
             if (e.Get("parentname") != "") parents.Add(e);
         }
-        // a child moves with its parent (a button on a lift, a light on a train)
+        // a child moves with its parent (a button on a lift, a car or a trigger on a train): one without meshes of
+        // its own gets an empty object there to move
         foreach (var e in parents)
         {
             var p = Find(e.Get("parentname").Split(',')[0], e);
-            if (p.Count > 0 && p[0].T != null && e.T != null) e.T.SetParent(p[0].T, true);
+            if (p.Count == 0 || p[0] == e) continue;
+            if (p[0].T == null) Pivot(p[0]);
+            if (e.T == null) Pivot(e);
+            e.T.SetParent(p[0].T, true);
         }
+        foreach (var e in ents)
+        {
+            if (e.T == null) continue;
+            e.HomePos = e.T.position;
+            e.HomeRot = e.T.rotation;
+            if (e.HasBox)
+            {
+                // its box in its own space (the 8 corners' at the start)
+                Vector3 a = SrcPoint(e.SrcMins), b = SrcPoint(e.SrcMaxs);
+                var lb = new Bounds(e.T.InverseTransformPoint(a), Vector3.zero);
+                for (int c = 0; c < 8; c++)
+                    lb.Encapsulate(e.T.InverseTransformPoint(new Vector3((c & 1) != 0 ? a.x : b.x, (c & 2) != 0 ? a.y : b.y, (c & 4) != 0 ? a.z : b.z)));
+                e.LocalBox = lb;
+            }
+        }
+        foreach (var e in ents) Setup(e);
         // the start: logic_auto's outputs
         foreach (var e in ents)
             if (e.Class == "logic_auto")
@@ -218,6 +239,15 @@ public partial class Game
                 Fire(e, "OnMultiNewMap");
                 Fire(e, "OnMultiNewRound");
             }
+    }
+
+    void Pivot(Ent e)
+    {
+        var go = new GameObject("ent " + e.Index + " " + e.Class + (e.Name != "" ? " " + e.Name : ""));
+        go.transform.SetParent(mapRoot.transform, false);
+        go.transform.position = SrcPoint(e.SrcOrigin);
+        e.T = go.transform;
+        entOfT[e.T] = e;
     }
 
     void Setup(Ent e)
@@ -267,6 +297,20 @@ public partial class Game
                 Vector3 axis = e.Flag(4) ? new Vector3(1f, 0f, 0f) : e.Flag(8) ? new Vector3(0f, 1f, 0f) : new Vector3(0f, 0f, 1f);
                 e.Axis = SrcDir(axis);
                 e.SpinMax = e.F("maxspeed", 100f) * (e.Flag(2) ? -1f : 1f);
+                if (e.Flag(1)) e.SpinTarget = e.Spin = e.SpinMax;
+                break;
+            }
+            case "phys_motor":
+            {
+                // turns what it's attached to about its axis (its origin toward its "axis" point), at its speed
+                var att = Find(e.Get("attach1"), e);
+                if (att.Count == 0) break;
+                if (att[0].T == null) Pivot(att[0]);
+                e.Attached = att[0];
+                e.Hub = SrcPoint(e.SrcOrigin);
+                Vector3 to = SrcPoint(Vec(e.Get("axis"))) - e.Hub;
+                e.Axis = to.sqrMagnitude > 1e-8f ? to.normalized : Vector3.up;
+                e.SpinMax = e.F("speed", 30f);
                 if (e.Flag(1)) e.SpinTarget = e.Spin = e.SpinMax;
                 break;
             }
@@ -392,6 +436,11 @@ public partial class Game
                 else if (i == "unlock") e.Locked = false;
                 else if (i == "pressin") { e.Dir = 1f; Fire(e, "OnPressed"); }
                 else if (i == "pressout") e.Dir = -1f;
+                break;
+            case "phys_motor":
+                if (i == "turnon") e.SpinTarget = e.SpinMax;
+                else if (i == "turnoff") e.SpinTarget = 0f;
+                else if (i == "setspeed") { e.SpinMax = pf; if (Mathf.Abs(e.SpinTarget) > 0.01f) e.SpinTarget = pf; }
                 break;
             case "func_rotating":
                 if (i == "start") e.SpinTarget = e.SpinMax;
@@ -641,13 +690,27 @@ public partial class Game
         if (e.Class == "func_train") e.TrainMax = SrcLen(e.F("speed", 100f));
     }
 
+    Vector3 TrainSpot(Ent e, Ent node) => SrcPoint(node.SrcOrigin + new Vector3(0f, 0f, e.Class == "func_tracktrain" ? e.F("height") : 0f));
+
+    bool TrainTurns(Ent e) => e.Class == "func_tracktrain" && !e.Flag(16) && e.I("orientationtype", 1) != 0;
+
+    // a tracktrain faces the way it goes: its own +x (Source's) along it
+    Quaternion TrainFacing(Ent e, Vector3 d)
+    {
+        if (e.Flag(1)) d.y = 0f; // "no pitch"
+        return d.sqrMagnitude < 1e-6f ? e.T.rotation : Quaternion.LookRotation(d) * Quaternion.Inverse(Quaternion.LookRotation(SrcDir(new Vector3(1f, 0f, 0f)))) * e.HomeRot;
+    }
+
     void TrainTo(Ent e, Ent node, bool jump)
     {
         e.Path = node;
         if (jump && e.T != null)
         {
-            // (a func_train's corner is its brushes' lowest corner's place in HL1; Source: its origin)
-            e.T.position = SrcPoint(node.SrcOrigin);
+            // (Source: its origin onto the node, turned toward the next one)
+            e.T.position = TrainSpot(e, node);
+            var next = Find(node.Get("target"), node);
+            if (TrainTurns(e) && next.Count > 0) e.T.rotation = TrainFacing(e, TrainSpot(e, next[0]) - e.T.position);
+            if (next.Count > 0) e.Path = next[0];
         }
     }
 
@@ -659,19 +722,12 @@ public partial class Game
         {
             Ent goal = e.TrainSpeed > 0 ? e.Path : PrevNode(e.Path);
             if (goal == null) { e.TrainSpeed = 0f; return; }
-            Vector3 to = SrcPoint(goal.SrcOrigin);
+            Vector3 to = TrainSpot(e, goal);
             Vector3 d = to - e.T.position;
             float dist = d.magnitude;
             // facing the way it goes (a tracktrain, unless its orientation is fixed)
-            if (e.Class == "func_tracktrain" && !e.Flag(16) && dist > 0.05f)
-            {
-                var flat = new Vector3(d.x, e.Flag(1) ? 0f : d.y, d.z);
-                if (flat.sqrMagnitude > 1e-4f)
-                {
-                    var want = Quaternion.LookRotation(e.TrainSpeed > 0 ? flat : -flat) * Quaternion.Euler(0f, 90f, 0f);
-                    e.T.rotation = Quaternion.RotateTowards(e.T.rotation, want, 90f * dt);
-                }
-            }
+            if (TrainTurns(e) && dist > 0.05f)
+                e.T.rotation = Quaternion.RotateTowards(e.T.rotation, TrainFacing(e, e.TrainSpeed > 0 ? d : -d), 120f * dt);
             if (dist > left) { e.T.position += d / dist * left; return; }
             e.T.position = to;
             left -= dist;
@@ -831,6 +887,14 @@ public partial class Game
                 case "logic_timer":
                     if (e.Enabled && e.NextFire >= 0f && entClock >= e.NextFire) { Fire(e, "OnTimer"); ArmTimer(e); }
                     break;
+                case "phys_motor":
+                    e.Spin = Mathf.MoveTowards(e.Spin, e.SpinTarget, Mathf.Max(Mathf.Abs(e.SpinMax), 1f) * dt);
+                    if (e.Attached != null && e.Attached.T != null && !e.Attached.Killed && Mathf.Abs(e.Spin) > 0.01f)
+                    {
+                        e.Attached.T.RotateAround(e.Hub, e.Axis, -e.Spin * dt);
+                        moved = true;
+                    }
+                    break;
             }
         }
         if (moved) Physics.SyncTransforms();
@@ -855,9 +919,25 @@ public partial class Game
     {
         Vector3 a = SrcPoint(e.SrcMins), b = SrcPoint(e.SrcMaxs);
         var box = new Bounds((a + b) * 0.5f, new Vector3(Mathf.Abs(a.x - b.x), Mathf.Abs(a.y - b.y), Mathf.Abs(a.z - b.z)));
-        // one that's moved: its box with it
         if (e.T != null) box.center += e.T.position - e.HomePos;
         return box;
+    }
+
+    // a point in its box (one that moves and turns: in its own space), the box grown by `grow` metres
+    bool InBox(Ent e, Vector3 p, float grow)
+    {
+        if (e.T == null) { var b = WorldBox(e); b.Expand(grow * 2f); return b.Contains(p); }
+        var lb = e.LocalBox;
+        float k = e.T.lossyScale.x > 1e-6f ? 1f / e.T.lossyScale.x : 1f;
+        lb.Expand(grow * 2f * k);
+        return lb.Contains(e.T.InverseTransformPoint(p));
+    }
+
+    // the nearest point of its box to p
+    Vector3 BoxNear(Ent e, Vector3 p)
+    {
+        if (e.T == null) return WorldBox(e).ClosestPoint(p);
+        return e.T.TransformPoint(e.LocalBox.ClosestPoint(e.T.InverseTransformPoint(p)));
     }
 
     // triggers the hero walks into
@@ -871,9 +951,8 @@ public partial class Game
             bool touchDoor = (e.Class == "func_door" || e.Class == "func_door_rotating") && e.Flag(1024);
             bool touchButton = e.Class == "func_button" && e.Flag(256);
             if (!trig && !touchDoor && !touchButton) continue;
-            var box = WorldBox(e);
-            if (!trig) box.Expand(0.4f);
-            bool inside = e.Enabled && (box.Contains(chest) || box.Contains(heroPos + Vector3.up * 0.2f));
+            float grow = trig ? 0f : 0.2f;
+            bool inside = e.Enabled && (InBox(e, chest, grow) || InBox(e, heroPos + Vector3.up * 0.2f, grow));
             if (inside && !e.Inside)
             {
                 e.Inside = true;
@@ -922,7 +1001,7 @@ public partial class Game
     void Push(Ent e)
     {
         Vector3 dir = SrcDir(SrcForward(Vec(e.Get("pushdir"))));
-        float sp = SrcLen(e.F("speed", 40f));
+        float sp = Mathf.Min(SrcLen(e.F("speed", 40f)), 40f);
         heroVel = Vector3.MoveTowards(heroVel, new Vector3(dir.x, 0f, dir.z) * sp, sp * Time.deltaTime * 4f);
         if (dir.y > 0.2f) { heroVy = Mathf.Max(heroVy, dir.y * Mathf.Min(sp, 12f)); heroGround = false; }
     }
@@ -955,19 +1034,20 @@ public partial class Game
         foreach (var e in ents)
         {
             if (!Usable(e)) continue;
-            Bounds box;
-            if (e.HasBox) box = WorldBox(e);
+            Vector3 near, centre;
+            if (e.HasBox) { near = BoxNear(e, chest); centre = e.T != null ? e.T.TransformPoint(e.LocalBox.center) : WorldBox(e).center; }
             else
             {
                 var rs = e.T.GetComponentsInChildren<Renderer>();
                 if (rs.Length == 0) continue;
-                box = rs[0].bounds;
+                var box = rs[0].bounds;
                 foreach (var r in rs) box.Encapsulate(r.bounds);
+                near = box.ClosestPoint(chest);
+                centre = box.center;
             }
-            Vector3 near = box.ClosestPoint(chest);
             float dist = Vector3.Distance(near, chest);
             if (dist > 1.6f) continue;
-            Vector3 to = (box.center - chest);
+            Vector3 to = (centre - chest);
             float facing = to.sqrMagnitude > 1e-4f ? Vector3.Dot(look, to.normalized) : 1f;
             if (facing < -0.1f) continue;
             float score = dist - facing * 0.6f;

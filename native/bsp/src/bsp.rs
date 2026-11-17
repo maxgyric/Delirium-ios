@@ -247,7 +247,7 @@ pub fn parse_entities_kv(text: &str) -> Vec<Vec<(String, String)>> {
 /// Brush entities that move or are told to (their faces get meshes of their own, "[ent N]")
 pub fn is_mover(class: &str) -> bool {
     matches!(class, "func_door" | "func_door_rotating" | "func_button" | "func_rot_button" | "momentary_rot_button" | "func_movelinear"
-        | "func_tracktrain" | "func_train" | "func_rotating" | "func_brush" | "func_wall_toggle" | "func_platrot" | "func_water_analog"
+        | "func_tracktrain" | "func_tanktrain" | "func_train" | "func_rotating" | "func_brush" | "func_wall_toggle" | "func_platrot" | "func_water_analog"
         | "func_breakable" | "func_breakable_surf" | "func_physbox" | "func_physbox_multiplayer" | "func_lookdoor" | "func_illusionary")
 }
 
