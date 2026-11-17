@@ -96,7 +96,6 @@ public partial class Game
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dgma_maps(byte[] gma, byte[] text, int cap);
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dgma_models(byte[] gma, byte[] text, int cap);
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dmdl_convert(byte[] spec, byte[] glb, byte[] roots, int maxSide);
-    static readonly Dictionary<string, string> modelNames = new Dictionary<string, string>(); // "addon.gma#models/x.mdl" -> "Buddy"
 
     // A player model from an addon as a rigged .glb (cached like a map): its bytes, or null and why
     static byte[] MdlToGlb(string path, out string note)
