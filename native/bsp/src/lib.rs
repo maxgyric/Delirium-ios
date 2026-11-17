@@ -189,16 +189,19 @@ fn json(s: &str) -> String {
 /// A .bsp file to a .glb file, its textures looked for in its pakfile and under `roots` (your game's packs and
 /// folders): a line about it (triangles, materials, textures found), or the reason it couldn't be.
 pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max_side: usize) -> Result<String, String> {
-    // a Workshop addon (.gma, maybe LZMA-packed): its first map, its own files first for its textures
+    // a Workshop addon (.gma, maybe LZMA-packed): the map asked for ("addon.gma#maps/x.bsp") or its first, its own
+    // files first for its textures
+    let (bsp_path, pick) = match bsp_path.split_once('#') { Some((a, b)) => (a, Some(b.to_ascii_lowercase())), None => (bsp_path, None) };
     let (data, gma, from) = if bsp_path.to_ascii_lowercase().ends_with(".gma") {
         let g = gma::Gma::open(std::path::Path::new(bsp_path))?;
         let maps = g.maps();
-        let Some(m) = maps.first() else {
+        let chosen = pick.as_ref().and_then(|p| maps.iter().find(|m| *m == p || m.trim_start_matches("maps/").trim_end_matches(".bsp") == p.as_str())).or(maps.first());
+        let Some(m) = chosen else {
             let models = g.order.iter().filter(|p| p.ends_with(".mdl")).count();
             return Err(if models > 0 { format!("\"{}\" has no map ({models} models: player models aren't read yet)", g.name) } else { format!("\"{}\" has no map in it", g.name) });
         };
         let d = g.read(m).unwrap_or_default().to_vec();
-        let from = format!("{} ({}{})", m.trim_start_matches("maps/"), g.name, if maps.len() > 1 { format!(", 1 of {} maps", maps.len()) } else { String::new() });
+        let from = format!("{} ({}{})", m.trim_start_matches("maps/"), g.name, if maps.len() > 1 { format!(", one of its {} maps", maps.len()) } else { String::new() });
         (d, Some(g), from)
     } else {
         (std::fs::read(bsp_path).map_err(|e| format!("{bsp_path}: {e}"))?, None, String::new())
@@ -241,6 +244,30 @@ pub fn convert(bsp_path: &str, glb_path: &str, roots: &[std::path::PathBuf], max
 }
 
 static ERR: Mutex<String> = Mutex::new(String::new());
+
+/// For C# (the files list): an addon's (.gma) maps, '\n' between them ("maps/x.bsp"), into `out` (`cap` bytes,
+/// 0-terminated): how many maps, or -1 (dbsp_error says why).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dgma_maps(gma: *const c_char, out: *mut u8, cap: i32) -> i32 {
+    let p = if gma.is_null() { None } else { unsafe { CStr::from_ptr(gma) }.to_str().ok().map(str::to_owned) };
+    let Some(p) = p else { return -1 };
+    match std::panic::catch_unwind(|| gma::Gma::open(std::path::Path::new(&p)).map(|g| g.maps())) {
+        Ok(Ok(maps)) => {
+            let text = maps.join("\n");
+            let b = text.as_bytes();
+            let n = b.len().min((cap.max(1) - 1) as usize);
+            if !out.is_null() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(b.as_ptr(), out, n);
+                    *out.add(n) = 0;
+                }
+            }
+            maps.len() as i32
+        }
+        Ok(Err(e)) => { *ERR.lock().unwrap() = e; -1 }
+        Err(_) => -1,
+    }
+}
 
 /// For C# (Models.cs): `bsp` (a .bsp) written to `glb` (a .glb), its textures from its pakfile and the packs and
 /// folders under `roots` ('|' between them), no bigger than `max_side`. 0, or -1 (dbsp_error says why); `dbsp_error`

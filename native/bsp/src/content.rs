@@ -93,7 +93,7 @@ impl Content {
     pub fn find(&self, path: &str) -> Option<Vec<u8>> {
         let path = path.replace('\\', "/").to_ascii_lowercase();
         if let Some(b) = self.pak.get(&path) { return Some(b.clone()); }
-        if let Some(b) = self.gma.as_ref().and_then(|g| g.read(&path)) { return Some(b.to_vec()); }
+        if let Some(b) = self.gma.as_ref().and_then(|g| g.read(&path)) { return Some(b); }
         for v in &self.vpks {
             if let Some(b) = v.read(&path) { return Some(b); }
         }

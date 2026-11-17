@@ -62,7 +62,7 @@ public partial class Game
         {
             string path = PlayerPrefs.GetString(prefs[i], "");
             if (path == "") continue;
-            if (!File.Exists(path) || !Use(path, kinds[i])) PlayerPrefs.DeleteKey(prefs[i]);
+            if (!File.Exists(FileOf(path)) || !Use(path, kinds[i])) PlayerPrefs.DeleteKey(prefs[i]);
         }
         filesNote = "";
     }
@@ -77,8 +77,43 @@ public partial class Game
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dbsp_convert(byte[] bsp, byte[] glb, byte[] roots, int maxSide);
     [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dbsp_error(byte[] text, int cap);
 
-    // a GMod map: a .bsp, or a Workshop addon (.gma) with one in it
+    // a GMod map: a .bsp, or a Workshop addon (.gma) with one in it; one of an addon's several: "x.gma#maps/y.bsp"
     static bool IsBsp(string path) => path.EndsWith(".bsp", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".gma", StringComparison.OrdinalIgnoreCase);
+    static string FileOf(string path)
+    {
+        int k = path.IndexOf(".gma#", StringComparison.OrdinalIgnoreCase);
+        return k < 0 ? path : path.Substring(0, k + 4);
+    }
+    // which of an addon's maps ("gm_x"), or null
+    static string MapOf(string path)
+    {
+        int k = path.IndexOf(".gma#", StringComparison.OrdinalIgnoreCase);
+        return k < 0 ? null : Path.GetFileNameWithoutExtension(path.Substring(k + 5));
+    }
+
+    [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dgma_maps(byte[] gma, byte[] text, int cap);
+    static readonly Dictionary<string, string[]> gmaMaps = new Dictionary<string, string[]>();
+
+    // An addon's maps (asked once a version of the file): one entry a map when it has more than one
+    static IEnumerable<string> GmaEntries(string f)
+    {
+        string[] maps;
+        try
+        {
+            var fi = new FileInfo(f);
+            string key = f + "|" + fi.Length + "|" + fi.LastWriteTimeUtc.Ticks;
+            if (!gmaMaps.TryGetValue(key, out maps))
+            {
+                var buf = new byte[16384];
+                int n = dgma_maps(System.Text.Encoding.UTF8.GetBytes(f + "\0"), buf, buf.Length);
+                maps = n > 0 ? System.Text.Encoding.UTF8.GetString(buf, 0, Array.IndexOf(buf, (byte)0)).Split('\n') : new string[0];
+                gmaMaps[key] = maps;
+            }
+        }
+        catch (Exception) { maps = new string[0]; }
+        if (maps.Length <= 1) { yield return f; yield break; }
+        foreach (var m in maps) yield return f + "#" + m;
+    }
 
     // A Garry's Mod (Source) map as a .glb (the native library reads the .bsp and finds its textures: in the map, in
     // the game's packs (*_dir.vpk with their _000.vpk...) and "materials" folders you put anywhere in mods): its bytes,
@@ -94,8 +129,9 @@ public partial class Game
                 foreach (var f in Directory.GetFiles(mods, "*.vpk", SearchOption.AllDirectories)) stamp += new FileInfo(f).Length % 1000003;
         }
         catch (Exception) { }
-        var fi = new FileInfo(path);
-        string glb = Path.Combine(Application.temporaryCachePath, Path.GetFileNameWithoutExtension(path) + "_" + fi.Length + "_" + fi.LastWriteTimeUtc.Ticks + "_" + stamp + ".bsp.glb");
+        var fi = new FileInfo(FileOf(path));
+        string cacheName = Path.GetFileNameWithoutExtension(FileOf(path)) + (MapOf(path) != null ? "-" + MapOf(path) : "");
+        string glb = Path.Combine(Application.temporaryCachePath, cacheName + "_" + fi.Length + "_" + fi.LastWriteTimeUtc.Ticks + "_" + stamp + ".bsp.glb");
         string info = glb + ".txt";
         if (File.Exists(glb))
         {
@@ -105,10 +141,10 @@ public partial class Game
         // older conversions of this map: gone
         try
         {
-            foreach (var old in Directory.GetFiles(Application.temporaryCachePath, Path.GetFileNameWithoutExtension(path) + "_*.bsp.glb*")) File.Delete(old);
+            foreach (var old in Directory.GetFiles(Application.temporaryCachePath, cacheName + "_*.bsp.glb*")) File.Delete(old);
         }
         catch (Exception) { }
-        string roots = mods + "|" + Path.GetDirectoryName(path) + "|" + Application.persistentDataPath;
+        string roots = mods + "|" + Path.GetDirectoryName(FileOf(path)) + "|" + Application.persistentDataPath;
         int r;
         try
         {
@@ -156,7 +192,14 @@ public partial class Game
                 found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.bsp"));
                 found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.gma"));
             }
-            files = found.ToArray();
+            // an addon with several maps: each of them
+            var listed = new List<string>();
+            foreach (var f in found)
+            {
+                if (f.EndsWith(".gma", StringComparison.OrdinalIgnoreCase)) listed.AddRange(GmaEntries(f));
+                else listed.Add(f);
+            }
+            files = listed.ToArray();
             Array.Sort(files, StringComparer.OrdinalIgnoreCase);
             if (!Directory.Exists(filesDir)) filesNote = "No such folder.";
         }
@@ -172,7 +215,7 @@ public partial class Game
     {
         try
         {
-            string name = Path.GetFileNameWithoutExtension(path);
+            string name = MapOf(path) ?? Path.GetFileNameWithoutExtension(path);
             bool source = IsBsp(path);
             if (source && kind != 2)
             {
@@ -456,7 +499,7 @@ public partial class Game
     // A batched map can't be resized in place: it's read again from its file at the new size.
     void ScaleMap(float k)
     {
-        if (mapRoot == null || mapPath == "" || !File.Exists(mapPath)) return;
+        if (mapRoot == null || mapPath == "" || !File.Exists(FileOf(mapPath))) return;
         mapScale *= k;
         bool px = pixelTextures;
         if (!Use(mapPath, 2)) return;
@@ -554,7 +597,8 @@ public partial class Game
         removeAsk = "";
         if (PlayerPrefs.GetString(kPrefHeroModel, "") == f) DefaultModel(true);
         if (PlayerPrefs.GetString(kPrefNpcModel, "") == f) DefaultModel(false);
-        if (mapPath == f) DefaultMap();
+        if (FileOf(mapPath) == FileOf(f)) DefaultMap();
+        f = FileOf(f); // (an addon's map: the whole addon)
         try
         {
             File.Delete(f);
@@ -570,6 +614,7 @@ public partial class Game
     // where it is under mods (maps/city.glb); one outside it says so
     string ShownName(string f)
     {
+        if (MapOf(f) != null) return ShownName(FileOf(f)) + " › " + MapOf(f);
         string root = (filesDir ?? "").TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
         if (f.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return f.Substring(root.Length).Replace('\\', '/');
         return Path.GetFileName(f) + (Application.isMobilePlatform ? " (not in mods)" : "");

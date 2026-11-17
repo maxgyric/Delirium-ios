@@ -482,3 +482,9 @@ files (default.xex, the three exported files, the archives) are picked by the la
   albedo x lightmap x 2 x 0.85, albedo x 0.2 for the sun and shadows. $color / $color2 ("[r g b]" or "{255 ...}") as
   the baseColorFactor. Checked: gm_stairs' lightmap (2048x511) renders with its baked shadow in place;
   gm_falleritus8 has none (a fullbright map).
+- (10:47 user) An addon with several maps ([DESTRUCTION UPDATE] Natural Disaster Survival: 3 maps, 441 materials,
+  180 MB): choose among them. gma.rs reads just an uncompressed addon's header and table (files read from it on
+  demand, never all in memory); convert takes "x.gma#maps/y.bsp"; dgma_maps lists an addon's maps. Sandbox: each
+  map of a multi-map addon is its own entry ("addon.gma › gm_y"), cached per map; removing one removes the addon.
+  gm_natural_disaster_survival: 108k triangles, 193/193 materials textured from the addon itself, lightmap; renders
+  in colour (red/white barriers, orange and blue buildings, trees are brushes here).
