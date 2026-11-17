@@ -510,3 +510,9 @@ files (default.xex, the three exported files, the archives) are picked by the la
   sandbox's own back for any other map. The lightmap texture is kept out of the pixel-art filter.
 - D:\gm_scrapland.gma is over the 400 MB staging limit: the user tests it on the phone (or extracts its .bsp with
   gmad for me).
+- (12:50 user) FPS drops a little on GMod maps; changing maps many times crashes (memory). Leak: a map's meshes,
+  textures and materials (made at run time) were never destroyed with its objects, and Delirium's mesh cache held
+  them too. ClearLevel now destroys the map's Owned objects, clears Delirium's mesh cache (SandboxForget), and calls
+  Resources.UnloadUnusedAssets + GC.Collect (the static-batched meshes); a replaced character template unloads
+  likewise. GMod maps' textures are compressed as they load (Texture2D.Compress: ETC2 on the phone, a quarter to an
+  eighth of RGBA32; the lightmap left as is), and a lightmapped GMod map casts no sun shadows (it has its own baked).

@@ -234,7 +234,10 @@ public partial class Game
                 filesNote = name + ": " + bspNote;
                 return false;
             }
-            var made = GlbScene.Load(data, name, ModelMaterial());
+            GlbScene.CompressTextures = source;
+            GlbScene.Made made;
+            try { made = GlbScene.Load(data, name, ModelMaterial()); }
+            finally { GlbScene.CompressTextures = false; }
             // an imported VRChat avatar: its toggles (on its own tree, before Prepare renames the bones)
             if (kind != 2)
                 try { VrcLook.Attach(path, made); }
@@ -251,6 +254,13 @@ public partial class Game
                 mapPath = path;
                 PlayerPrefs.SetFloat(kPrefMapScale, mapScale);
                 SetMap(made.Root, name);
+                mapOwned = made.Owned;
+                // a GMod map lit by its own baked light: its shadows are in it, it casts none of the sun's (a big
+                // map drawn again into the shadow map every frame cost a lot)
+                if (source)
+                    foreach (var r in made.Root.GetComponentsInChildren<Renderer>())
+                        if (r.sharedMaterial != null && r.sharedMaterial.HasProperty("_LightMapOn") && r.sharedMaterial.GetFloat("_LightMapOn") > 0.5f)
+                            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 mapTextures = made.Owned.FindAll(o => o is Texture2D).ConvertAll(o => (Texture2D)o);
                 // a GMod map's baked light stays smooth whatever the pixel look
                 foreach (var r in made.Root.GetComponentsInChildren<Renderer>())
@@ -288,14 +298,14 @@ public partial class Game
             DontDestroyOnLoad(wrap);
             if (kind == 0)
             {
-                if (heroTemplate != null) Destroy(heroTemplate);
+                if (heroTemplate != null) { Destroy(heroTemplate); Resources.UnloadUnusedAssets(); } // (its meshes and textures too)
                 heroTemplate = wrap;
                 heroModelName = name;
                 PlayerPrefs.SetString(kPrefHeroModel, path);
             }
             else
             {
-                if (npcTemplate != null) Destroy(npcTemplate);
+                if (npcTemplate != null) { Destroy(npcTemplate); Resources.UnloadUnusedAssets(); }
                 npcTemplate = wrap;
                 npcModelName = name;
                 PlayerPrefs.SetString(kPrefNpcModel, path);
@@ -484,7 +494,22 @@ public partial class Game
         if (mapRoot != null) Destroy(mapRoot);
         mapRoot = null;
         mapName = "";
+        // its meshes, textures and materials too (made at run time: not freed with its objects; maps one after
+        // another filled the memory till the game was closed), Delirium's copies of its triangles, then whatever's
+        // left unused (the batched meshes)
+        if (mapOwned != null)
+        {
+            foreach (var o in mapOwned)
+                if (o != null) Destroy(o);
+            mapOwned = null;
+        }
+        mapTextures = new List<Texture2D>();
+        DeliriumRagdolls.SandboxForget();
+        Resources.UnloadUnusedAssets();
+        GC.Collect();
     }
+
+    List<UnityEngine.Object> mapOwned; // the loaded map's meshes, textures, materials
 
     void DefaultMap()
     {

@@ -288,7 +288,11 @@ public static class GlbScene
     }
 
     // A glTF texture's picture, decoded once (null: none, or it didn't load: made says why).
-    static Texture2D Picture(Glb glb, int tex, Dictionary<int, Texture2D> textures, Made made)
+    /// Squeezed on the GPU (ETC2 on the phone, DXT on a PC: a quarter to an eighth of the memory) as they load: a
+    /// GMod map's hundreds of textures (Models sets it for those)
+    public static bool CompressTextures;
+
+    static Texture2D Picture(Glb glb, int tex, Dictionary<int, Texture2D> textures, Made made, bool squeeze = true)
     {
         int image = Json.Int(glb.Item("textures", tex), "source");
         Texture2D t = null;
@@ -306,7 +310,17 @@ public static class GlbScene
                 else
                 {
                     t = new Texture2D(2, 2, TextureFormat.RGBA32, true) { name = "image" + image };
-                    bool ok = t.LoadImage(bytes, true); // PNG or JPEG; true: freed from the CPU's side once it's on the GPU
+                    bool pack = CompressTextures && squeeze;
+                    bool ok = t.LoadImage(bytes, !pack); // PNG or JPEG; true: freed from the CPU's side once it's on the GPU
+                    if (ok && pack)
+                    {
+                        try
+                        {
+                            if (t.width % 4 == 0 && t.height % 4 == 0) t.Compress(false);
+                            t.Apply(false, true); // (and let its CPU copy go)
+                        }
+                        catch (Exception) { }
+                    }
                     if (!ok)
                     {
                         // once more the plainest way (kept readable, no mipmaps of our asking)
@@ -369,7 +383,7 @@ public static class GlbScene
         int lightmap = Json.Int(Json.Get(src, "extras"), "lightmap");
         if (lightmap >= 0 && mat.HasProperty("_LightMap"))
         {
-            var lm = Picture(glb, lightmap, textures, made);
+            var lm = Picture(glb, lightmap, textures, made, false); // (a lightmap squeezed shows blocks)
             if (lm != null)
             {
                 lm.filterMode = FilterMode.Bilinear;

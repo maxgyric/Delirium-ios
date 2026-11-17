@@ -129,6 +129,7 @@ namespace Delirium.Ragdoll
         }
         /// (Sandbox) A map's mesh collider read into the level cache now (as it loads), not at the first ragdoll.
         public static void SandboxWarm(Collider col) => global::Delirium.Ragdoll.Doll.Warm(col); // ("Doll" here is a method of this class)
+        public static void SandboxForget() => global::Delirium.Ragdoll.Doll.Forget();
         /// (Sandbox) The whole level handed to Delirium at once, as it loads: one world a ragdoll size holding all of it
         /// (built on a thread), every ragdoll of that size in it; nothing read round each ragdoll, nothing left over
         /// from where something was. `floorY`: a floor under it all. Call again when the level changes (a new map, ice).
@@ -1877,6 +1878,9 @@ namespace Delirium.Ragdoll
         {
             if (col is MeshCollider m && m.sharedMesh != null && m.sharedMesh.isReadable) Cached(m);
         }
+
+        // (Sandbox) A map's gone: its meshes' triangles let go (they kept the meshes, and their memory, alive)
+        internal static void Forget() => meshCache.Clear();
 
         /// The level's static colliders within 15 m, as NM triangles: meshes (readable ones), boxes and terrain.
         /// ponytail: spheres and capsules left out, and moving bodies; the level is read once, when the character's taken.
