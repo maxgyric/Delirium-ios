@@ -445,3 +445,16 @@ files (default.xex, the three exported files, the archives) are picked by the la
   The high fall was by speed (vy < -8.5): a vault's kinematic drop ended fast (run_vault_exit drops 3.6 m, its last
   samples ~8 m/s), and any 2.6 m drop did it; the freeze was the switch to Delirium. Now by height fallen (> 4.5 m
   from the top of the fall, heroFallFrom) and the vault's drop handed on at most 5 m/s.
+- (02:39 user) Garry's Mod maps in the sandbox (no prop spawn menu). D:\Steam\steamapps\common\GarrysMod: maps
+  gm_construct / gm_flatgrass (v20), content in sourceengine/*.vpk (CS:S, HL2) and garrysmod_*.vpk.
+  Stage 1 (native/bsp, delirium-bsp in libdelirium_ios.a): the .bsp read (lumps: entities, planes, texdata +
+  string table, vertices, nodes, texinfo, faces, leaves (32/56 B by lump version), edges, surfedges, models,
+  dispinfo/dispverts), the world and brush entities (not triggers, areaportals, occluders, clips, env_*, rendermode
+  10) at their origins, faces without sky/trigger/nodraw/hint/skip flags or tools/ materials (toolsblack kept),
+  displacements as (2^p+1)^2 grids from the corner nearest startPosition (row c0->c1, column left->right), the 3D
+  skybox left out (sky_camera's leaf's area: its leaves' box), triangles turned to face the plane's normal (glTF
+  CCW). Written as a .glb (Source inches -> m, (x, z, -y)): a mesh per material, its reflectivity as the colour,
+  UVs in 0..1 by the texture's size, water BLEND + "[nocollide]", glass see-through, a Spawn node at
+  info_player_start. gm_construct: 29k triangles, 184 materials, 492 skybox faces out; renders right (pond, hills).
+  Sandbox: .bsp in the files list (Map only), converted on use (dbsp_convert -> temporaryCachePath), a "GMod map
+  (.bsp)..." button (the same picker, now taking .bsp), no colliders on [nocollide] meshes.

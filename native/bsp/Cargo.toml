@@ -1,0 +1,14 @@
+# Garry's Mod (Source engine) maps in Delirium Sandbox: a .bsp read from your own files and turned into a .glb
+# the sandbox loads like any map. On iOS: inside libdelirium_ios.a.
+[package]
+name = "delirium-bsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "delirium_bsp"
+crate-type = ["rlib"]
+
+[dependencies]

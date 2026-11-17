@@ -552,6 +552,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "delirium-bsp"
+version = "0.1.0"
+
+[[package]]
 name = "delirium-data"
 version = "0.1.0"
 dependencies = [
@@ -567,6 +571,7 @@ dependencies = [
  "blake3",
  "delirium-anim",
  "delirium-bike",
+ "delirium-bsp",
  "delirium-sdk",
  "delirium-sound",
 ]

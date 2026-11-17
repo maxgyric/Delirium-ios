@@ -69,6 +69,38 @@ public partial class Game
 
     static string ModsDir() => Path.Combine(Application.persistentDataPath, "mods");
 
+#if UNITY_IOS && !UNITY_EDITOR
+    const string BspDll = "__Internal";
+#else
+    const string BspDll = "delirium_bsp";
+#endif
+    [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dbsp_convert(byte[] bsp, byte[] glb);
+    [System.Runtime.InteropServices.DllImport(BspDll)] static extern int dbsp_error(byte[] text, int cap);
+
+    static bool IsBsp(string path) => path.EndsWith(".bsp", StringComparison.OrdinalIgnoreCase);
+
+    // A Garry's Mod (Source) map as a .glb (the native library reads the .bsp; written to the cache, read back):
+    // its bytes, or null and why.
+    static byte[] BspToGlb(string path, out string note)
+    {
+        note = "";
+        string glb = Path.Combine(Application.temporaryCachePath, Path.GetFileNameWithoutExtension(path) + ".bsp.glb");
+        int r;
+        try { r = dbsp_convert(System.Text.Encoding.UTF8.GetBytes(path + "\0"), System.Text.Encoding.UTF8.GetBytes(glb + "\0")); }
+        catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException)
+        {
+            note = "this build can't read GMod maps";
+            return null;
+        }
+        var buf = new byte[1024];
+        int n = dbsp_error(buf, buf.Length);
+        note = System.Text.Encoding.UTF8.GetString(buf, 0, Mathf.Max(0, n));
+        if (r < 0) return null;
+        byte[] data = File.ReadAllBytes(glb);
+        try { File.Delete(glb); } catch (Exception) { }
+        return data;
+    }
+
     void RefreshFiles()
     {
         try
@@ -79,6 +111,7 @@ public partial class Game
                 // its subfolders too (mods/maps, mods/characters...)
                 found.AddRange(Directory.GetFiles(filesDir, "*.glb", SearchOption.AllDirectories));
                 found.AddRange(Directory.GetFiles(filesDir, "*.vrm", SearchOption.AllDirectories)); // VRM avatars are .glb inside
+                found.AddRange(Directory.GetFiles(filesDir, "*.bsp", SearchOption.AllDirectories)); // Garry's Mod / Source maps
             }
             // VRChat packages to import (put there by hand)
             var pk = new List<string>();
@@ -92,6 +125,7 @@ public partial class Game
             {
                 found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.glb"));
                 found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.vrm"));
+                found.AddRange(Directory.GetFiles(Application.persistentDataPath, "*.bsp"));
             }
             files = found.ToArray();
             Array.Sort(files, StringComparer.OrdinalIgnoreCase);
@@ -109,8 +143,20 @@ public partial class Game
     {
         try
         {
-            byte[] data = File.ReadAllBytes(path);
             string name = Path.GetFileNameWithoutExtension(path);
+            bool source = IsBsp(path);
+            if (source && kind != 2)
+            {
+                filesNote = name + ": a GMod map is a map, not a character.";
+                return false;
+            }
+            string bspNote = "";
+            byte[] data = source ? BspToGlb(path, out bspNote) : File.ReadAllBytes(path);
+            if (data == null)
+            {
+                filesNote = name + ": " + bspNote;
+                return false;
+            }
             var made = GlbScene.Load(data, name, ModelMaterial());
             // an imported VRChat avatar: its toggles (on its own tree, before Prepare renames the bones)
             if (kind != 2)
@@ -134,7 +180,8 @@ public partial class Game
                 pixelTextures = mapTextures.Count > 0 && small * 2 >= mapTextures.Count;
                 Pixels();
                 PlayerPrefs.SetString(kPrefMap, path);
-                filesNote = "Map: " + name + " (" + made.Triangles + " triangles, " + made.Textures + " textures" +
+                if (source) Debug.Log("[Sandbox] GMod map " + name + ": " + bspNote);
+                filesNote = "Map: " + name + (source ? " (GMod map: shapes and colours; textures to come)" : "") + " (" + made.Triangles + " triangles, " + made.Textures + " textures" +
                             (made.TexturesFailed > 0 ? ", " + made.TexturesFailed + " didn't load: " + made.TextureWhy : "") +
                             (made.SeeThrough > 0 ? ", " + made.SeeThrough + " see-through materials" : "") +
                             (made.Coloured > 0 ? ", shading in " + made.Coloured + " meshes" : "") + ").";
@@ -269,6 +316,7 @@ public partial class Game
         foreach (var mf in root.GetComponentsInChildren<MeshFilter>())
         {
             if (mf.sharedMesh == null || mf.sharedMesh.GetIndexCount(0) < 3) continue;
+            if (mf.gameObject.name.Contains("[nocollide]")) continue; // a GMod map's water: drawn, not stood on
             var col = mf.gameObject.AddComponent<MeshCollider>();
             col.sharedMesh = mf.sharedMesh;
             level.Add(col);
@@ -394,7 +442,8 @@ public partial class Game
         Head("Your files");
         Info("Characters: a rigged human as .glb or .vrm: Mixamo, VRM / Unity humanoid, Unreal, Source, Biped, GTA V, Rigify skeletons " +
              "(a .fbx: in Blender File > Import > FBX, then File > Export > glTF 2.0, format glTF Binary). " +
-             "Maps: any .glb; its meshes are the ground and walls. An object named Spawn marks where you start.");
+             "Maps: any .glb; its meshes are the ground and walls. An object named Spawn marks where you start. " +
+             "Garry's Mod / Source maps: the .bsp from garrysmod/maps (or a Workshop map's).");
         if (Application.isMobilePlatform)
             Info("Select model: pick .glb / .vrm files anywhere in the Files app: they're moved into Delirium Sandbox > mods (folders inside it are fine, e.g. mods/maps).");
         else
@@ -405,6 +454,7 @@ public partial class Game
             if (dir != filesDir) filesDir = dir;
         }
         if (CanPick && GUILayout.Button("Select model...", btn, GUILayout.Height(36f))) SelectModels(); // moved into mods
+        if (CanPick && GUILayout.Button("GMod map (.bsp)...", btn, GUILayout.Height(36f))) SelectModels(); // the same picker: a .bsp goes to mods too
         if (GUILayout.Button("Refresh", btn, GUILayout.Height(32f)))
         {
             filesDir = filesDir.Trim().Trim('"');
@@ -444,9 +494,12 @@ public partial class Game
             GUILayout.Label(ShownName(f) + "  (" + (size / 1048576f).ToString("0.0") + " MB)", lab);
             GUILayout.BeginHorizontal();
             int pick = -1;
-            if (GUILayout.Button("Hero", btn, GUILayout.Height(30f))) pick = 0;
-            if (GUILayout.Button("Everyone else", btn, GUILayout.Height(30f))) pick = 1;
-            if (GUILayout.Button("Map", btn, GUILayout.Height(30f))) pick = 2;
+            if (!IsBsp(f))
+            {
+                if (GUILayout.Button("Hero", btn, GUILayout.Height(30f))) pick = 0;
+                if (GUILayout.Button("Everyone else", btn, GUILayout.Height(30f))) pick = 1;
+            }
+            if (GUILayout.Button(IsBsp(f) ? "Map (GMod)" : "Map", btn, GUILayout.Height(30f))) pick = 2;
             // a second tap deletes it
             if (GUILayout.Button(removeAsk == f ? "Sure?" : "Remove", removeAsk == f ? btnOn : btn, GUILayout.Width(80f), GUILayout.Height(30f)))
             {

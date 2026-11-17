@@ -1,0 +1,316 @@
+//! A Source engine map (.bsp, versions 19-21: Garry's Mod's, Counter-Strike: Source's, Half-Life 2's): its
+//! visible surfaces (the world's brushes, brush entities, displacements) as triangles, each with its material, and
+//! its entities (where you start, the 3D skybox's camera). Everything in Source's units (inches) and axes (X
+//! forward, Y left, Z up).
+//!
+//! The layout (Valve's bspfile.h): a header of 64 lumps {offset, length, version, fourCC}; planes (20 bytes),
+//! vertices (12), edges (2 x u16), surfedges (i32, negative: the edge backwards), faces (56), texinfo (72),
+//! texdata (32) and its name table, models (48), displacement infos (176) and vertices (20), nodes (32), leaves (32,
+//! or 56 in version 0 of the lump).
+
+use std::collections::HashMap;
+
+pub type V3 = [f32; 3];
+
+fn sub(a: V3, b: V3) -> V3 { [a[0] - b[0], a[1] - b[1], a[2] - b[2]] }
+fn add(a: V3, b: V3) -> V3 { [a[0] + b[0], a[1] + b[1], a[2] + b[2]] }
+fn mul(a: V3, k: f32) -> V3 { [a[0] * k, a[1] * k, a[2] * k] }
+pub fn dot(a: V3, b: V3) -> f32 { a[0] * b[0] + a[1] * b[1] + a[2] * b[2] }
+pub fn cross(a: V3, b: V3) -> V3 { [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]] }
+fn lerp(a: V3, b: V3, t: f32) -> V3 { add(a, mul(sub(b, a), t)) }
+
+struct R<'a>(&'a [u8]);
+impl R<'_> {
+    fn i32(&self, at: usize) -> Result<i32, String> {
+        self.0.get(at..at + 4).map(|b| i32::from_le_bytes(b.try_into().unwrap())).ok_or_else(|| format!("bsp: read past the end at {at}"))
+    }
+    fn u16(&self, at: usize) -> Result<u16, String> {
+        self.0.get(at..at + 2).map(|b| u16::from_le_bytes([b[0], b[1]])).ok_or_else(|| format!("bsp: read past the end at {at}"))
+    }
+    fn i16(&self, at: usize) -> Result<i16, String> { self.u16(at).map(|v| v as i16) }
+    fn f32(&self, at: usize) -> Result<f32, String> { self.i32(at).map(|v| f32::from_bits(v as u32)) }
+    fn v3(&self, at: usize) -> Result<V3, String> { Ok([self.f32(at)?, self.f32(at + 4)?, self.f32(at + 8)?]) }
+}
+
+#[derive(Clone, Copy)]
+struct Lump {
+    ofs: usize,
+    len: usize,
+    version: i32,
+}
+
+/// One triangle soup per material (a texdata): positions, the face's normal at each, and texture coordinates in
+/// texels (divide by the texture's size).
+#[derive(Default)]
+pub struct Batch {
+    pub pos: Vec<V3>,
+    pub nrm: Vec<V3>,
+    pub uv: Vec<[f32; 2]>,
+}
+
+pub struct Material {
+    pub name: String,
+    pub color: V3, // the texture's average colour (its reflectivity), linear
+    pub width: i32,
+    pub height: i32,
+}
+
+pub struct Map {
+    pub version: i32,
+    pub materials: Vec<Material>,
+    pub batches: HashMap<usize, Batch>,
+    pub entities: Vec<HashMap<String, String>>,
+    /// faces left out: (in the 3D skybox, tools / sky / triggers)
+    pub skipped: (usize, usize),
+}
+
+const SURF_SKY2D: i32 = 0x2;
+const SURF_SKY: i32 = 0x4;
+const SURF_TRIGGER: i32 = 0x40;
+const SURF_NODRAW: i32 = 0x80;
+const SURF_HINT: i32 = 0x100;
+const SURF_SKIP: i32 = 0x200;
+
+pub fn parse_entities(text: &str) -> Vec<HashMap<String, String>> {
+    let mut out = vec![];
+    let mut cur: Option<HashMap<String, String>> = None;
+    let mut key: Option<String> = None;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' => cur = Some(HashMap::new()),
+            '}' => {
+                if let Some(e) = cur.take() { out.push(e); }
+                key = None;
+            }
+            '"' => {
+                let mut s = String::new();
+                for c in chars.by_ref() {
+                    if c == '"' { break; }
+                    s.push(c);
+                }
+                if let Some(e) = cur.as_mut() {
+                    match key.take() {
+                        None => key = Some(s),
+                        Some(k) => { e.entry(k.to_ascii_lowercase()).or_insert(s); }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+pub fn vec3_of(s: &str) -> Option<V3> {
+    let v: Vec<f32> = s.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+    (v.len() >= 3).then(|| [v[0], v[1], v[2]])
+}
+
+impl Map {
+    pub fn read(data: &[u8]) -> Result<Map, String> {
+        let r = R(data);
+        if data.get(0..4) != Some(b"VBSP") {
+            return Err(if data.get(0..4) == Some(b"PSBV") { "a console (big-endian) map: not read".into() } else { "not a Source map (.bsp)".into() });
+        }
+        let version = r.i32(4)?;
+        if !(19..=21).contains(&version) {
+            return Err(format!("map version {version}: only Source's 19-21 (Garry's Mod, CS:S, HL2) are read"));
+        }
+        let mut lumps = [Lump { ofs: 0, len: 0, version: 0 }; 64];
+        for (i, l) in lumps.iter_mut().enumerate() {
+            let at = 8 + i * 16;
+            let (a, b, c) = (r.i32(at)?, r.i32(at + 4)?, r.i32(at + 8)?);
+            // version 21's lumps (L4D2 style) have {version, offset, length}; Garry's Mod's are 20
+            *l = if version == 21 && a >= 0 && a < 4 && (b as usize) >= 8 + 64 * 16 {
+                Lump { version: a, ofs: b as usize, len: c as usize }
+            } else {
+                Lump { ofs: a as usize, len: b as usize, version: c }
+            };
+        }
+        let lump = |i: usize| -> Result<&[u8], String> {
+            let l = lumps[i];
+            let d = data.get(l.ofs..l.ofs + l.len).ok_or(format!("bsp: lump {i} past the end"))?;
+            // compressed lumps ("LZMA" header): not read yet
+            if d.len() >= 4 && &d[0..4] == b"LZMA" { return Err(format!("bsp: lump {i} is compressed (LZMA): not read yet")); }
+            Ok(d)
+        };
+        let entities = parse_entities(&String::from_utf8_lossy(lump(0)?));
+        let planes = lump(1)?;
+        let texdata = lump(2)?;
+        let verts = lump(3)?;
+        let nodes = lump(5)?;
+        let texinfo = lump(6)?;
+        let faces = lump(7)?;
+        let leaves = lump(10)?;
+        let edges = lump(12)?;
+        let surfedges = lump(13)?;
+        let models = lump(14)?;
+        let dispinfo = lump(26)?;
+        let dispverts = lump(33)?;
+        let strdata = lump(43)?;
+        let strtable = lump(44)?;
+        let (p, tx, vx, nd, ti, fc, lf, ed, se, md, di, dv, sd, st) =
+            (R(planes), R(texdata), R(verts), R(nodes), R(texinfo), R(faces), R(leaves), R(edges), R(surfedges), R(models), R(dispinfo), R(dispverts), R(strdata), R(strtable));
+
+        // materials
+        let mut materials = vec![];
+        for k in 0..texdata.len() / 32 {
+            let o = k * 32;
+            let id = tx.i32(o + 12)? as usize;
+            let so = st.i32(id * 4).unwrap_or(0).max(0) as usize;
+            let name = strdata.get(so..).map(|s| String::from_utf8_lossy(s.split(|&c| c == 0).next().unwrap_or_default()).into_owned()).unwrap_or_default();
+            materials.push(Material { name: name.replace('\\', "/").to_ascii_lowercase(), color: tx.v3(o)?, width: tx.i32(o + 16)?.max(1), height: tx.i32(o + 20)?.max(1) });
+        }
+        let _ = sd;
+
+        // the 3D skybox (a small copy of the world around the sky_camera, in an area of its own): its box, to leave
+        let leaf_size = if lumps[10].version == 0 { 56 } else { 32 };
+        let sky_box = entities.iter().find(|e| e.get("classname").map(|c| c == "sky_camera").unwrap_or(false)).and_then(|e| e.get("origin").and_then(|o| vec3_of(o))).and_then(|at| {
+            // down the tree to the leaf it's in
+            let mut n: i32 = md.i32(36).ok()?; // model 0's headnode
+            let mut guard = 0;
+            while n >= 0 && guard < 100000 {
+                guard += 1;
+                let o = n as usize * 32;
+                let pl = nd.i32(o).ok()? as usize;
+                let (normal, dist) = (p.v3(pl * 20).ok()?, p.f32(pl * 20 + 12).ok()?);
+                n = if dot(normal, at) - dist >= 0.0 { nd.i32(o + 4).ok()? } else { nd.i32(o + 8).ok()? };
+            }
+            let leaf = (-1 - n) as usize;
+            let area = (lf.i16(leaf * leaf_size + 6).ok()? as u16 & 0x1ff) as i32;
+            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            for k in 0..leaves.len() / leaf_size {
+                let o = k * leaf_size;
+                if (lf.i16(o + 6).ok()? as u16 & 0x1ff) as i32 != area || lf.i32(o).ok()? == 1 { continue; } // (solid leaves skipped)
+                for a in 0..3 {
+                    lo[a] = lo[a].min(lf.i16(o + 8 + a * 2).ok()? as f32);
+                    hi[a] = hi[a].max(lf.i16(o + 14 + a * 2).ok()? as f32);
+                }
+            }
+            (lo[0] <= hi[0]).then_some((lo, hi))
+        });
+
+        // which brush models to draw: the world (0) and the brush entities that aren't triggers or tools
+        let mut draw: Vec<(usize, V3)> = vec![(0, [0.0; 3])];
+        for e in &entities {
+            let Some(m) = e.get("model").and_then(|m| m.strip_prefix('*')).and_then(|m| m.parse::<usize>().ok()) else { continue };
+            let class = e.get("classname").map(String::as_str).unwrap_or("");
+            if class.starts_with("trigger_") || class.starts_with("func_areaportal") || class == "func_occluder" || class == "func_clip_vphysics" || class == "func_viscluster" || class == "func_precipitation" || class.starts_with("env_") {
+                continue;
+            }
+            if e.get("rendermode").map(|v| v == "10").unwrap_or(false) { continue; } // "don't render"
+            let origin = e.get("origin").and_then(|o| vec3_of(o)).unwrap_or([0.0; 3]);
+            draw.push((m, origin));
+        }
+
+        let mut batches: HashMap<usize, Batch> = HashMap::new();
+        let mut skipped = (0, 0);
+        let vertex = |i: usize| vx.v3(i * 12);
+        for (m, origin) in draw {
+            let mo = m * 48;
+            let (first, count) = (md.i32(mo + 40)? as usize, md.i32(mo + 44)? as usize);
+            for f in first..first + count {
+                let o = f * 56;
+                let plane = fc.u16(o)? as usize;
+                let side = fc.0.get(o + 2).copied().unwrap_or(0);
+                let (fe, ne) = (fc.i32(o + 4)? as usize, fc.i16(o + 8)? as usize);
+                let tinfo = fc.i16(o + 10)?;
+                let disp = fc.i16(o + 12)?;
+                if tinfo < 0 { skipped.1 += 1; continue; }
+                let t = tinfo as usize * 72;
+                let flags = ti.i32(t + 64)?;
+                let td = ti.i32(t + 68)?;
+                if flags & (SURF_SKY2D | SURF_SKY | SURF_TRIGGER | SURF_NODRAW | SURF_HINT | SURF_SKIP) != 0 || td < 0 { skipped.1 += 1; continue; }
+                let mat = td as usize;
+                if let Some(mt) = materials.get(mat) {
+                    let n = mt.name.as_str();
+                    if n.starts_with("tools/") && !n.starts_with("tools/toolsblack") { skipped.1 += 1; continue; }
+                }
+                // its corners
+                let mut poly = Vec::with_capacity(ne);
+                for k in 0..ne {
+                    let s = se.i32((fe + k) * 4)?;
+                    let e = s.unsigned_abs() as usize * 4;
+                    let vi = if s >= 0 { ed.u16(e)? } else { ed.u16(e + 2)? } as usize;
+                    poly.push(add(vertex(vi)?, origin));
+                }
+                if poly.len() < 3 { continue; }
+                let mut normal = p.v3(plane * 20)?;
+                if side != 0 { normal = mul(normal, -1.0); }
+                if let Some((lo, hi)) = sky_box {
+                    let c = mul(poly.iter().fold([0.0; 3], |a, &v| add(a, v)), 1.0 / poly.len() as f32);
+                    if (0..3).all(|a| c[a] >= lo[a] - 1.0 && c[a] <= hi[a] + 1.0) { skipped.0 += 1; continue; }
+                }
+                let (s, tv) = (ti.v3(t)?, ti.v3(t + 16)?);
+                let (so, to) = (ti.f32(t + 12)?, ti.f32(t + 28)?);
+                let uv = |v: V3| [dot(s, sub(v, origin)) + so, dot(tv, sub(v, origin)) + to];
+                let b = batches.entry(mat).or_default();
+                let mut tri = |a: V3, bb: V3, c: V3, ua: [f32; 2], ub: [f32; 2], uc: [f32; 2], fallback: V3| {
+                    // front faces counter-clockwise about the face's normal (glTF's way)
+                    let mut n = cross(sub(bb, a), sub(c, a));
+                    let len = dot(n, n).sqrt();
+                    if len < 1e-6 { return; }
+                    n = mul(n, 1.0 / len);
+                    let (bb, c, ub, uc, n) = if dot(n, fallback) < 0.0 { (c, bb, uc, ub, mul(n, -1.0)) } else { (bb, c, ub, uc, n) };
+                    b.pos.extend([a, bb, c]);
+                    b.nrm.extend([n, n, n]);
+                    b.uv.extend([ua, ub, uc]);
+                };
+                if disp >= 0 && poly.len() == 4 {
+                    // a displacement: a (2^power + 1)^2 grid over the face, each point moved by its own offset
+                    let d = disp as usize * 176;
+                    let start = di.v3(d)?;
+                    let vstart = di.i32(d + 12)? as usize;
+                    let power = di.i32(d + 20)?.clamp(1, 4) as u32;
+                    let size = (1usize << power) + 1;
+                    let first = (0..4).min_by(|&a, &b| {
+                        let (da, db) = (sub(poly[a], add(start, origin)), sub(poly[b], add(start, origin)));
+                        dot(da, da).partial_cmp(&dot(db, db)).unwrap()
+                    }).unwrap();
+                    let c: Vec<V3> = (0..4).map(|k| poly[(first + k) % 4]).collect();
+                    let mut grid = Vec::with_capacity(size * size);
+                    let mut flat = Vec::with_capacity(size * size);
+                    for i in 0..size {
+                        let fi = i as f32 / (size - 1) as f32;
+                        let (a, bb) = (lerp(c[0], c[1], fi), lerp(c[3], c[2], fi));
+                        for j in 0..size {
+                            let base = lerp(a, bb, j as f32 / (size - 1) as f32);
+                            let o = (vstart + i * size + j) * 20;
+                            let (dvec, dist) = (dv.v3(o).unwrap_or([0.0; 3]), dv.f32(o + 12).unwrap_or(0.0));
+                            grid.push(add(base, mul(dvec, dist)));
+                            flat.push(base);
+                        }
+                    }
+                    for i in 0..size - 1 {
+                        for j in 0..size - 1 {
+                            let (k0, k1, k2, k3) = (i * size + j, i * size + j + 1, (i + 1) * size + j, (i + 1) * size + j + 1);
+                            tri(grid[k0], grid[k2], grid[k1], uv(flat[k0]), uv(flat[k2]), uv(flat[k1]), normal);
+                            tri(grid[k1], grid[k2], grid[k3], uv(flat[k1]), uv(flat[k2]), uv(flat[k3]), normal);
+                        }
+                    }
+                } else {
+                    for k in 1..poly.len() - 1 {
+                        tri(poly[0], poly[k], poly[k + 1], uv(poly[0]), uv(poly[k]), uv(poly[k + 1]), normal);
+                    }
+                }
+            }
+        }
+        Ok(Map { version, materials, batches, entities, skipped })
+    }
+
+    /// Where a player starts (its origin, yaw in degrees), if the map says
+    pub fn spawn(&self) -> Option<(V3, f32)> {
+        for class in ["info_player_start", "info_player_deathmatch", "info_player_combine", "info_player_rebel", "info_player_counterterrorist", "info_player_terrorist", "gmod_player_start"] {
+            for e in &self.entities {
+                if e.get("classname").map(|c| c == class).unwrap_or(false) {
+                    if let Some(o) = e.get("origin").and_then(|o| vec3_of(o)) {
+                        let yaw = e.get("angles").and_then(|a| vec3_of(a)).map(|a| a[1]).unwrap_or(0.0);
+                        return Some((o, yaw));
+                    }
+                }
+            }
+        }
+        None
+    }
+}
