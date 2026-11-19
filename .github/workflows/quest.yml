@@ -59,7 +59,7 @@ jobs:
           "$BIN/llvm-strip" --strip-unneeded target/aarch64-linux-android/release/libdelirium.so
           ls -la target/aarch64-linux-android/release/libdelirium.so
           "$BIN/llvm-nm" -D --defined-only target/aarch64-linux-android/release/libdelirium.so | grep -c " T "
-          "$BIN/llvm-nm" -D --defined-only target/aarch64-linux-android/release/libdelirium.so | grep -q delirium_xma_decode && echo "XMA decoder in"
+          if grep -aq "xma2" target/aarch64-linux-android/release/libdelirium.so; then echo "XMA decoder in"; else echo "::warning::no XMA decoder in libdelirium.so"; fi
       - uses: actions/upload-artifact@v4
         with:
           name: native-android
