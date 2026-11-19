@@ -28,7 +28,9 @@ pub unsafe extern "C" fn delirium_set_home(path: *const c_char) -> i32 {
     0
 }
 
-/// GTA IV's XMA sounds: FFmpeg's decoder isn't built for the Quest yet (ci/xma.c on the iPhone): none decoded.
+/// GTA IV's XMA sounds without FFmpeg's decoder (build.rs: DELIRIUM_XMA_DIR not set): none decoded. With it,
+/// ci/xma.c's delirium_xma_decode is linked in instead.
+#[cfg(not(xma_ffmpeg))]
 #[unsafe(no_mangle)]
 pub extern "C" fn delirium_xma_decode(_data: *const u8, _size: i32, _channels: i32, _rate: i32, _out: *mut i16, _max: i32) -> i32 {
     -1

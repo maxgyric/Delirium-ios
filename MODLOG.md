@@ -696,3 +696,30 @@ files (default.xex, the three exported files, the archives) are picked by the la
   (MANAGE_APP_ALL_FILES_ACCESS_PERMISSION intent; adb appops fallback shown). GTA folder -> gameExe = dataDir,
   kPrefExe/kPrefData, Launch(); mods folder -> gmodDir + kPrefGmod (now kept on Android too), RefreshFiles (the
   Android scan also lists .glb/.vrm there).
+
+## VR round 3: body, fingers, climbing, sounds, fixes
+- Controllers: the aim pose's rotation ("PointerRotation"; else the grip's turned 55 deg about X) at the grip's
+  position: the ray and the hands point out of the controller's front, not up through its ring. The first
+  controller's usages and the aim/grip angle are logged.
+- Body (VRBody.cs): in first person the hero's body is drawn (head and hands scaled to zero for the drawing); after
+  every LateUpdate (VrLate, order 300) the hips go under your eyes (down when you crouch, max 0.75 m), the legs are
+  two-bone IK'd to planted feet (on the ground under the clip's feet; a step of 0.2 s when one is 22 cm behind,
+  one foot at a time, while he stands), the arms to your hands' wrists. VrEarly (order -30000, FixedUpdate and
+  Update) puts every bone back: Delirium and the clips never see the drawing. Standing, he turns to where you look
+  once it's 45 deg off.
+- Fingers: the VR hand is now a SkinnedMeshRenderer with copies of the hero's hand bones (bind pose from the
+  bindposes); each finger chain off the hand is thumb / index / rest (names: thumb|finger0, index|finger1; else the
+  one nearest the wrist, the next on the thumb's side); bends about cross(bone dir, palm). Trigger: index, grip: the
+  rest, thumb touching a button/stick: thumb; a fist while holding or climbing.
+- Climbing: the grip with nobody in reach takes the map (OverlapSphere 9 cm; not loose bodies, ragdolls, hands,
+  the hero's mover); the hand is kinematic at that point (in the thing's own frame: lifts work); each frame the
+  body moves (heroCC.Move) by anchor - controller, Walk is skipped (vrClimbNow); let go pulling up: a throw.
+- Ragdoll/third person: hands parked (inactive, unregistered from Delirium). B while down (drunk, knocked or
+  getting up): HeroTakeBack at once, feet on the ground under his hips (RaycastAll, not his own parts).
+- Room scale: the head's move goes to him every frame (the 2 cm a frame minimum ate every slow step).
+- Hands vs people: a hand slower than a punch (> 0.7 m/s) touching a man on his feet ragdolls him with a small push
+  (Delirium's balance); before, standing men only felt punches, ragdolled ones the hands' mover boxes. The hands
+  re-register with Delirium if it's made again. Knocks on walls: a sound and a haptic pulse.
+- Sounds: GTA IV's XMA decoded on the Quest too: ci/ffmpeg-android.sh (FFmpeg n7.1, xma1/xma2 only, NDK clang,
+  cached), native/android/build.rs links libxma.a + avcodec + avutil when DELIRIUM_XMA_DIR is set (else the stub).
+  PlayGta falls back to the made-up sounds when a GTA sound has no decoded wave (it was silent before).

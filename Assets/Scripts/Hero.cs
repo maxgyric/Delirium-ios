@@ -382,6 +382,14 @@ public partial class Game
 
     void Walk(float dt)
     {
+        if (vrClimbNow)
+        {
+            // (VR) hanging on by your hands: the pulls move him (VRBody.cs), nothing else
+            heroVel = Vector3.zero;
+            heroVy = 0f;
+            Step(dt);
+            return;
+        }
         if (climbing)
         {
             ClimbUpdate(dt);

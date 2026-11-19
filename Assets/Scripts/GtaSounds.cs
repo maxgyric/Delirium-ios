@@ -206,10 +206,19 @@ public partial class Game
     {
         if (!GtaReady) return false;
         var n = gtaSfx[(int)what];
-        if (n == null) return false;
+        if (n == null || !Playable(n, 0)) return false; // (its waves not decoded: the made-up sound instead of silence)
         PlayNode(n, gain, pitch);
         if (what == Sfx.Punch && gtaPunchKnuckle != null) PlayNode(gtaPunchKnuckle, gain, pitch);
         return true;
+    }
+
+    // has a wave that was decoded (a build without the XMA decoder has none)
+    bool Playable(GNode n, int depth)
+    {
+        if (n == null || depth > 12) return false;
+        if (n.Kind == 0) return n.Wave >= 0 && n.Wave < gtaClips.Length && gtaClips[n.Wave] != null;
+        if (n.Kids != null) foreach (var k in n.Kids) if (Playable(k, depth + 1)) return true;
+        return false;
     }
 
     void PlayNode(GNode n, float gain, float pitch)
