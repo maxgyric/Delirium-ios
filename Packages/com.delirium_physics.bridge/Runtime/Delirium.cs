@@ -9,6 +9,8 @@ namespace Delirium
     {
 #if UNITY_IOS && !UNITY_EDITOR
         public const string Dll = "__Internal"; // iOS: the SDK is a static library linked into the app
+#elif UNITY_ANDROID && !UNITY_EDITOR
+        public const string Dll = "delirium"; // the Quest: one shared library, libdelirium.so (native/android)
 #else
         public const string Dll = "delirium_physics";
 #endif
