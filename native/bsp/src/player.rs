@@ -119,15 +119,29 @@ pub fn models(g: &crate::gma::Gma) -> Vec<(String, String)> {
 
 /// "addon.gma#models/x.mdl" (or a .gma: its first player model) to a rigged .glb: a line about it, or why it can't be
 pub fn convert(spec: &str, glb_path: &str, roots: &[std::path::PathBuf], max_side: usize) -> Result<String, String> {
-    let (gma_path, pick) = match spec.split_once('#') { Some((a, b)) => (a, Some(b.to_ascii_lowercase())), None => (spec, None) };
-    let g = crate::gma::Gma::open(std::path::Path::new(gma_path))?;
-    let list = models(&g);
-    let (mdl_path, shown) = match pick {
-        Some(p) => (p.clone(), list.iter().find(|(q, _)| *q == p).map(|(_, n)| n.clone()).unwrap_or_else(|| p.clone())),
-        None => list.first().cloned().ok_or(format!("\"{}\" has no player model in it", g.name))?,
+    // a loose .mdl (an addon's folder as it is: ".../grandtheftgmod/models/weapons/x.mdl"): read from its folder
+    let low = spec.replace('\\', "/");
+    let loose = !spec.contains('#') && low.to_ascii_lowercase().ends_with(".mdl");
+    let (mdl_path, shown, addon, content) = if loose {
+        let at = low.to_ascii_lowercase().rfind("/models/").ok_or(format!("{spec}: not in a models folder"))?;
+        let root = std::path::PathBuf::from(&low[..at]);
+        let rel = low[at + 1..].to_ascii_lowercase();
+        let shown = rel.rsplit('/').next().unwrap_or(&rel).trim_end_matches(".mdl").to_string();
+        let addon = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut content = Content::new(&[], roots, None);
+        content.add_loose(root);
+        (rel, shown, addon, content)
+    } else {
+        let (gma_path, pick) = match spec.split_once('#') { Some((a, b)) => (a, Some(b.to_ascii_lowercase())), None => (spec, None) };
+        let g = crate::gma::Gma::open(std::path::Path::new(gma_path))?;
+        let list = models(&g);
+        let (mdl_path, shown) = match pick {
+            Some(p) => (p.clone(), list.iter().find(|(q, _)| *q == p).map(|(_, n)| n.clone()).unwrap_or_else(|| p.clone())),
+            None => list.first().cloned().ok_or(format!("\"{}\" has no player model in it", g.name))?,
+        };
+        let addon = g.name.clone();
+        (mdl_path, shown, addon, Content::new(&[], roots, Some(g)))
     };
-    let addon = g.name.clone();
-    let content = Content::new(&[], roots, Some(g));
     let find = |p: &str| content.find(p);
     let exists = |p: &str| content.find(p).is_some();
     let model = studio::Model::read(&mdl_path, &find, &exists)?;

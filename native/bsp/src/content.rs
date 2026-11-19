@@ -97,6 +97,11 @@ impl<'a> Content<'a> {
 
     pub fn packs(&self) -> usize { self.vpks.len() }
 
+    /// A folder read as it is (an addon's folder: its models/, materials/), first
+    pub fn add_loose(&mut self, p: PathBuf) {
+        if !self.loose.contains(&p) { self.loose.insert(0, p); }
+    }
+
     pub fn find(&self, path: &str) -> Option<Vec<u8>> {
         let path = path.replace('\\', "/").to_ascii_lowercase();
         if let Some(b) = self.pak_index.get(&path).and_then(|&e| zip_read(self.pak, e)) { return Some(b); }

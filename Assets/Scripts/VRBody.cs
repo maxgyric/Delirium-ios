@@ -34,8 +34,12 @@ public partial class Game
     Mannequin vrPosed;            // the body whose bones are moved for the drawing (put back by VrBodyRestore)
     Vector3[] vrSavedPos, vrSavedScale;
     Quaternion[] vrSavedRot;
-    Vector3 vrBodyRootPos;
+    Vector3 vrBodyRootPos, vrBodyRootScale = Vector3.one;
     Quaternion vrBodyRootRot;
+    // your height (your eyes above the floor, stood straight: the menu's Height) and his (his eyes, standing): he's
+    // drawn scaled to yours, so stood straight his legs are straight
+    float vrEye, vrModelEye;
+    const string kPrefEye = "delirium.vrEye";
     // the feet: where each is planted, and a step's progress (-1: planted)
     Vector3[] vrFoot = new Vector3[2];
     float[] vrStep = { -1f, -1f };
@@ -55,6 +59,7 @@ public partial class Game
                 b[i].localScale = vrSavedScale[i];
             }
         vrPosed.transform.SetPositionAndRotation(vrBodyRootPos, vrBodyRootRot);
+        vrPosed.transform.localScale = vrBodyRootScale;
         vrPosed = null;
     }
 
@@ -85,7 +90,17 @@ public partial class Game
         }
         vrBodyRootPos = body.transform.position;
         vrBodyRootRot = body.transform.rotation;
+        vrBodyRootScale = body.transform.localScale;
         vrPosed = body;
+
+        // his eyes' height as the clips stand him (learnt while he stands still); scaled to yours
+        float eyeNow = head.position.y + 0.09f - body.transform.position.y;
+        if (heroGround && heroVel.magnitude < 0.2f && !vrClimbNow && eyeNow > 0.5f)
+            vrModelEye = vrModelEye <= 0f ? eyeNow : Mathf.Lerp(vrModelEye, eyeNow, 0.02f);
+        float scale = vrEye > 0.5f && vrModelEye > 0.5f ? Mathf.Clamp(vrEye / vrModelEye, 0.6f, 1.6f) : 1f;
+        if (Mathf.Abs(scale - 1f) > 0.005f) body.transform.localScale = vrBodyRootScale * scale;
+        if (vrL != null) vrL.LookScale(scale);
+        if (vrR != null) vrR.LookScale(scale);
 
         Vector3 fwd = body.transform.forward;
         Vector3 right = body.transform.right;
@@ -133,17 +148,23 @@ public partial class Game
         }
 
         // the head under your eyes (a little behind them: you see your chest, not inside it); down when you crouch
-        Vector3 eye = head.position + Vector3.up * 0.09f;
+        Vector3 eye = head.position + Vector3.up * 0.09f * scale;
         Vector3 want = cam.transform.position - fwd * 0.1f;
         Vector3 shift = new Vector3(want.x - eye.x, Mathf.Clamp(want.y - eye.y, -0.75f, 0f), want.z - eye.z);
         if (shift.sqrMagnitude > 1.5f * 1.5f) shift = Vector3.zero; // (a teleport this frame)
         hips.position += shift;
 
-        // the legs to the feet, the knees forward
+        // the legs to the feet, the knees forward (hanging on a wall: knees up, feet under him against it)
         for (int s = 0; s < 2; s++)
         {
             if (up[s] == null || knee[s] == null || foot[s] == null) continue;
-            TwoBone(up[s], knee[s], foot[s], vrFoot[s], fwd + Vector3.up * 0.1f);
+            Vector3 to = vrFoot[s];
+            if (vrClimbNow || vrMantle >= 0f)
+            {
+                float leg = (knee[s].position - up[s].position).magnitude + (foot[s].position - knee[s].position).magnitude;
+                to = up[s].position + (-Vector3.up * 0.75f + fwd * 0.25f).normalized * leg * 0.62f;
+            }
+            TwoBone(up[s], knee[s], foot[s], to, fwd + Vector3.up * 0.1f);
             foot[s].rotation = footRot[s];
         }
 
@@ -160,6 +181,7 @@ public partial class Game
             hand.localScale = Vector3.zero; // (your hand is drawn in its place)
         }
         head.localScale = Vector3.zero;
+        VrGunHold();
     }
 
     // a, b, c: a limb's three joints; c is put at `target` (as near as it reaches), b bent toward `hint`
@@ -218,6 +240,7 @@ public partial class Game
     // (VrUpdate, after the controllers are read) each holding hand's pull: the body goes the other way
     void VrClimb(float dt)
     {
+        if (VrMantleStep(dt)) { vrClimbNow = true; vrClimbVel = Vector3.zero; return; }
         Vector3 pull = Vector3.zero;
         int n = 0;
         foreach (var h in new[] { vrL, vrR })
@@ -251,7 +274,10 @@ public partial class Game
             PlaceMover();
             Vector3 at = cc.transform.position;
             cc.Move(pull);
-            heroPos += cc.transform.position - at;
+            Vector3 moved = cc.transform.position - at;
+            heroPos += moved;
+            // your eyes go with him (else this frame's room-scale step took a sideways pull back)
+            if (vrRig != null) vrRig.position += new Vector3(moved.x, 0f, moved.z);
             heroVy = 0f;
             heroGround = true;
             heroAir = 0f;
@@ -259,6 +285,98 @@ public partial class Game
             heroVel = Vector3.zero;
         }
         else if (!heroOn && vrRig != null) vrRig.position += pull;
+        if (heroOn && heroMode == 0) VrMantleCheck();
+    }
+
+    // ------------------------------------------------------------------ people: your hands meet them, your body doesn't
+    // (his mover would stop at a ragdoll's parts: they're let through, a few times a second, as they come near)
+    readonly HashSet<Collider> vrPassed = new HashSet<Collider>();
+    float vrPassAt;
+
+    void VrNotIntoPeople()
+    {
+        if (heroCC == null || Time.time < vrPassAt) return;
+        vrPassAt = Time.time + 0.2f;
+        if (vrPassed.Count > 2000) vrPassed.RemoveWhere(c => c == null);
+        foreach (var c in Physics.OverlapSphere(heroCC.transform.position + Vector3.up * 0.9f, 2.5f, ~0, QueryTriggerInteraction.Ignore))
+        {
+            if (c == null || c == heroCC || vrPassed.Contains(c)) continue;
+            var rb = c.attachedRigidbody;
+            if (rb == null || rb.GetComponent<VrHand>() != null) continue;
+            if (!c.transform.root.name.Contains("ragdoll") && rb.GetComponentInParent<Mannequin>() == null) continue;
+            Physics.IgnoreCollision(heroCC, c, true);
+            vrPassed.Add(c);
+        }
+    }
+
+    // ------------------------------------------------------------------ up onto a ledge
+    // Hanging on and pulled up till your hand is at your chest or lower: if there's a top to stand on just past it,
+    // he goes up onto it (a half second: up, then over), your hands let go.
+    float vrMantle = -1f;
+    Vector3 vrMantleFrom, vrMantleTo;
+
+    void VrMantleCheck()
+    {
+        if (vrMantle >= 0f || cam == null) return;
+        foreach (var h in new[] { vrL, vrR })
+        {
+            if (h == null || !h.Climbing || h.ClimbOn == null) continue;
+            Vector3 a = h.ClimbOn.TransformPoint(h.ClimbLocal);
+            if (a.y > cam.transform.position.y - 0.3f) continue;
+            Vector3 way = new Vector3(a.x - heroPos.x, 0f, a.z - heroPos.z);
+            if (way.sqrMagnitude < 0.01f) way = new Vector3(cam.transform.forward.x, 0f, cam.transform.forward.z);
+            way.Normalize();
+            foreach (float ahead in new[] { 0.3f, 0.5f, 0.15f })
+            {
+                Vector3 from = a + way * ahead + Vector3.up * 0.6f;
+                if (!Physics.Raycast(from, Vector3.down, out var top, 1.2f, VrWorldMask(), QueryTriggerInteraction.Ignore)) continue;
+                if (top.normal.y < 0.6f || top.point.y < heroPos.y + 0.2f || top.point.y > a.y + 0.35f) continue;
+                if (top.collider.attachedRigidbody != null && !top.collider.attachedRigidbody.isKinematic) continue;
+                // room for him up there
+                Vector3 feet = top.point + Vector3.up * 0.05f;
+                bool blocked = false;
+                foreach (var c in Physics.OverlapCapsule(feet + Vector3.up * 0.3f, feet + Vector3.up * 1.5f, 0.22f, VrWorldMask(), QueryTriggerInteraction.Ignore))
+                {
+                    var rb = c.attachedRigidbody;
+                    if (rb != null && (rb.GetComponent<VrHand>() != null || !rb.isKinematic || c.transform.root.name.Contains("ragdoll"))) continue;
+                    if (heroCC != null && c == heroCC) continue;
+                    blocked = true;
+                    break;
+                }
+                if (blocked) continue;
+                vrMantle = 0f;
+                vrMantleFrom = heroPos;
+                vrMantleTo = feet;
+                if (vrL != null) vrL.LetGoWorld();
+                if (vrR != null) vrR.LetGoWorld();
+                Play(Sfx.Land, feet, 0.5f);
+                return;
+            }
+        }
+    }
+
+    // (VrUpdate) the way up, while it lasts: true while he's on it
+    bool VrMantleStep(float dt)
+    {
+        if (vrMantle < 0f) return false;
+        if (!heroOn || heroMode != 0) { vrMantle = -1f; return false; }
+        vrMantle += dt / 0.55f;
+        float t = Mathf.Clamp01(vrMantle);
+        float upT = Mathf.Clamp01(t / 0.55f), overT = Mathf.Clamp01((t - 0.35f) / 0.65f);
+        Vector3 p = new Vector3(Mathf.Lerp(vrMantleFrom.x, vrMantleTo.x, Mathf.SmoothStep(0f, 1f, overT)),
+            Mathf.Lerp(vrMantleFrom.y, vrMantleTo.y + 0.05f, Mathf.SmoothStep(0f, 1f, upT)),
+            Mathf.Lerp(vrMantleFrom.z, vrMantleTo.z, Mathf.SmoothStep(0f, 1f, overT)));
+        Vector3 moved = p - heroPos;
+        heroPos = p;
+        PlaceMover();
+        if (vrRig != null) vrRig.position += new Vector3(moved.x, 0f, moved.z);
+        heroVel = Vector3.zero;
+        heroVy = 0f;
+        heroGround = true;
+        heroAir = 0f;
+        heroFallFrom = heroPos.y;
+        if (t >= 1f) { vrMantle = -1f; heroPos = vrMantleTo; PlaceMover(); return false; }
+        return true;
     }
 
     // ------------------------------------------------------------------ the hands' fingers

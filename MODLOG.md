@@ -723,3 +723,22 @@ files (default.xex, the three exported files, the archives) are picked by the la
 - Sounds: GTA IV's XMA decoded on the Quest too: ci/ffmpeg-android.sh (FFmpeg n7.1, xma1/xma2 only, NDK clang,
   cached), native/android/build.rs links libxma.a + avcodec + avutil when DELIRIUM_XMA_DIR is set (else the stub).
   PlayGta falls back to the made-up sounds when a GTA sound has no decoded wave (it was silent before).
+
+## VR round 4: guns, height, sideways climbing, mantling, facing, no body shoves
+- Body vs people: no heroBump shove in VR; the hero's CharacterController ignores ragdoll parts near it
+  (VrNotIntoPeople: Physics.IgnoreCollision, 5x a second). Only the hands meet people.
+- Facing: in VR he faces where you look while moving (Walk: the heroAim-style velocity, yaw to hCamYaw, no GTA V
+  starts/turns); going sideways/back uses the strafe clips of that sector (PickClip). Jump works on the spot.
+- Height: menu "Set my height" (stand straight): vrEye = the head's height over the floor (kPrefEye). The hero is
+  drawn scaled (root localScale, restored by VrEarly) by vrEye / his eye height (learnt while he stands), 0.6-1.6;
+  hands' looks scaled the same.
+- Climbing sideways: the climb's horizontal move is also put on the rig (the room-scale step of the same frame
+  pulled him back). Hanging: knees bent, feet under him. Mantle: a holding hand 30 cm below your eyes with a
+  walkable top 15-50 cm past it (normal.y > 0.6, room for a capsule) -> 0.55 s up then over, hands let go.
+- Guns: menu "Gun: X" cycles the phone's guns; right trigger fires along the barrel (held: SMG/AK), left trigger
+  uses. The gun (GunInHand's) is unparented from his scaled body and held at the right hand (VrGunHold), with a
+  kick. GTA V's look: loose w_*.mdl / weapons models under models/ in grandtheftgmod(_0899) beside the GTA IV
+  files (or the mods folder), matched by name (w_pi_pistol, w_pi_pistol50, w_sb_smg, w_ar_assaultrifle,
+  w_sg_pumpshotgun, w_sr_sniperrifle; no attachments), converted by dmdl_convert (player.rs now takes a loose
+  .mdl path: its folder is read as a loose root, Content::add_loose), barrel = longest axis toward the far end,
+  length sanity-scaled. Never shipped: read from the user's own folder at runtime.

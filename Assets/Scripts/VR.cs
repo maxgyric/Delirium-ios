@@ -24,7 +24,7 @@ public partial class Game
     VrHand vrL, vrR;
     bool vrThird;
     float vrTpYaw, vrSnapReady = 1f;
-    bool vrHeroAsked, vrTurning;
+    bool vrHeroAsked, vrTurning, vrTrigLWas;
     Vector3 vrHeadWas;
     bool vrHeadWasSet;
     // the buttons' last state (a press is when one goes down)
@@ -103,7 +103,13 @@ public partial class Game
         heroSprint = Btn(L, CommonUsages.primary2DAxisClick) || (heroSprint && ls.magnitude > 0.5f);
         if (aDown) hJumpReq = true;
         if (bDown) VrDrunk();
-        if (trigRDown && useTarget != null) UseNow();
+        bool armed = VrArmed();
+        if (vrR != null) vrR.HoldsGun = armed && !vrThird;
+        if (!menuUp && armed && !vrThird && trigR && Time.time >= heroNextFire && (trigRDown || kGuns[weapon % kGuns.Length].Auto)) VrFire();
+        else if (trigRDown && !armed && useTarget != null) UseNow();
+        if (trigL && !vrTrigLWas && useTarget != null) UseNow();
+        vrTrigLWas = trigL;
+        VrNotIntoPeople();
         // standing, he turns to face where you look (when you've looked well round)
         if (!vrThird && heroMode == 0 && hStick == Vector2.zero && heroVel.magnitude < 0.3f)
         {
@@ -229,6 +235,7 @@ public partial class Game
         vrRTarget.SetParent(vrRig, false);
         vrL = VrHand.Make(this, vrLTarget, true);
         vrR = VrHand.Make(this, vrRTarget, false);
+        vrEye = PlayerPrefs.GetFloat(kPrefEye, 0f);
         rig.AddComponent<VrEarly>().G = this;
         rig.AddComponent<VrLate>().G = this;
         // the pointer (shown with the menu)
@@ -265,7 +272,12 @@ public partial class Game
         // his body: shown (in first person without his head and hands: VRBody.cs), not while you fly
         bool shown = vrThird || !heroNoclip;
         foreach (var r in hero.Body.GetComponentsInChildren<Renderer>()) if (r.enabled != shown) r.enabled = shown;
-        if (gunModel != null && gunModel.activeSelf == !vrThird) gunModel.SetActive(vrThird);
+        if (!riding)
+        {
+            if (gunModel != null && !gunModel.activeSelf) gunModel.SetActive(true);
+            GunInHand();
+            VrGunDress();
+        }
         if (!vrThird)
         {
             Vector3 o = heroPos - cam.transform.position;
@@ -367,6 +379,9 @@ public partial class Game
                 y -= 0.07f;
                 VrBtn("GTA IV folder", -0.13f, y, 0.24f, () => VrBrowse(0));
                 VrBtn("Mods folder", 0.13f, y, 0.24f, () => VrBrowse(1));
+                y -= 0.07f;
+                VrBtn("Gun: " + kGuns[weapon % kGuns.Length].Label, -0.13f, y, 0.24f, () => { weapon = (weapon + 1) % kGuns.Length; VrMenuBuild(); });
+                VrBtn(vrEye > 0.5f ? "Height " + Mathf.RoundToInt((vrEye + 0.11f) * 100f) + " cm" : "Set my height", 0.13f, y, 0.24f, () => VrCalibrate());
             }
             y -= 0.09f;
             VrBtn("Close (Y)", 0f, y, 0.3f, VrMenuToggle);
@@ -1026,18 +1041,32 @@ public partial class Game
                 Destroy(own);
             }
             own = look;
+            ownScale = look != null ? look.transform.localScale : Vector3.one;
             Fingers = look != null ? fingers : null;
             if (mitten != null) mitten.SetActive(look == null);
             if (look == null) return;
             look.transform.SetParent(transform, false); // (its place in the hand: set where it was made)
         }
 
+        Vector3 ownScale = Vector3.one;
+        float lookScale = 1f;
+
+        // the hero's hand at his size (drawn scaled to your height)
+        public void LookScale(float s)
+        {
+            if (own == null || Mathf.Abs(s - lookScale) < 0.001f) return;
+            lookScale = s;
+            own.transform.localScale = ownScale * s;
+        }
+
+        public bool HoldsGun;
+
         // the fingers: the trigger's index, the grip's three, the thumb on a button or the stick
         public void FingersPose(float trigger, float grip, bool thumb)
         {
             if (Fingers == null) return;
-            bool fist = Climbing || held != null;
-            Fingers.Pose(fist || thumb ? 1f : 0f, fist ? 1f : trigger, fist ? 1f : grip, Time.deltaTime);
+            bool fist = Climbing || held != null || HoldsGun;
+            Fingers.Pose(fist || thumb ? 1f : 0f, HoldsGun ? 0.25f + trigger * 0.5f : fist ? 1f : trigger, fist ? 1f : grip, Time.deltaTime);
         }
 
         public void Grip(bool on)

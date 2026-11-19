@@ -420,9 +420,9 @@ public partial class Game
         }
         if (hJumpReq) act = null;
         if (clAir != null) ClimbAir(dt); // off the far side of what he vaulted
-        else if (!VAct(dt, mag, wish, walk, run))
+        else if ((vrOn && !heroNoclip) || !VAct(dt, mag, wish, walk, run))
         {
-            if (heroAim || heroNoclip)
+            if (heroAim || heroNoclip || vrOn)
                 heroVel = Vector3.MoveTowards(heroVel, want, (heroGround ? 14f : 3f) * dt);
             else
             {
@@ -460,7 +460,14 @@ public partial class Game
             bool going = heroVel.magnitude > 0.3f || (want.sqrMagnitude > 1e-6f && !heroAim);
             float wantYaw = heroAim ? hCamYaw : going && !heroNoclip ? heroHeading : heroVel.magnitude > 0.3f ? Mathf.Atan2(heroVel.x, heroVel.z) * Mathf.Rad2Deg : heroYaw;
             if (Time.time < heroFaceUntil) wantYaw = heroFaceYaw; // a punch: at the man he's hitting
-            if (heroAim || Time.time < heroFaceUntil) { heroYaw = Mathf.MoveTowardsAngle(heroYaw, wantYaw, 720f * dt); heroYawVel = 0f; }
+            if (vrOn && !heroNoclip)
+            {
+                // (VR) he faces where you look, whichever way he goes (he steps sideways and back); standing,
+                // VR.cs turns him once you've looked well round
+                if (want.sqrMagnitude > 1e-6f || heroVel.magnitude > 0.3f) heroYaw = Mathf.MoveTowardsAngle(heroYaw, hCamYaw, 540f * dt);
+                heroYawVel = 0f;
+            }
+            else if (heroAim || Time.time < heroFaceUntil) { heroYaw = Mathf.MoveTowardsAngle(heroYaw, wantYaw, 720f * dt); heroYawVel = 0f; }
             else heroYaw = Mathf.SmoothDampAngle(heroYaw, wantYaw, ref heroYawVel, 0.05f, 900f, dt);
         }
 
@@ -475,7 +482,7 @@ public partial class Game
             if (heroMode != 0) return;
         }
         // only on the move: a jump on the spot is no use (the stick pushed, or him still going)
-        if (hJumpReq && heroGround && Time.time >= heroSpotUntil && (mag > 0.2f || heroVel.magnitude > 1f))
+        if (hJumpReq && heroGround && Time.time >= heroSpotUntil && (mag > 0.2f || heroVel.magnitude > 1f || vrOn))
         {
             // off the ground, standing or moving (GTA IV's jump on the spot, a clip that held him in place, got in the way)
             heroVy = 4.7f;
@@ -561,7 +568,7 @@ public partial class Game
         heroVelSlid = heroVel;
         // walking into someone shoves him
         heroBump -= dt;
-        if (heroBump <= 0f && heroVel.magnitude > 1f)
+        if (heroBump <= 0f && heroVel.magnitude > 1f && !vrOn)
             foreach (var m in men)
             {
                 if (m == hero || m.Rising) continue;
@@ -666,6 +673,17 @@ public partial class Game
             return GtaAnim.VLaunch;
         }
         if (!heroGround && j[1].Ok) { rate = 1f / j[1].Dur; return j[1]; }
+        if (vrOn && !heroNoclip && !heroAim && speed >= 0.3f)
+        {
+            // (VR) facing where you look: going sideways or back, the strafe's steps for that way
+            float a = -Vector3.SignedAngle(Quaternion.Euler(0f, heroYaw, 0f) * Vector3.forward, heroVel, Vector3.up);
+            int sector = (Mathf.RoundToInt(a / 45f) + 8) % 8;
+            if (sector != 0)
+            {
+                var c = GtaAnim.Gait(new[] { GtaAnim.Strafe[0, sector], GtaAnim.Strafe[1, sector] }, speed, out rate, out b, out w);
+                if (c != null) return c;
+            }
+        }
         if (heroAim)
         {
             if (speed < 0.3f && GtaAnim.StrafeIdle.Ok) { rate = 1f / GtaAnim.StrafeIdle.Dur; return GtaAnim.StrafeIdle; }
