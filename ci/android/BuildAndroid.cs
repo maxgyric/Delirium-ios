@@ -85,6 +85,18 @@ public static class BuildAndroid
         }
         settings.InitManagerOnStart = true;
         bool loader = XRPackageMetadataStore.AssignLoader(settings.AssignedSettings, "UnityEngine.XR.OpenXR.OpenXRLoader", BuildTargetGroup.Android);
+        // (in batch mode the package metadata can be missing and that refuse: the loader put in by hand)
+        if (!settings.AssignedSettings.activeLoaders.Any(l => l is OpenXRLoader))
+        {
+            Directory.CreateDirectory("Assets/XR/Loaders");
+            var ol = AssetDatabase.LoadAssetAtPath<OpenXRLoader>("Assets/XR/Loaders/OpenXRLoader.asset");
+            if (ol == null)
+            {
+                ol = ScriptableObject.CreateInstance<OpenXRLoader>();
+                AssetDatabase.CreateAsset(ol, "Assets/XR/Loaders/OpenXRLoader.asset");
+            }
+            loader = settings.AssignedSettings.TryAddLoader(ol);
+        }
         EditorUtility.SetDirty(settings);
         EditorUtility.SetDirty(perTarget);
         AssetDatabase.SaveAssets();
@@ -102,5 +114,8 @@ public static class BuildAndroid
         EditorUtility.SetDirty(ox);
         AssetDatabase.SaveAssets();
         Debug.Log("BuildAndroid: OpenXR features on: " + string.Join(", ", ox.GetFeatures<OpenXRFeature>().Where(f => f.enabled).Select(f => f.GetType().Name)));
+        Debug.Log("BuildAndroid: OpenXR features there: " + string.Join(", ", ox.GetFeatures<OpenXRFeature>().Select(f => f.GetType().Name)));
+        if (!settings.AssignedSettings.activeLoaders.Any(l => l is OpenXRLoader)) throw new Exception("OpenXR isn't the Android loader: the .apk would start flat");
+        if (!ox.GetFeatures<OpenXRFeature>().Any(f => f.enabled && f.GetType().Name == "MetaQuestFeature")) throw new Exception("no Meta Quest feature on: the Quest wouldn't start it in VR");
     }
 }

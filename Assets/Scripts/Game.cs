@@ -80,6 +80,8 @@ public partial class Game : MonoBehaviour
 
     void Start()
     {
+        if (Application.platform == RuntimePlatform.Android)
+            Debug.Log("[Sandbox] XR at start: enabled " + UnityEngine.XR.XRSettings.enabled + ", active " + UnityEngine.XR.XRSettings.isDeviceActive + ", device \"" + UnityEngine.XR.XRSettings.loadedDeviceName + "\"");
         // it started with these paths the last time: straight in
         if (PlayerPrefs.GetInt(kPrefOk, 0) == 1) Launch();
     }

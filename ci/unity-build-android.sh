@@ -18,6 +18,10 @@ trap back EXIT
 unity-editor -batchmode -nographics -quit -projectPath /project -buildTarget Android \
   -executeMethod BuildAndroid.Build -customBuildPath /project/build/Android -logFile /project/unity-build.log
 code=$?
-grep -E "error CS|BuildAndroid:|Exception|Build (Finished|completed)|CommandInvokationFailure|Gradle" /project/unity-build.log | tail -80
+grep -E "error CS|Exception|CommandInvokationFailure" /project/unity-build.log | tail -40
+echo "---- BuildAndroid"; grep -E "^BuildAndroid: " /project/unity-build.log
+# the manifest the headset reads: VR intent category, OpenXR runtime
+m=$(find /project/Library/Bee/Android -name AndroidManifest.xml -path "*launcher*" 2>/dev/null | head -1)
+echo "---- $m"; [ -n "$m" ] && grep -E "category|meta-data|uses-feature|intent" "$m" | head -30
 [ -f /project/build/Android/DeliriumSandboxVR.apk ] || { echo "::error::no .apk (exit $code)"; exit 1; }
 exit $code
