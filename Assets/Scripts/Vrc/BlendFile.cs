@@ -49,7 +49,7 @@ namespace Vrc
         public Struct[] Structs;
         readonly Dictionary<string, Struct> structOf = new Dictionary<string, Struct>();
 
-#if UNITY_IOS && !UNITY_EDITOR
+#if (UNITY_IOS || UNITY_ANDROID) && !UNITY_EDITOR
         const string kLib = "__Internal";
 #else
         const string kLib = "fbxblob";

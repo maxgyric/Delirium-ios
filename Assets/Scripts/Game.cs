@@ -94,6 +94,7 @@ public partial class Game : MonoBehaviour
 
     static string KeyFile()
     {
+        if (Application.platform == RuntimePlatform.Android) return Path.Combine(Application.persistentDataPath, ".config", "delirium", "xex.key");
         string home = Environment.GetEnvironmentVariable("HOME");
         if (string.IsNullOrEmpty(home)) home = Path.GetDirectoryName(Application.persistentDataPath);
         return Path.Combine(home, "Library", "Application Support", "delirium", "xex.key");
@@ -101,7 +102,7 @@ public partial class Game : MonoBehaviour
 
     bool NeedsKey()
     {
-        if (Application.platform != RuntimePlatform.IPhonePlayer || File.Exists(KeyFile())) return false;
+        if ((Application.platform != RuntimePlatform.IPhonePlayer && Application.platform != RuntimePlatform.Android) || File.Exists(KeyFile())) return false;
         string exe = Directory.Exists(gameExe) ? Path.Combine(gameExe, "default.xex") : gameExe;
         try
         {
@@ -161,10 +162,18 @@ public partial class Game : MonoBehaviour
         return bytes.Count == 16 ? bytes.ToArray() : null;
     }
 
+#if UNITY_ANDROID && !UNITY_EDITOR
+    [System.Runtime.InteropServices.DllImport("delirium")] static extern int delirium_set_home(byte[] path);
+#endif
+
     void Launch()
     {
         if (fetchingKey) return;
         error = "";
+#if UNITY_ANDROID && !UNITY_EDITOR
+        // Android gives an app no HOME: Delirium keeps its key under the game's own folder
+        try { delirium_set_home(System.Text.Encoding.UTF8.GetBytes(Application.persistentDataPath + "\0")); } catch (Exception e) { Debug.LogWarning("[Sandbox] HOME: " + e.Message); }
+#endif
         gameExe = gameExe.Trim().Trim('"');
         dataDir = dataDir.Trim().Trim('"');
         if (NeedsKey()) { StartCoroutine(FetchKeyThenLaunch()); return; }
@@ -557,6 +566,7 @@ public partial class Game : MonoBehaviour
 
     void Update()
     {
+        VrUpdate(); // (a headset: its head, hands and buttons; nothing on the phone)
         if (!running || nm == null) return;
         SettingsUpdate();
         AddonsUpdate();
@@ -845,10 +855,12 @@ public partial class Game : MonoBehaviour
         {
             BikePose();
             HeroPose();
-            if (riding && bikeGo != null) BikeCamera();
+            if (vrOn) VrCamera(); // (the headset's: your head is the camera)
+            else if (riding && bikeGo != null) BikeCamera();
             else HeroCamera();
             return;
         }
+        if (vrOn) return; // (no hero in VR: you walk about yourself, VR.cs)
         // the camera: round the first man (or the held one)
         Man follow = held ?? Sel;
         if (follow != null)

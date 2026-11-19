@@ -657,3 +657,26 @@ files (default.xex, the three exported files, the archives) are picked by the la
   is its first stretch's direction (first path_track -> its target): it starts as placed, then turns with the
   track. Doors: func_door_rotating opens away from the hero only when it turns about up and isn't "one way"
   (flag 16; before: only WHEN 16 was set); prop_door_rotating opendir 2 / spawnpos 2 open the other way.
+
+## Quest 2 (VR) build, stage 1 (2026-11-19)
+- User wants a Quest 2 VR version: first person with BONELAB-like hands that collide with the world and the NPCs,
+  smooth locomotion (left stick), and a "Drunk" button: the hero goes ragdoll and you steer him from third person.
+- Build: .github/workflows/quest.yml (all Linux). native/android (cdylib "delirium" = libdelirium.so: same crates as
+  ios; delirium_set_home sets HOME, as Android gives none, so Delirium's xex.key lives in
+  persistentDataPath/.config/delirium; delirium_xma_decode stubbed -1: no GTA IV XMA sounds on the Quest yet).
+  C# DllImports: UNITY_ANDROID -> "delirium" (Delirium.cs, GtaAnim, Models BspDll, Bike); FbxBlob/BlendFile
+  "__Internal" with Plugins/iOS's .c copied into Plugins/Android/src by the workflow (IL2CPP compiles them).
+  The workflow adds com.unity.xr.openxr 1.16.1 to the manifest and activeInputHandler 2 only for this build, copies
+  ci/android/BuildAndroid.cs (XR Plug-in Management: OpenXR loader for Android, MetaQuestFeature + Touch
+  profiles, multi-pass; IL2CPP ARM64, minSdk 29, GLES3) and runs unityci/editor:ubuntu-6000.3.28f1-android-3.
+  Manifest now always has com.unity.modules.xr / vr / subsystems (UnityEngine.XR for VR.cs).
+- VR.cs (only when XRSettings.isDeviceActive): rig (floor origin) with the camera as head (pose from
+  InputDevices CenterEye, also in onBeforeRender); physics hands (Rigidbody pulled to the controller each
+  FixedUpdate, teleported when > 0.7 m off; Delirium mover boxes; > 2.5 m/s near a bone: MeleeHit + punch sound;
+  grip: nm.Leash nearest part to the hand, LeashAnchor each frame, Unleash on release). Hero auto-added when GTA IV's
+  clips load; HeroInput skipped (VR sets hStick, hCamYaw = head yaw, sprint = left stick click, A jump, B drunk,
+  right trigger Use); room-scale head motion moves his CharacterController; LateUpdate VrCamera: first person (his
+  renderers hidden, rig so the head is over heroPos), third person when drunk/ragdolled/riding (behind and above
+  his hips at the yaw you had, smoothed). Right stick: 30-degree snap turns. Y: a world-space menu (TextMesh +
+  trigger box buttons on layer 31, the right hand's ray, its trigger): Maps, Characters (Hero / All), + Man, Reset,
+  Drunk, Noclip, Slow-mo, Default map; the launcher's error shows there. Launch() is called at VR start.

@@ -1,0 +1,18 @@
+[package]
+name = "delirium-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "delirium"
+crate-type = ["cdylib"]
+
+[dependencies]
+delirium-sdk = { path = "../crates/delirium-sdk" }
+delirium-anim = { path = "../anim" }
+delirium-bike = { path = "../bike" }
+delirium-sound = { path = "../sound" }
+delirium-bsp = { path = "../bsp" }
+blake3 = { version = "1", features = ["pure"] }

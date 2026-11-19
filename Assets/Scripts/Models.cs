@@ -71,6 +71,8 @@ public partial class Game
 
 #if UNITY_IOS && !UNITY_EDITOR
     const string BspDll = "__Internal";
+#elif UNITY_ANDROID && !UNITY_EDITOR
+    const string BspDll = "delirium";
 #else
     const string BspDll = "delirium_bsp";
 #endif

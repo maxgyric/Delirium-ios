@@ -17,6 +17,8 @@ public static class GtaAnim
 {
 #if UNITY_IOS && !UNITY_EDITOR
     const string Dll = "__Internal";
+#elif UNITY_ANDROID && !UNITY_EDITOR
+    const string Dll = "delirium";
 #else
     const string Dll = "delirium_anim";
 #endif

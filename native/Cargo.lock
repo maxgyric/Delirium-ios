@@ -550,6 +550,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "delirium-android"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "delirium-anim",
+ "delirium-bike",
+ "delirium-bsp",
+ "delirium-sdk",
+ "delirium-sound",
+]
+
+[[package]]
 name = "delirium-anim"
 version = "0.1.0"
 dependencies = [

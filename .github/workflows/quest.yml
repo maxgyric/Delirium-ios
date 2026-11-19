@@ -1,0 +1,116 @@
+# The Quest (VR) build: DeliriumSandboxVR.apk (Actions > this run > Artifacts), sideloaded onto a Quest in developer
+# mode (SideQuest, or adb install). All on Linux:
+#   1. native: Delirium, the animations, the bike, the sounds and the map converter -> libdelirium.so (Rust,
+#      aarch64-linux-android, the runner's Android NDK)
+#   2. unity:  OpenXR added to the project (only here: the iPhone build never sees it), the native library and the
+#      C model readers (Plugins/iOS's .c, compiled into the app by IL2CPP) put in Plugins/Android, BuildAndroid
+#      (ci/android) -> the .apk
+# Runs on every push to main (not for .md changes) or by hand (Actions > Quest build > Run workflow).
+name: Quest build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'build-anim.bat']
+
+concurrency:
+  group: quest-build
+  cancel-in-progress: false   # a cancelled run could keep a Unity seat
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust for the Quest
+        run: |
+          rustup toolchain install stable --profile minimal --target aarch64-linux-android
+          rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: cargo-android-${{ hashFiles('native/Cargo.lock', 'native/**/Cargo.toml') }}
+          restore-keys: cargo-android-
+      - name: libdelirium.so
+        working-directory: native
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          echo "NDK: $NDK"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$BIN/aarch64-linux-android29-clang"
+          export CC_aarch64_linux_android="$BIN/aarch64-linux-android29-clang"
+          export AR_aarch64_linux_android="$BIN/llvm-ar"
+          cargo build --release -p delirium-android --target aarch64-linux-android
+          "$BIN/llvm-strip" --strip-unneeded target/aarch64-linux-android/release/libdelirium.so
+          ls -la target/aarch64-linux-android/release/libdelirium.so
+          "$BIN/llvm-nm" -D --defined-only target/aarch64-linux-android/release/libdelirium.so | grep -c " T "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-android
+          path: native/target/aarch64-linux-android/release/libdelirium.so
+          retention-days: 3
+
+  unity:
+    needs: native
+    runs-on: ubuntu-latest
+    steps:
+      - name: The Unity login is in the secrets
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          [ -n "$UNITY_EMAIL" ] && [ -n "$UNITY_PASSWORD" ] || { echo "::error::Add the repository secrets UNITY_EMAIL and UNITY_PASSWORD"; exit 1; }
+      - name: Room on the disk (the Unity Android image is big)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-android
+          path: Assets/Plugins/Android/libs/arm64-v8a
+      - name: The Quest's project (OpenXR, the C readers, the build script)
+        run: |
+          python3 - <<'PY'
+          import json
+          p = 'Packages/manifest.json'
+          m = json.load(open(p))
+          m['dependencies']['com.unity.xr.openxr'] = '1.16.1'
+          json.dump(m, open(p, 'w'), indent=2)
+          PY
+          rm -f Packages/packages-lock.json
+          # the Input System and the old Input both (OpenXR's controllers come through the first, the game's touches the second)
+          sed -i 's/activeInputHandler: 0/activeInputHandler: 2/' ProjectSettings/ProjectSettings.asset
+          mkdir -p Assets/Plugins/Android/src
+          cp Assets/Plugins/iOS/*.c Assets/Plugins/iOS/*.h Assets/Plugins/Android/src/
+          cp ci/android/BuildAndroid.cs Assets/Editor/
+          ls -la Assets/Plugins/Android/libs/arm64-v8a Assets/Plugins/Android/src
+      - name: Unity -> .apk
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/project" -w /project -e UNITY_EMAIL -e UNITY_PASSWORD \
+            unityci/editor:ubuntu-6000.3.28f1-android-3 bash /project/ci/unity-build-android.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unity-android-log
+          path: unity-build.log
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeliriumSandboxVR-apk
+          path: build/Android/DeliriumSandboxVR.apk
+          retention-days: 14
+          compression-level: 0

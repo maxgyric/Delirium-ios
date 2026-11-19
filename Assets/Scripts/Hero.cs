@@ -1101,6 +1101,7 @@ public partial class Game
 
     void HeroInput(float dt)
     {
+        if (vrOn) return; // (the controllers set the stick and the buttons: VR.cs)
         float s = UiScale(), w = Screen.width / s, h = Screen.height / s;
         fingers.Clear();
         if (Input.touchCount > 0)

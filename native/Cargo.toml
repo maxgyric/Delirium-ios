@@ -3,7 +3,7 @@
 # two Rust static libraries in one app clash (each carries its own copy of Rust's std).
 # Build: cargo build --release -p delirium-ios --target aarch64-apple-ios
 [workspace]
-members = ["crates/delirium-data", "crates/delirium", "crates/delirium-sdk", "anim", "bike", "sound", "bsp", "ios"]
+members = ["crates/delirium-data", "crates/delirium", "crates/delirium-sdk", "anim", "bike", "sound", "bsp", "ios", "android"]
 resolver = "3"
 
 [workspace.package]

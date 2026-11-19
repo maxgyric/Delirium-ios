@@ -19,6 +19,8 @@ public partial class Game
 {
 #if UNITY_IOS && !UNITY_EDITOR
     const string BikeDll = "__Internal";
+#elif UNITY_ANDROID && !UNITY_EDITOR
+    const string BikeDll = "delirium";
 #else
     const string BikeDll = "delirium_bike";
 #endif

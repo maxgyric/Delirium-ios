@@ -39,8 +39,8 @@ namespace Vrc
         public readonly Dictionary<string, string> Parents = new Dictionary<string, string>(); // name -> its parent's ("": none)
         public readonly List<FbxNode> List = new List<FbxNode>();                             // every node, in the file's order
 
-#if UNITY_IOS && !UNITY_EDITOR
-        const string kLib = "__Internal";
+#if (UNITY_IOS || UNITY_ANDROID) && !UNITY_EDITOR
+        const string kLib = "__Internal"; // (compiled into the app: Plugins/iOS, and Plugins/Android for the Quest)
 #else
         const string kLib = "fbxblob";
 #endif
