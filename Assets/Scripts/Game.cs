@@ -506,6 +506,30 @@ public partial class Game : MonoBehaviour
         men.Add(man);
     }
 
+    // A man taken away (not the hero): let go of, his body gone (Delirium frees his doll when it sees him gone)
+    void RemoveMan(Man m)
+    {
+        if (m == null || m.Hero) return;
+        if (held == m) Drop();
+        try { nm?.Unleash(m.Body.transform, -1); } catch (Exception) { }
+        if (m.Body != null) Destroy(m.Body.gameObject);
+        men.Remove(m);
+        sel = Mathf.Clamp(sel, 0, Mathf.Max(0, men.Count - 1));
+    }
+
+    // The last one added that isn't the hero
+    void RemoveLastMan()
+    {
+        for (int i = men.Count - 1; i >= 0; i--)
+            if (!men[i].Hero) { RemoveMan(men[i]); return; }
+    }
+
+    void RemoveAllMen()
+    {
+        for (int i = men.Count - 1; i >= 0; i--)
+            if (!men[i].Hero) RemoveMan(men[i]);
+    }
+
     // The ground where the camera looks (past the men and the hero's gun), up to 40 m; else 8 m ahead.
     // Off a wall, half a metre back towards you; then down onto whatever is under that.
     bool LookedAt(out Vector3 spot)

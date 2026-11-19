@@ -91,6 +91,7 @@ public partial class Game
             VrFreeWalk(ls, Time.deltaTime);
             return;
         }
+        VrHandsLook();
         // the hero's controls (HeroInput reads these when vrOn)
         hStick = ls.magnitude > 0.15f ? ls : Vector2.zero;
         hCamYaw = cam.transform.eulerAngles.y;
@@ -268,12 +269,17 @@ public partial class Game
         back.transform.localRotation = Quaternion.Euler(0f, 180f, 0f); // (a quad faces -z: turned to face you)
         back.GetComponent<Renderer>().sharedMaterial = vrPanelMat;
         float top = H / 2f - 0.04f;
-        VrText(vrPage == "main" ? "Delirium Sandbox" : vrPage == "maps" ? "Maps" : "Characters", new Vector3(0f, top, -0.003f), 0.0032f, Color.white);
+        VrText(vrPage == "main" ? "Delirium Sandbox" : vrPage == "maps" ? "Maps" : vrPage == "browse" ? (vrBrowseFor == 0 ? "Your GTA IV folder" : "Your mods folder") : "Characters", new Vector3(0f, top, -0.003f), 0.0032f, Color.white);
         vrNote = VrText("", new Vector3(0f, top - 0.045f, -0.003f), 0.0018f, new Color(0.8f, 0.85f, 0.9f));
         float y = top - 0.1f;
         if (vrPage == "main")
         {
-            if (!running) VrBtn("Start again", 0f, y, 0.4f, () => { Launch(); VrMenuBuild(); });
+            if (!running)
+            {
+                VrBtn("Choose the GTA IV folder", 0f, y, 0.44f, () => VrBrowse(0));
+                y -= 0.07f;
+                VrBtn("Start again", 0f, y, 0.44f, () => { Launch(); VrMenuBuild(); });
+            }
             else
             {
                 VrBtn("Maps", -0.13f, y, 0.24f, () => { vrPage = "maps"; vrListAt = 0; RefreshFiles(); VrMenuBuild(); });
@@ -285,13 +291,20 @@ public partial class Game
                 VrBtn("Drunk (B)", -0.13f, y, 0.24f, () => { if (heroOn) ToggleDrunk(); });
                 VrBtn("Noclip", 0.13f, y, 0.24f, () => { if (heroOn) ToggleNoclip(); });
                 y -= 0.07f;
+                VrBtn("- Man", -0.13f, y, 0.24f, () => RemoveLastMan());
+                VrBtn("Remove all", 0.13f, y, 0.24f, () => RemoveAllMen());
+                y -= 0.07f;
                 VrBtn("Slow-mo", -0.13f, y, 0.24f, () => SetSpeed(speed < 1f ? 1f : 0.25f));
                 VrBtn("Default map", 0.13f, y, 0.24f, () => { DefaultMap(); PlayerPrefs.DeleteKey(kPrefMap); });
+                y -= 0.07f;
+                VrBtn("GTA IV folder", -0.13f, y, 0.24f, () => VrBrowse(0));
+                VrBtn("Mods folder", 0.13f, y, 0.24f, () => VrBrowse(1));
             }
             y -= 0.09f;
             VrBtn("Close (Y)", 0f, y, 0.3f, VrMenuToggle);
             return;
         }
+        if (vrPage == "browse") { VrBrowsePage(y, H); return; }
         // a list: maps, or characters (each with Hero / Everyone)
         var list = new List<string>();
         foreach (var f in files) if (KindOf(f) == (vrPage == "maps" ? 2 : 1)) list.Add(f);
@@ -392,6 +405,257 @@ public partial class Game
         return hitB;
     }
 
+    // ------------------------------------------------------------------ folders anywhere on the headset
+    // (Android: "All files access" lets the game read your folders where they are, as the iPhone's picker does)
+    int vrBrowseFor; // 0 the GTA IV folder (default.xex, character.xrt, build.txt...), 1 your mods folder
+    string vrBrowseDir = "";
+
+    static bool AllFilesAccess()
+    {
+        if (Application.platform != RuntimePlatform.Android) return true;
+        try { using (var env = new AndroidJavaClass("android.os.Environment")) return env.CallStatic<bool>("isExternalStorageManager"); }
+        catch (Exception) { return true; }
+    }
+
+    static void AskAllFilesAccess()
+    {
+        if (Application.platform != RuntimePlatform.Android) return;
+        try
+        {
+            using (var up = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
+            using (var act = up.GetStatic<AndroidJavaObject>("currentActivity"))
+            {
+                AndroidJavaObject intent;
+                try
+                {
+                    using (var uriC = new AndroidJavaClass("android.net.Uri"))
+                    using (var uri = uriC.CallStatic<AndroidJavaObject>("parse", "package:" + Application.identifier))
+                        intent = new AndroidJavaObject("android.content.Intent", "android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION", uri);
+                    act.Call("startActivity", intent);
+                }
+                catch (Exception)
+                {
+                    intent = new AndroidJavaObject("android.content.Intent", "android.settings.MANAGE_ALL_FILES_ACCESS_PERMISSION");
+                    act.Call("startActivity", intent);
+                }
+            }
+        }
+        catch (Exception e) { Debug.LogWarning("[Sandbox] all files access: " + e.Message); }
+    }
+
+    void VrBrowse(int what)
+    {
+        vrBrowseFor = what;
+        if (!AllFilesAccess()) AskAllFilesAccess();
+        string start = what == 0 ? (Directory.Exists(gameExe) ? gameExe : Path.GetDirectoryName(gameExe ?? "")) : gmodDir;
+        vrBrowseDir = !string.IsNullOrEmpty(start) && Directory.Exists(start) && !start.Contains("/Android/data/") ? start : "/storage/emulated/0";
+        vrPage = "browse";
+        vrListAt = 0;
+        VrMenuBuild();
+    }
+
+    void VrBrowsePage(float y, float H)
+    {
+        string shown = vrBrowseDir.Replace("/storage/emulated/0", "Quest");
+        if (shown.Length > 48) shown = "..." + shown.Substring(shown.Length - 47);
+        VrText(shown, new Vector3(0f, y + 0.035f, -0.003f), 0.0017f, new Color(0.7f, 0.85f, 1f));
+        if (!AllFilesAccess())
+        {
+            VrText("Allow \"All files access\" for the game (the window that opened), then reopen this", new Vector3(0f, y, -0.003f), 0.0016f, new Color(1f, 0.8f, 0.4f));
+            y -= 0.03f;
+            VrText("(no window? on a PC: adb shell appops set " + Application.identifier + " MANAGE_EXTERNAL_STORAGE allow)", new Vector3(0f, y, -0.003f), 0.0013f, new Color(0.8f, 0.8f, 0.8f));
+            y -= 0.04f;
+            VrBtn("Ask again", 0f, y, 0.3f, () => { AskAllFilesAccess(); VrMenuBuild(); });
+            y -= 0.07f;
+        }
+        string[] dirs;
+        try { dirs = Directory.GetDirectories(vrBrowseDir); Array.Sort(dirs, StringComparer.OrdinalIgnoreCase); }
+        catch (Exception) { dirs = new string[0]; }
+        const int per = 5;
+        vrListAt = Mathf.Clamp(vrListAt, 0, Mathf.Max(0, dirs.Length - 1));
+        for (int i = vrListAt; i < Mathf.Min(dirs.Length, vrListAt + per); i++)
+        {
+            string d = dirs[i];
+            string n = Path.GetFileName(d);
+            if (n.StartsWith(".")) continue;
+            // (the folder with your GTA IV files: starred)
+            bool gta = File.Exists(Path.Combine(d, "default.xex")) || File.Exists(Path.Combine(d, "character.xrt"));
+            if (n.Length > 26) n = n.Substring(0, 25) + "...";
+            VrBtn((gta ? "* " : "") + n, 0f, y, 0.5f, () => { vrBrowseDir = d; vrListAt = 0; VrMenuBuild(); });
+            y -= 0.058f;
+        }
+        bool here = File.Exists(Path.Combine(vrBrowseDir, "default.xex")) && File.Exists(Path.Combine(vrBrowseDir, "character.xrt"));
+        float by = -H / 2f + 0.11f;
+        VrBtn("Up", -0.2f, by, 0.12f, () => { var p = Path.GetDirectoryName(vrBrowseDir); if (!string.IsNullOrEmpty(p) && p.Length >= "/storage".Length) vrBrowseDir = p; vrListAt = 0; VrMenuBuild(); });
+        VrBtn(vrBrowseFor == 0 ? (here ? "Use this folder" : "Use (no default.xex)") : "Use this folder", 0.07f, by, 0.38f, () => VrUseFolder(vrBrowseDir));
+        by -= 0.06f;
+        VrBtn("<", -0.2f, by, 0.1f, () => { vrListAt = Mathf.Max(0, vrListAt - per); VrMenuBuild(); });
+        VrBtn("Back", 0f, by, 0.24f, () => { vrPage = "main"; VrMenuBuild(); });
+        VrBtn(">", 0.2f, by, 0.1f, () => { if (vrListAt + per < dirs.Length) vrListAt += per; VrMenuBuild(); });
+    }
+
+    void VrUseFolder(string dir)
+    {
+        if (vrBrowseFor == 0)
+        {
+            gameExe = dir;
+            dataDir = dir;
+            PlayerPrefs.SetString(kPrefExe, gameExe);
+            PlayerPrefs.SetString(kPrefData, dataDir);
+            PlayerPrefs.Save();
+            Debug.Log("[Sandbox] GTA IV folder: " + dir);
+            if (!running) Launch();
+            else note = "GTA IV folder: " + dir + " (used the next time the game starts)";
+        }
+        else
+        {
+            gmodDir = dir;
+            PlayerPrefs.SetString(kPrefGmod, dir);
+            PlayerPrefs.Save();
+            Debug.Log("[Sandbox] mods folder: " + dir);
+            filesNote = "Mods folder: " + dir;
+            if (running) RefreshFiles();
+        }
+        vrPage = "main";
+        VrMenuBuild();
+    }
+
+    // ------------------------------------------------------------------ the hero's own hands on yours
+    // His hands cut from his model (every triangle his hand or fingers move), in their bind pose, laid in your
+    // controllers' frame: his fingers along its forward, the back of his hand outward, the wrist behind the grip.
+    Mannequin vrHandsOf;
+
+    void VrHandsLook()
+    {
+        if (hero?.Body == null || vrL == null || vrR == null || vrHandsOf == hero.Body) return;
+        vrHandsOf = hero.Body;
+        vrL.SetLook(VrHandMesh(true));
+        vrR.SetLook(VrHandMesh(false));
+    }
+
+    GameObject VrHandMesh(bool left)
+    {
+        try
+        {
+            var body = hero.Body;
+            Transform hand = body.Bone(left ? "LeftHand" : "RightHand"), hips = body.Bone("Hips") ?? body.Hips, head = body.Bone("Head");
+            if (hand == null) return null;
+            var verts = new List<Vector3>();
+            var norms = new List<Vector3>();
+            var uvs = new List<Vector2>();
+            var subs = new List<List<int>>();
+            var mats = new List<Material>();
+            Vector3 upH = Vector3.zero; // up (hips to head) in the hand's space at the bind pose
+            float k = Mathf.Abs(hand.lossyScale.x);
+            foreach (var smr in body.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                var mesh = smr.sharedMesh;
+                if (mesh == null || !mesh.isReadable) continue;
+                var bones = smr.bones;
+                var bind = mesh.bindposes;
+                int hi = -1, hp = -1, hd = -1;
+                var mine = new bool[bones.Length];
+                for (int i = 0; i < bones.Length; i++)
+                {
+                    if (bones[i] == null) continue;
+                    if (bones[i] == hand) hi = i;
+                    if (bones[i] == hips) hp = i;
+                    if (bones[i] == head) hd = i;
+                    mine[i] = bones[i].IsChildOf(hand);
+                }
+                if (hi < 0 || hi >= bind.Length) continue;
+                Matrix4x4 toHand = bind[hi];
+                if (upH == Vector3.zero)
+                {
+                    Vector3 upMesh = hp >= 0 && hd >= 0 ? bind[hd].inverse.MultiplyPoint3x4(Vector3.zero) - bind[hp].inverse.MultiplyPoint3x4(Vector3.zero) : Vector3.up;
+                    upH = toHand.MultiplyVector(upMesh).normalized;
+                }
+                var bw = mesh.boneWeights;
+                var mv = mesh.vertices;
+                var mn = mesh.normals;
+                var mu = mesh.uv;
+                var map = new Dictionary<int, int>();
+                for (int sm = 0; sm < mesh.subMeshCount; sm++)
+                {
+                    var tris = mesh.GetTriangles(sm);
+                    List<int> outTris = null;
+                    for (int t = 0; t + 2 < tris.Length; t += 3)
+                    {
+                        bool all = true;
+                        for (int c = 0; c < 3 && all; c++)
+                        {
+                            int v = tris[t + c];
+                            if (v >= bw.Length) { all = false; break; }
+                            var w = bw[v];
+                            float on = (w.boneIndex0 < mine.Length && mine[w.boneIndex0] ? w.weight0 : 0f) + (w.boneIndex1 < mine.Length && mine[w.boneIndex1] ? w.weight1 : 0f)
+                                + (w.boneIndex2 < mine.Length && mine[w.boneIndex2] ? w.weight2 : 0f) + (w.boneIndex3 < mine.Length && mine[w.boneIndex3] ? w.weight3 : 0f);
+                            all = on > 0.5f;
+                        }
+                        if (!all) continue;
+                        if (outTris == null)
+                        {
+                            outTris = new List<int>();
+                            subs.Add(outTris);
+                            var sms = smr.sharedMaterials;
+                            mats.Add(sm < sms.Length ? sms[sm] : (sms.Length > 0 ? sms[sms.Length - 1] : null));
+                        }
+                        for (int c = 0; c < 3; c++)
+                        {
+                            int v = tris[t + c];
+                            if (!map.TryGetValue(v, out int nv))
+                            {
+                                nv = verts.Count;
+                                map[v] = nv;
+                                verts.Add(toHand.MultiplyPoint3x4(mv[v]) * k);
+                                norms.Add(v < mn.Length ? toHand.MultiplyVector(mn[v]).normalized : Vector3.up);
+                                uvs.Add(v < mu.Length ? mu[v] : Vector2.zero);
+                            }
+                            outTris.Add(nv);
+                        }
+                    }
+                }
+            }
+            if (verts.Count < 12) return null;
+            // the hand's way: wrist to its middle; the back of it: up, square to that
+            Vector3 mid = Vector3.zero;
+            foreach (var v in verts) mid += v;
+            mid /= verts.Count;
+            Vector3 f = mid.normalized;
+            Vector3 u = Vector3.ProjectOnPlane(upH, f);
+            if (u.sqrMagnitude < 1e-6f) u = Vector3.ProjectOnPlane(Vector3.up, f);
+            u.Normalize();
+            float side = left ? -1f : 1f;
+            var frame = Quaternion.LookRotation(f, side * Vector3.Cross(f, u));
+            var into = Quaternion.Inverse(frame);
+            // the wrist behind the grip, the palm round it
+            Vector3 shift = new Vector3(0f, -0.01f, -mid.magnitude * 1.1f);
+            for (int i = 0; i < verts.Count; i++)
+            {
+                verts[i] = into * verts[i] + shift;
+                norms[i] = into * norms[i];
+            }
+            var m = new Mesh { name = (left ? "Left" : "Right") + " hand (hero)" };
+            if (verts.Count > 65000) m.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            m.SetVertices(verts);
+            m.SetNormals(norms);
+            m.SetUVs(0, uvs);
+            m.subMeshCount = subs.Count;
+            for (int i = 0; i < subs.Count; i++) m.SetTriangles(subs[i], i);
+            m.RecalculateBounds();
+            var go = new GameObject((left ? "Left" : "Right") + " hand look");
+            go.AddComponent<MeshFilter>().sharedMesh = m;
+            var r = go.AddComponent<MeshRenderer>();
+            r.sharedMaterials = mats.ToArray();
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            return go;
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[Sandbox] VR hands from the hero: " + e.Message);
+            return null;
+        }
+    }
+
     // ------------------------------------------------------------------ the hands
     // a person's part near a point (not the hero's): the man, the place
     Man VrNearMan(Vector3 p, float within, out Vector3 at)
@@ -468,7 +732,7 @@ public partial class Game
             h.box = go.AddComponent<BoxCollider>();
             h.box.size = new Vector3(0.085f, 0.045f, 0.17f);
             h.box.center = new Vector3(0f, -0.01f, -0.02f);
-            // what you see: a mitten
+            // what you see: a mitten, till the hero's own hands are there (SetLook)
             var look = GameObject.CreatePrimitive(PrimitiveType.Cube);
             Destroy(look.GetComponent<Collider>());
             look.transform.SetParent(go.transform, false);
@@ -476,6 +740,7 @@ public partial class Game
             look.transform.localPosition = h.box.center;
             look.GetComponent<Renderer>().sharedMaterial = g.Mat(new Color(0.85f, 0.68f, 0.55f));
             look.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            h.mitten = look;
             try { g.nm?.RegisterMover(go.transform, DeliriumRagdolls.MoverKind.Object, h.box.size, true, false, true, h.box.center); } catch (Exception) { }
             return h;
         }
@@ -509,9 +774,28 @@ public partial class Game
                 game.VrPunch(this, v);
                 punchReady = 0.35f;
             }
+            if (holding && held != null && held.Body == null) { held = null; heldPart = -1; }
             if (holding && held != null) game.VrHold(this, held, heldPart);
         }
         bool registered;
+        GameObject mitten, own;
+
+        // the hero's hands in place of the mitten (null: the mitten again)
+        public void SetLook(GameObject look)
+        {
+            if (own != null)
+            {
+                var mf = own.GetComponent<MeshFilter>();
+                if (mf != null && mf.sharedMesh != null) Destroy(mf.sharedMesh);
+                Destroy(own);
+            }
+            own = look;
+            if (mitten != null) mitten.SetActive(look == null);
+            if (look == null) return;
+            look.transform.SetParent(transform, false);
+            look.transform.localPosition = Vector3.zero;
+            look.transform.localRotation = Quaternion.identity;
+        }
 
         public void Grip(bool on)
         {

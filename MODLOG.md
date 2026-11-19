@@ -680,3 +680,19 @@ files (default.xex, the three exported files, the archives) are picked by the la
   his hips at the yaw you had, smoothed). Right stick: 30-degree snap turns. Y: a world-space menu (TextMesh +
   trigger box buttons on layer 31, the right hand's ray, its trigger): Maps, Characters (Hero / All), + Man, Reset,
   Drunk, Noclip, Slow-mo, Default map; the launcher's error shows there. Launch() is called at VR start.
+
+## VR: removing people, the hero's hands, folders anywhere on the Quest
+- Menu: "- Man" (the last one spawned), "Remove all" (everyone but the hero): Game.RemoveMan (unleashed, its body
+  destroyed, out of `men`); a VR hand holding someone removed lets go.
+- Hands: VrHandMesh cuts the hero's hand + finger triangles (every vertex > 0.5 weighted to bones under
+  LeftHand/RightHand) out of his SkinnedMeshRenderers, into the hand bone's space by its bindpose (x lossyScale),
+  then turned so the fingers point along the controller's forward and the back of the hand up (up = hips->head
+  from the bindposes); the wrist sits behind the grip. Same materials. Rebuilt when the hero changes; the cube
+  mitten stays as the fallback. The physics box is unchanged.
+- Folders: AndroidFilesAccess (IPostGenerateGradleAndroidProject in ci/android/BuildAndroid.cs) adds
+  MANAGE_EXTERNAL_STORAGE (+ READ/WRITE) and requestLegacyExternalStorage. In VR: "GTA IV folder" / "Mods folder"
+  (and "Choose the GTA IV folder" when the game didn't start) open a folder browser from /storage/emulated/0
+  (folders with default.xex/character.xrt starred, Up, < >, Use this folder). It asks for "All files access"
+  (MANAGE_APP_ALL_FILES_ACCESS_PERMISSION intent; adb appops fallback shown). GTA folder -> gameExe = dataDir,
+  kPrefExe/kPrefData, Launch(); mods folder -> gmodDir + kPrefGmod (now kept on Android too), RefreshFiles (the
+  Android scan also lists .glb/.vrm there).

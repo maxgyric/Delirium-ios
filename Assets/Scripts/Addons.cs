@@ -175,7 +175,7 @@ public partial class Game
 
     void GmodFolderAtStart()
     {
-        try { gmodDir = Application.isMobilePlatform ? DP_RestoreGmodFolder() ?? "" : PlayerPrefs.GetString(kPrefGmod, ""); }
+        try { gmodDir = Application.platform == RuntimePlatform.IPhonePlayer ? DP_RestoreGmodFolder() ?? "" : PlayerPrefs.GetString(kPrefGmod, ""); }
         catch (Exception e) { Debug.LogWarning("[Sandbox] GMod folder bookmark: " + e.Message); gmodDir = ""; }
         if (gmodDir != "") Debug.Log("[Sandbox] GMod folder: " + gmodDir);
     }

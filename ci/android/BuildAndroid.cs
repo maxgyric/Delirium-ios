@@ -121,3 +121,35 @@ public static class BuildAndroid
         if (!ox.GetFeatures<OpenXRFeature>().Any(f => f.enabled && f.GetType().Name == "MetaQuestFeature")) throw new Exception("no Meta Quest feature on: the Quest wouldn't start it in VR");
     }
 }
+
+// Reading your folders where they are (the GTA IV files, your mods), not only the app's own Android/data:
+// "All files access" (MANAGE_EXTERNAL_STORAGE), which the game asks for in its folder browser.
+public class AndroidFilesAccess : UnityEditor.Android.IPostGenerateGradleAndroidProject
+{
+    public int callbackOrder => 999;
+
+    public void OnPostGenerateGradleAndroidProject(string path)
+    {
+        string manifest = Path.Combine(path, "src", "main", "AndroidManifest.xml");
+        if (!File.Exists(manifest)) { Debug.LogWarning("BuildAndroid: no manifest at " + manifest); return; }
+        var doc = new System.Xml.XmlDocument();
+        doc.Load(manifest);
+        const string ns = "http://schemas.android.com/apk/res/android";
+        var root = doc.DocumentElement;
+        foreach (string p in new[] { "android.permission.MANAGE_EXTERNAL_STORAGE", "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE" })
+        {
+            bool has = false;
+            foreach (System.Xml.XmlElement e in root.GetElementsByTagName("uses-permission"))
+                if (e.GetAttribute("name", ns) == p) has = true;
+            if (has) continue;
+            var el = doc.CreateElement("uses-permission");
+            el.SetAttribute("name", ns, p);
+            root.PrependChild(el);
+        }
+        // (the old way, Android 10's: the whole storage readable once allowed)
+        foreach (System.Xml.XmlElement app in root.GetElementsByTagName("application"))
+            app.SetAttribute("requestLegacyExternalStorage", ns, "true");
+        doc.Save(manifest);
+        Debug.Log("BuildAndroid: all files access asked for in " + manifest);
+    }
+}

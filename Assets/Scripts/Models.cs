@@ -228,6 +228,12 @@ public partial class Game
             {
                 found.AddRange(Directory.GetFiles(gmodDir, "*.gma", SearchOption.AllDirectories));
                 found.AddRange(Directory.GetFiles(gmodDir, "*.bsp", SearchOption.AllDirectories));
+                // (on the Quest it's your mods folder anywhere: characters and .glb maps too)
+                if (Application.platform == RuntimePlatform.Android)
+                {
+                    found.AddRange(Directory.GetFiles(gmodDir, "*.glb", SearchOption.AllDirectories));
+                    found.AddRange(Directory.GetFiles(gmodDir, "*.vrm", SearchOption.AllDirectories));
+                }
             }
             // an addon with several maps: each of them
             var listed = new List<string>();
