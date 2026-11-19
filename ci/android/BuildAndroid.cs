@@ -102,6 +102,8 @@ public static class BuildAndroid
         AssetDatabase.SaveAssets();
         Debug.Log("BuildAndroid: OpenXR loader " + (loader ? "assigned" : "NOT assigned") + ", loaders: " + string.Join(", ", settings.AssignedSettings.activeLoaders.Select(l => l.name)));
 
+        // (the features are made by the OpenXR editor as it opens a project: in batch mode, asked for)
+        UnityEditor.XR.OpenXR.Features.FeatureHelpers.RefreshFeatures(BuildTargetGroup.Android);
         var ox = OpenXRSettings.GetSettingsForBuildTargetGroup(BuildTargetGroup.Android);
         if (ox == null) throw new Exception("no OpenXR settings for Android");
         ox.renderMode = OpenXRSettings.RenderMode.MultiPass;
