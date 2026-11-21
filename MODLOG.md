@@ -776,3 +776,12 @@ files (default.xex, the three exported files, the archives) are picked by the la
   bigger, brighter red, whole till they land); ResetAll clears the wounds (a reset man stopped bleeding only when
   the wound ran out). The spurt's sound is the user's own clip (Resources/BloodSquirt.wav: their recording,
   trimmed to 0.66 s, faded, normalised), the made-up one only if it's missing.
+
+## Blood: one artery, the neck, pools, runs (FxPools.cs)
+- Arteries: the neck's only (Neck->Head capsule 7.5 cm, always), not the head's; one open on a man at a time
+  (HasArtery); spurts 0.28 s, a drop every 13 ms (22 on the Quest), 2-6.8 m/s.
+- Drops landing (FxDropLanded, 25/s budget): near a pool lying the same way (within 0.42 x its size + 3 cm) it
+  grows by a 5 cm disc's area (to 1.3 m) and edges toward the drop; else a small pool mark of its own. Floor blood
+  from shots and falls is a pool (round uneven texture), so drips build into puddles.
+- Walls: a spatter starts 1-4 runs; a drop landing on a wall sometimes does. A run: a streak quad pivoted at its
+  top, length L(1 - e^(-t/tau)), tau 2.5-6 s, along the wall's down (60 at once, 24 on the Quest).

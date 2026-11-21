@@ -13,7 +13,7 @@ public partial class Game
     static readonly (string a, string b, float r, float artery)[] kParts =
     {
         ("Hips", "Spine", 0.15f, 0.1f), ("Spine", "Spine1", 0.15f, 0.08f), ("Spine1", "Spine2", 0.15f, 0.08f),
-        ("Spine2", "Spine3", 0.15f, 0.12f), ("Spine3", "Neck", 0.14f, 0.15f), ("Neck", "Head", 0.06f, 1f),
+        ("Spine2", "Spine3", 0.15f, 0.12f), ("Spine3", "Neck", 0.14f, 0.15f), ("Neck", "Head", 0.075f, 1f),
         ("LeftUpLeg", "LeftLeg", 0.085f, 0.35f), ("LeftLeg", "LeftFoot", 0.06f, 0.08f),
         ("RightUpLeg", "RightLeg", 0.085f, 0.35f), ("RightLeg", "RightFoot", 0.06f, 0.08f),
         ("LeftShoulder", "LeftArm", 0.065f, 0.15f), ("LeftArm", "LeftForeArm", 0.055f, 0.25f), ("LeftForeArm", "LeftHand", 0.045f, 0.15f),
@@ -60,7 +60,7 @@ public partial class Game
             Vector3 c = head.position + up * 0.08f;
             if (RayCapsule(o, d, c - up * 0.02f, c + up * 0.03f, 0.105f, out float hin, out Vector3 hAt, out Vector3 hn, out Vector3 hOut) && hin < best)
             {
-                best = hin; at = hAt; normal = hn; exit = hOut; bone = head; artery = 1f;
+                best = hin; at = hAt; normal = hn; exit = hOut; bone = head; artery = 0f; // (the neck's are the arteries)
             }
         }
         return bone != null;
@@ -128,10 +128,15 @@ public partial class Game
                 Emit(fx.Drops, P(exit + d * 0.01f, bodyVel + (d + Rnd(0.35f)) * UnityEngine.Random.Range(2f, 5f), UnityEngine.Random.Range(0.022f, 0.054f), UnityEngine.Random.Range(0.6f, 1.4f), kBlood));
             Emit(fx.Mist, P(exit, bodyVel + d * 1.5f, 0.14f * Mathf.Sqrt(amount), 0.35f, kBloodMist));
             if (Physics.Raycast(exit + d * 0.05f, d, out var hit, 2.8f, VrWorldMask(), QueryTriggerInteraction.Ignore) && FxCanMark(hit.collider))
-                FxMark(fx.Splat, hit.point, hit.normal, UnityEngine.Random.Range(0.25f, 0.5f) * Mathf.Sqrt(amount), new Color(0.38f, 0.02f, 0.02f, 0.92f), hit.collider);
+            {
+                float size = UnityEngine.Random.Range(0.25f, 0.5f) * Mathf.Sqrt(amount);
+                FxMark(fx.Splat, hit.point, hit.normal, size, new Color(0.38f, 0.02f, 0.02f, 0.92f), hit.collider);
+                FxRunsFrom(hit.point, hit.normal, size, hit.collider);
+            }
         }
         // the wound, on that part
-        bool art = UnityEngine.Random.value < artery;
+        // one artery open on a man at a time (another shot there just bleeds)
+        bool art = UnityEngine.Random.value < artery && !HasArtery(m);
         if (wounds.Count >= MaxWounds) wounds.RemoveAt(0);
         wounds.Add(new Wound
         {
@@ -141,6 +146,12 @@ public partial class Game
             NextDrop = Time.time + 0.1f, NextPulse = Time.time + 0.15f,
         });
         return true;
+    }
+
+    bool HasArtery(Man m)
+    {
+        foreach (var w in wounds) if (w.M == m && w.Artery && Time.time < w.Until) return true;
+        return false;
     }
 
     // his body's speed now (his hips', from the last frames)
@@ -172,13 +183,13 @@ public partial class Game
                     Play(Sfx.Squirt, p, 0.35f + 0.5f * left * w.Strength);
                 }
                 float into = beat - (w.NextPulse - now); // seconds into this beat
-                if (into < 0.22f && now >= w.NextDrop)
+                if (into < 0.28f && now >= w.NextDrop)
                 {
-                    w.NextDrop = now + (OnQuest ? 0.035f : 0.02f);
-                    float push = (1f - into / 0.22f) * (1.2f + 3.2f * left * w.Strength) * (w.M.Killed ? 0.6f : 1f);
+                    w.NextDrop = now + (OnQuest ? 0.022f : 0.013f);
+                    float push = (1f - 0.7f * into / 0.28f) * (2f + 4.8f * left * w.Strength) * (w.M.Killed ? 0.65f : 1f);
                     Emit(fx.Drops, P(p + n * 0.01f, v + (n + Rnd(0.12f)) * push, UnityEngine.Random.Range(0.022f, 0.040f), UnityEngine.Random.Range(0.8f, 1.5f), kBlood));
                 }
-                else if (into >= 0.22f && now >= w.NextDrop)
+                else if (into >= 0.28f && now >= w.NextDrop)
                 {
                     // between beats: it runs
                     w.NextDrop = now + 0.12f;
@@ -230,7 +241,7 @@ public partial class Game
                 for (int i = 0; i < Mathf.RoundToInt((OnQuest ? 8 : 14) * (0.5f + k)); i++)
                     Emit(fx.Drops, P(at + Rnd(0.15f), (Vector3.up * 0.8f + Rnd(1f)) * UnityEngine.Random.Range(1f, 3f + 3f * k), UnityEngine.Random.Range(0.022f, 0.054f), UnityEngine.Random.Range(0.5f, 1.1f), kBlood));
                 if (FxCanMark(g.collider))
-                    FxMark(fx.Splat, g.point, g.normal, 0.45f + 0.7f * k, new Color(0.36f, 0.02f, 0.02f, 0.92f), g.collider);
+                    FxMark(fx.Pool, g.point, g.normal, 0.35f + 0.6f * k, kPoolTint, g.collider);
                 // and he bleeds a while from where he hit (his head, from high enough)
                 Transform part = k > 0.5f ? m.Body.Bone("Head") : m.Body.Hips;
                 if (part != null)
@@ -239,7 +250,7 @@ public partial class Game
                     wounds.Add(new Wound
                     {
                         M = m, Bone = part, Local = Vector3.zero, LocalNormal = part.InverseTransformDirection(Vector3.up),
-                        Start = Time.time, Until = Time.time + 4f + 6f * k, Strength = 0.5f + 0.5f * k, Artery = k > 0.7f,
+                        Start = Time.time, Until = Time.time + 4f + 6f * k, Strength = 0.5f + 0.5f * k, Artery = k > 0.7f && !HasArtery(m),
                         NextDrop = Time.time + 0.2f, NextPulse = Time.time + 0.4f,
                     });
                 }

@@ -12,7 +12,7 @@ public partial class Game
     class FxSet
     {
         public ParticleSystem Mist, Drops, Sparks, Dust, Smoke, Flash, Tracer, Shell;
-        public Material Splat, Hole;
+        public Material Splat, Hole, Pool, Run;
         public Light Light;
     }
     FxSet fx;
@@ -60,6 +60,8 @@ public partial class Game
             Shell = FxSystem(root, "Shells", FxMat(sh, blob, false), 1f, 40, true, 0.004f),
             Splat = FxMat(sh, splat, false, -2f),
             Hole = FxMat(sh, hole, false, -2f),
+            Pool = FxMat(sh, FxPoolTex(96), false, -2f),
+            Run = FxMat(sh, FxRunTex(32, 128), false, -3f),
         };
         // the drops and shells land; a drop leaves a splat where it does
         FxCollide(fx.Drops, 0.05f, 1f, true);
@@ -230,10 +232,14 @@ public partial class Game
         }
         // the wall behind him
         if (amount >= 0.6f && Physics.Raycast(at + dir * 0.25f, dir, out var hit, 2.8f, VrWorldMask(), QueryTriggerInteraction.Ignore) && FxCanMark(hit.collider))
-            FxMark(fx.Splat, hit.point, hit.normal, UnityEngine.Random.Range(0.25f, 0.5f) * Mathf.Sqrt(amount), new Color(0.38f, 0.02f, 0.02f, 0.92f), hit.collider);
+        {
+            float size = UnityEngine.Random.Range(0.25f, 0.5f) * Mathf.Sqrt(amount);
+            FxMark(fx.Splat, hit.point, hit.normal, size, new Color(0.38f, 0.02f, 0.02f, 0.92f), hit.collider);
+            FxRunsFrom(hit.point, hit.normal, size, hit.collider);
+        }
         // and a drip below
         if (amount >= 0.8f && Physics.Raycast(at, Vector3.down, out var floor, 2.5f, VrWorldMask(), QueryTriggerInteraction.Ignore) && FxCanMark(floor.collider))
-            FxMark(fx.Splat, floor.point, floor.normal, UnityEngine.Random.Range(0.12f, 0.25f), new Color(0.35f, 0.02f, 0.02f, 0.9f), floor.collider);
+            FxMark(fx.Pool, floor.point, floor.normal, UnityEngine.Random.Range(0.08f, 0.16f), kPoolTint, floor.collider);
     }
 
     // a bullet on the map: sparks, dust, a hole
@@ -291,6 +297,7 @@ public partial class Game
     // (each frame) the muzzle's light goes out
     void FxUpdate()
     {
+        FxRunsUpdate();
         WoundsUpdate();
         FallsUpdate();
         if (fx?.Light == null || !fx.Light.enabled) return;
@@ -356,9 +363,9 @@ public partial class Game
         return c.gameObject.layer != kUiLayer && c.gameObject.layer != 2;
     }
 
-    void FxMark(Material mat, Vector3 at, Vector3 normal, float size, Color tint, Collider on)
+    GameObject FxMark(Material mat, Vector3 at, Vector3 normal, float size, Color tint, Collider on)
     {
-        if (mat == null || fxQuad == null) return;
+        if (mat == null || fxQuad == null) return null;
         GameObject g = null;
         if (fxMarks.Count < FxMaxMarks)
         {
@@ -377,8 +384,9 @@ public partial class Game
                 g = fxMarks[fxMarkNext];
                 if (g == null) { fxMarks.RemoveAt(fxMarkNext); fxMarkNext = Mathf.Max(0, fxMarkNext - 1); }
             }
-            if (g == null) return;
+            if (g == null) return null;
         }
+        fxMarkInfo[g] = new MarkInfo { Normal = normal, Size = size, Pool = mat == fx.Pool };
         var mr = g.GetComponent<MeshRenderer>();
         mr.sharedMaterial = mat;
         var mpb = new MaterialPropertyBlock();
@@ -390,6 +398,7 @@ public partial class Game
         g.transform.localScale = Vector3.one * size;
         g.transform.SetPositionAndRotation(at + normal * 0.006f, Quaternion.LookRotation(normal) * Quaternion.Euler(0f, 0f, UnityEngine.Random.Range(0f, 360f)));
         if (parent != null) g.transform.SetParent(parent, true);
+        return g;
     }
 
     // (map change) the marks go with the old map
@@ -397,6 +406,8 @@ public partial class Game
     {
         foreach (var g in fxMarks) if (g != null) Destroy(g);
         fxMarks.Clear();
+        fxMarkInfo.Clear();
+        FxRunsClear();
         fxMarkNext = 0;
     }
 
@@ -408,7 +419,7 @@ public partial class Game
         float budget;
         ParticleSystem ps;
 
-        void Update() => budget = Mathf.Min(budget + Time.deltaTime * 12f, 6f);
+        void Update() => budget = Mathf.Min(budget + Time.deltaTime * 25f, 10f);
 
         void OnParticleCollision(GameObject other)
         {
@@ -420,7 +431,7 @@ public partial class Game
             for (int i = 0; i < n && budget >= 1f; i++)
             {
                 budget -= 1f;
-                G.FxMark(G.fx.Splat, events[i].intersection, events[i].normal, UnityEngine.Random.Range(0.04f, 0.11f), new Color(0.36f, 0.02f, 0.02f, 0.9f), c);
+                G.FxDropLanded(events[i].intersection, events[i].normal, c);
             }
         }
     }
