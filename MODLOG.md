@@ -785,3 +785,27 @@ files (default.xex, the three exported files, the archives) are picked by the la
   from shots and falls is a pool (round uneven texture), so drips build into puddles.
 - Walls: a spatter starts 1-4 runs; a drop landing on a wall sometimes does. A run: a streak quad pivoted at its
   top, length L(1 - e^(-t/tau)), tau 2.5-6 s, along the wall's down (60 at once, 24 on the Quest).
+
+## GTA V's melee from Grand Theft Gmod (HeroMelee.cs, GtaMelee.cs)
+- Found on the user's PC (D:\grandtheftgmod_0899): the melee clips are in male_move.mdl (lib_male_move_p9.lua etc.:
+  "melee_short_0_punch" = gtgl_male_move_melee_short_0_punch, from melee@unarmed@streamed_core.ycd), each blow with
+  a `strike = { f0, frames = { 10 points x/y/z a frame } }` (the addon's strike points, inches about the root:
+  x forward, y left, z up); the system's data in lua/grandtheftgmod/sh_data.lua (D.melee: no_target, targeted,
+  combo, ground.moves, branches, strike_sets, react...), its logic in sh_melee.lua (MEL.find: 4 m, score
+  distance + heading; facing for takedowns; prio then bias).
+- native/anim: lua_meta parses `strike` (f0, count, 30 floats a frame, m) -> dv_clip_data what=3; test with a
+  made-up line (and GTG_MOVE_LUA for the real file: short_0_punch f0 22, 17 frames; 25 clips in p9).
+- GtaMelee.cs: at load (after LoadV, VDir = the addon's folder) parses D.melee from the user's own sh_data.lua at
+  runtime (nothing of it in the repo): moves (id, clip, prio, bias, dmin/dmax m, amin/amax deg left+, hom
+  {distance at the strike, speed}, sb, dmg, branch, heavy, ko, kill, roll/chance, facing, ground, no_run/run),
+  chains (multi-line lists joined), strike sets ({point 1..10, reach m}); each clip GetV'd with its Strike.
+- HeroMelee.cs: Punch (fists, GTA V clips there, not VR) -> MeleePress: target as MEL.find (4 m, 75 deg of the
+  stick's way or his facing; lying bodies for ground blows); candidates: lying -> ground "low"; chained -> the
+  current blow's branch ids; else targeted (no heavy; takedowns on a 5% roll; finishers only under 60/200 health);
+  Fits(d, a, facing, run), Choose(top prio, bias-weighted); none: nearest-angle directional; no one: no_target
+  still/walk/run. The blow as an act: PickClip shows its clip on its own clock; MeleeAct moves him by its curve,
+  homing till the strike (yaw onto him at 540 deg/s allowing the clip's own turn; distance to hom[0] at the strike,
+  capped by hom[1]); pressed again after 15%: the next (chain) once it has struck; the stick after the strike:
+  back to walking. MeleeStrike: the strike frames passed this frame, the set's points in the world against every
+  man's capsules (FxWounds' kParts) + 5 cm: MeleeLands once a man (nm.MeleeHit, 55 + 1.6 dmg, 160 for a finisher /
+  takedown; health -2 x dmg, a kill move all; nm.Kill at 0; blood sometimes; Sfx.Punch).

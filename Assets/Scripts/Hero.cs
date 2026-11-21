@@ -295,6 +295,7 @@ public partial class Game
     // From the ragdoll (on his feet) back onto the clips: where he stands, facing his way, the pose faded over.
     void HeroTakeBack(Vector3 velocity)
     {
+        mel = null; // (a blow he was throwing when he went down)
         var body = hero.Body;
         hHandPos = body.Hips.position;
         hHandRot = body.Hips.rotation;
@@ -359,11 +360,19 @@ public partial class Game
         else Walk(dt);
         bool fists = kGuns[weapon % kGuns.Length].Fists;
         if (fists) heroAim = false;
-        if ((heroAim || fists) && (hFireId != kNone || Input.GetKey(KeyCode.F)) && Time.time >= heroNextFire)
+        bool firing = hFireId != kNone || Input.GetKey(KeyCode.F);
+        if (fists && MeleeReady && !vrOn)
+        {
+            // GTA V's melee (Grand Theft Gmod's): a blow a press, the next pressed during one chains on
+            if (firing && !melWasFiring) MeleePress();
+        }
+        else if ((heroAim || fists) && firing && Time.time >= heroNextFire)
         {
             if (fists) Punch();
             else Fire();
         }
+        melWasFiring = firing;
+        if (!fists) mel = null;
         // the blow lands part way through its swing
         if (heroPunchAt >= 0f && !heroPunchHit && Time.time >= heroPunchAt + heroPunchDur * 0.4f)
         {
@@ -421,6 +430,7 @@ public partial class Game
         }
         if (hJumpReq) act = null;
         if (clAir != null) ClimbAir(dt); // off the far side of what he vaulted
+        else if (MeleeAct(dt)) { } // GTA V's blow: its own way (HeroMelee.cs)
         else if ((vrOn && !heroNoclip) || !VAct(dt, mag, wish, walk, run))
         {
             if (heroAim || heroNoclip || vrOn)
@@ -660,6 +670,8 @@ public partial class Game
         // GTA V's climb (two of its heights blended) or the vault's way down
         if (climbing) { hPhaseSet = Mathf.Clamp01(clT / clA.Dur); rate = 0f; b = clB; w = clB != null ? clW : 0f; return clA; }
         if (clAir != null) { hPhaseSet = Mathf.Clamp01(clAirT / clAir.Dur); rate = 0f; return clAir; }
+        // GTA V's blow (HeroMelee): its own clip and clock
+        if (mel != null && heroMode == 0) { hPhaseSet = Mathf.Clamp01(melT / mel.C.Dur); rate = 0f; return mel.C; }
         // GTA V's start, stop or turn: its own clip, its own clock (VAct)
         if (act != null) { hPhaseSet = Mathf.Clamp01(actT / act.Dur); rate = 0f; return act; }
         // a jump on the spot is its clip from start to end (the clip itself lifts him and lands him)

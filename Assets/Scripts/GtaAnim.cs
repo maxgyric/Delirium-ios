@@ -13,7 +13,7 @@ using System.Text;
 using System.Threading;
 using UnityEngine;
 
-public static class GtaAnim
+public static partial class GtaAnim
 {
 #if UNITY_IOS && !UNITY_EDITOR
     const string Dll = "__Internal";
@@ -53,6 +53,9 @@ public static class GtaAnim
         // rise and the way along are the clip data's: Hero moves him by them)
         public float[] Rise;
         public bool Ground;
+        // (GTA V's blows) the strike: its first frame, its frames' count, then ten points a frame (x forward, y left,
+        // z up m about his root: hands, elbows, knees, feet as the addon numbers them, 1..10)
+        public float[] Strike;
         public int Frames => Mathf.RoundToInt(Dur * 30f) + 1;
     }
 
@@ -308,6 +311,8 @@ public static class GtaAnim
         if (n > 0) { c.Tags = new float[n]; Array.Copy(buf, c.Tags, n); }
         n = dv_clip_data(c.Id, 2, buf, buf.Length);
         if (n > 0) { c.Rise = new float[n]; Array.Copy(buf, c.Rise, n); }
+        n = dv_clip_data(c.Id, 3, buf, buf.Length);
+        if (n > 2) { c.Strike = new float[n]; Array.Copy(buf, c.Strike, n); }
         return c;
     }
 
@@ -324,7 +329,7 @@ public static class GtaAnim
                 if (!Directory.Exists(d)) continue;
                 try
                 {
-                    if (dv_open(Z(d)) >= 0) { V = true; break; }
+                    if (dv_open(Z(d)) >= 0) { V = true; VDir = d; break; }
                 }
                 catch (EntryPointNotFoundException) { VError = "this build's library has no GTA V clips"; return; }
                 why += d + ": " + LastError() + "\n";
@@ -408,6 +413,7 @@ public static class GtaAnim
             }
             if (set.Aim[1].Ok) VGuns[g] = set;
         }
+        try { LoadMelee(); } catch (Exception e) { Debug.LogWarning("[Hero] GTA V's melee: " + e.Message); }
         Debug.Log($"[Hero] GTA V's moves: walk {Move[1].Speed:F2} m/s, run {Move[2].Speed:F2}, sprint {Move[3].Speed:F2}; strafes {(strafes && si.Ok ? "yes" : "no")}, {VClimb.Count} climb clips, guns: {string.Join(",", VGuns.Keys)}");
     }
 

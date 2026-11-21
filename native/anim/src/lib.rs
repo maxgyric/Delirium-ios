@@ -649,6 +649,10 @@ struct Meta {
     tags: Vec<f32>,
     // (climbs) its root's height over the clip (m), sampled as `curve`
     zcurve: Vec<f32>,
+    // (melee) its strike: the first frame, the frames' count, then a frame each its ten strike points (the
+    // hands, the elbows, the knees and the feet, as the addon numbers them), x forward, y left, z up (m) about his
+    // root
+    strike: Vec<f32>,
 }
 
 fn lua_meta(text: &str, into: &mut HashMap<String, Meta>) {
@@ -681,6 +685,25 @@ fn lua_meta(text: &str, into: &mut HashMap<String, Meta>) {
         } else if let Some(c) = braces(line, "curve =") {
             let v: Vec<f32> = c.split(',').filter_map(|x| x.trim().parse().ok()).collect();
             m.curve = v.chunks_exact(3).flat_map(|t| [t[0] * 0.0254, t[1] * 0.0254, t[2]]).collect();
+        }
+        if let Some(i) = line.find("strike = {") {
+            let r = &line[i..];
+            if let (Some(f0), Some(fi)) = (num(r, "f0 ="), r.find("frames = {")) {
+                let mut rest = &r[fi + 10..];
+                let mut frames: Vec<Vec<f32>> = Vec::new();
+                while let Some(a) = rest.find('{') {
+                    // (the frames' list ends where a '}' comes before the next '{')
+                    if let Some(close) = rest.find('}') { if close < a { break; } }
+                    let Some(b) = rest[a..].find('}') else { break };
+                    let v: Vec<f32> = rest[a + 1..a + b].split(',').filter_map(|x| x.trim().parse::<f32>().ok()).map(|x| x * 0.0254).collect();
+                    if v.len() == 30 { frames.push(v); }
+                    rest = &rest[a + b + 1..];
+                }
+                if !frames.is_empty() {
+                    m.strike = vec![f0, frames.len() as f32];
+                    for f in frames { m.strike.extend(f); }
+                }
+            }
         }
         if line.trim_start().starts_with("tags =") {
             let mut rest = line;
@@ -748,10 +771,11 @@ pub unsafe extern "C" fn dv_clip(name: *const c_char) -> i32 {
 
 /// (Sandbox) A GTA V clip's data into `out` (`cap` floats): `what` 0 its root's way (x forward, y left m, turn
 /// left degrees, a triple a sample, evenly over the clip), 1 its marks (kind, phase pairs: 1 left heel, 2 right
-/// heel, 3 blend-out). How many floats; 0 for a clip without (GTA IV's), -1 on an error.
+/// heel, 3 blend-out), 2 a climb's root height, 3 a blow's strike (first frame, frames, ten x/y/z points a frame,
+/// metres about the root: x forward, y left, z up). How many floats; 0 for a clip without (GTA IV's), -1 on an error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dv_clip_data(c: i32, what: i32, out: *mut f32, cap: i32) -> i32 {
-    match with_clip(c, |a, i| Ok(a.clips[i].v.as_ref().map(|m| match what { 0 => m.curve.clone(), 1 => m.tags.clone(), _ => m.zcurve.clone() }).unwrap_or_default())) {
+    match with_clip(c, |a, i| Ok(a.clips[i].v.as_ref().map(|m| match what { 0 => m.curve.clone(), 1 => m.tags.clone(), 3 => m.strike.clone(), _ => m.zcurve.clone() }).unwrap_or_default())) {
         Ok(v) => {
             let n = v.len().min(cap.max(0) as usize);
             if !out.is_null() { unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), out, n) }; }
@@ -1044,5 +1068,28 @@ mod lua_test {
         assert_eq!(c.curve.len(), 63);
         assert!((c.curve[60] + 102.4 * 0.0254).abs() < 1e-4 && (c.curve[62] - 179.7).abs() < 1e-4);
         assert_eq!(c.tags, vec![2.0, 0.0, 1.0, 0.316, 2.0, 0.627, 3.0, 0.658, 1.0, 0.867]);
+    }
+
+    #[test]
+    fn strike() {
+        // (made-up numbers in the shape of a blow's strike data)
+        let f: Vec<String> = (0..30).map(|i| format!("{}", i as f32)).collect();
+        let fr = format!("{{ {} }}", f.join(","));
+        let t = format!("\t[\"x\"] = {{ seq = \"gtgl_male_move_melee_x\", dur = 1, frames = 30, loop = false,\n\t\tstrike = {{ f0 = 7, frames = {{ {fr}, {fr} }} }},\n");
+        let mut m = std::collections::HashMap::new();
+        super::lua_meta(&t, &mut m);
+        let s = &m["gtgl_male_move_melee_x"].strike;
+        assert_eq!(s.len(), 2 + 60);
+        assert_eq!((s[0], s[1]), (7.0, 2.0));
+        assert!((s[2 + 29] - 29.0 * 0.0254).abs() < 1e-5 && (s[2 + 30 + 1] - 0.0254).abs() < 1e-5);
+        // the real files, if they're here
+        if let Ok(p) = std::env::var("GTG_MOVE_LUA") {
+            let mut m = std::collections::HashMap::new();
+            super::lua_meta(&std::fs::read_to_string(p).unwrap(), &mut m);
+            let c = &m["gtgl_male_move_melee_short_0_punch"];
+            println!("short_0_punch strike: f0 {} frames {} first {:?} curve {}", c.strike[0], c.strike[1], &c.strike[2..5], c.curve.len());
+            let n = m.values().filter(|c| !c.strike.is_empty()).count();
+            println!("{n} clips with a strike");
+        }
     }
 }
