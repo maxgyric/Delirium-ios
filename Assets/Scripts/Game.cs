@@ -334,6 +334,7 @@ public partial class Game : MonoBehaviour
     // at", if shot at again soon). Delirium judges how close.
     void Missed(Ray ray, Man struck)
     {
+        FxBullet(ray, struck); // (its blood, or its impact, and its tracer: Fx.cs)
         // only with "Dive when shot at" on: the near miss's flinch holds an arm and his eyes on where the bullet
         // passed (he "pointed" at the shooter's old place), so it's also let go after a second (Mind)
         if (!dive) return;
@@ -593,8 +594,10 @@ public partial class Game : MonoBehaviour
     void Update()
     {
         VrUpdate(); // (a headset: its head, hands and buttons; nothing on the phone)
+        HeroBodyBox(); // (the iPhone: his body pushes ragdolls)
         if (!running || nm == null) return;
         SettingsUpdate();
+        FxUpdate();
         AddonsUpdate();
         BrowserUpdate();
         float dt = Time.deltaTime;
@@ -1050,6 +1053,7 @@ public partial class Game : MonoBehaviour
                 {
                     nm.MeleeHit(owner, point, (flat + Vector3.up * 0.15f) * 75f, cam.transform.position);
                     Play(Sfx.Punch, point);
+                    if (UnityEngine.Random.value < 0.4f) FxBlood(point, flat, 0.3f);
                     break;
                 }
                 PlayGun(cam.transform.position);
@@ -1060,6 +1064,7 @@ public partial class Game : MonoBehaviour
             case Tool.Punch:
                 nm.MeleeHit(owner, point, (flat + Vector3.up * 0.15f) * 75f, cam.transform.position);
                 Play(Sfx.Punch, point);
+                if (UnityEngine.Random.value < 0.4f) FxBlood(point, flat, 0.3f);
                 break;
             case Tool.Blast:
                 Blast(new Vector3(point.x, 0.2f, point.z) - flat * 1.2f);

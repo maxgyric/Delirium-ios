@@ -880,6 +880,7 @@ public partial class Game
         if (m == null || m.Rising) return;
         nm.MeleeHit(m.Body.transform, at, vel.normalized * Mathf.Clamp(vel.magnitude * 14f, 30f, 110f), cam.transform.position);
         Play(Sfx.Punch, at, Mathf.Clamp01(vel.magnitude / 6f));
+        if (vel.magnitude > 4f) FxBlood(at, vel, 0.3f + (vel.magnitude - 4f) * 0.1f);
         h.HapticPulse(Mathf.Clamp01(vel.magnitude / 5f), 0.08f);
     }
 

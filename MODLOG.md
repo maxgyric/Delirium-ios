@@ -742,3 +742,20 @@ files (default.xex, the three exported files, the archives) are picked by the la
   w_sg_pumpshotgun, w_sr_sniperrifle; no attachments), converted by dmdl_convert (player.rs now takes a loose
   .mdl path: its folder is read as a loose root, Content::add_loose), barrel = longest axis toward the far end,
   length sanity-scaled. Never shipped: read from the user's own folder at runtime.
+
+## The hero's body vs ragdolls (iPhone only), and effects
+- HeroBody.cs: on the iPhone (IPhonePlayer, not VR) while the hero is on his feet his mover (heroCC) is also a
+  Delirium mover box (Object, 0.42 x 1.7 x 0.42, centre 0.88, no knock-down: the walk-in shove stays heroBump's),
+  so ragdolls he walks into are pushed; his CharacterController ignores ragdoll parts (VrNotIntoPeople) so he
+  shoves a lying body instead of stopping at it. Unregistered when he's down, riding, flying, gone.
+- Fx.cs (+ Resources/DeliriumFx.shader "Hidden/Delirium/Fx": texture x vertex colour, blend modes by property,
+  ZWrite off, polygon offset for marks, stereo-safe): textures drawn in code (blob, smoke, star, splat, hole); one
+  World-space ParticleSystem per effect (loop on, emission off; ParticleSystem.Emit per particle): blood mist,
+  blood drops (collide with the world; FxDropLands' OnParticleCollision leaves small splats, ~12/s budget), sparks,
+  dust, gun smoke, muzzle flash (3 stars along the barrel), tracers (stretched, 320 m/s, lifetime = distance),
+  shells (bounce). A muzzle point light for 0.05 s. Marks: a quad pool (160, 90 on the Quest), oldest reused,
+  parented to kinematic movers (doors, lifts), cleared on FreeMapNow.
+- Hooks: Missed() (called for every bullet in every shooting path) -> FxBullet: blood on the struck man (nearest
+  part to the line), a splat on the wall behind, a drip below; else the map's impact + hole; a ragdoll part hit:
+  blood; shotgun pellets fanned (8, 5 on Quest); a tracer from the muzzle if one fired this frame. Fire / VrFire:
+  FxMuzzle instead of the old sphere flash. Punches (hero, VR > 4 m/s, pointer tools): a little blood sometimes.

@@ -374,6 +374,7 @@ public partial class Game
                 Vector3 fwd = Quaternion.Euler(0f, heroYaw, 0f) * Vector3.forward;
                 Vector3 at = t.Body.Bone(punchCount % 3 == 0 ? "Head" : "Spine3").position;
                 nm.MeleeHit(t.Body.transform, at, (fwd + Vector3.up * 0.15f) * 85f, hero.Body.Bone("Head").position);
+                if (UnityEngine.Random.value < 0.5f) FxBlood(at, fwd, 0.35f);
                 Attacked(t);
                 Play(Sfx.Punch, at);
             }
@@ -974,7 +975,9 @@ public partial class Game
         hCamPitch -= gun.Between < 0.2f ? 0.1f : gun.Long ? 0.5f : 0.3f; // the kick
         Shot(gun);
         Vector3 muzzle = gunModel != null ? gunModel.transform.TransformPoint(gunMuzzle) : hero.Body.Hips.position;
-        Flash(muzzle, 0.14f);
+        Vector3 barrel = gunModel != null ? gunModel.transform.right : ray.direction;
+        Vector3 eject = gunModel != null ? gunModel.transform.TransformDirection(new Vector3(0f, 0.5f, -1f)) : hero.Body.transform.right;
+        FxMuzzle(muzzle, barrel, eject, gun);
         PlayGun(muzzle);
         Missed(ray, m);
         if (m == null || m.Rising) return;

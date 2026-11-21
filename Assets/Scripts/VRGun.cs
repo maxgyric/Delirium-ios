@@ -34,7 +34,7 @@ public partial class Game
         Vector3 dir = gunModel.transform.right; // (the gun's +X: its barrel)
         var ray = new Ray(muzzle, dir);
         var m = Pick(ray, out Vector3 _);
-        Flash(muzzle, 0.14f);
+        FxMuzzle(muzzle, dir, gunModel.transform.TransformDirection(new Vector3(0f, 0.5f, -1f)), gun);
         PlayGun(muzzle);
         Missed(ray, m);
         if (vrR != null) vrR.HapticPulse(gun.Long ? 0.9f : 0.6f, gun.Long ? 0.08f : 0.05f);
