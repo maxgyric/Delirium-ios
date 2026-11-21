@@ -139,7 +139,7 @@ public partial class Game
         main.simulationSpace = ParticleSystemSimulationSpace.World;
         main.maxParticles = max;
         main.gravityModifier = gravity;
-        main.scalingMode = ParticleSystemScalingMode.World;
+        main.scalingMode = ParticleSystemScalingMode.Hierarchy;
         var em = ps.emission;
         em.enabled = false;
         var shape = ps.shape;
