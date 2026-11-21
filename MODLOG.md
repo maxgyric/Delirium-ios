@@ -759,3 +759,16 @@ files (default.xex, the three exported files, the archives) are picked by the la
   part to the line), a splat on the wall behind, a drip below; else the map's impact + hole; a ragdoll part hit:
   blood; shotgun pellets fanned (8, 5 on Quest); a tracer from the muzzle if one fired this frame. Fire / VrFire:
   FxMuzzle instead of the old sphere flash. Punches (hero, VR > 4 m/s, pointer tools): a little blood sometimes.
+
+## Blood from the body: wounds, arteries, falls (FxWounds.cs)
+- A bullet into a man: his parts as capsules round bone pairs (kParts, radii 4.5-15 cm, head a capsule above the
+  head bone); the shot's line meets the nearest: the entry point on the surface, its outward normal, the exit.
+  Burst at the entry (mist, drops back out along the normal) with the body's velocity (hips, FallsUpdate); a gun of
+  30+ damage or a shotgun sprays out of the exit too (and splats the wall behind).
+- A Wound kept on that bone (local point and normal): bleeds drops 4-8 s (artery 12-20 s), emitted at the moving
+  wound with its own velocity, falling and leaving splats (FxDropLands). Arteries (head/neck always; thighs 35%,
+  upper arms 25%, others less): a spurt each heartbeat (0.75 s, 1.3 s dead), a 0.22 s stream strongest at its
+  start, Sfx.Squirt (synthesised: low-passed noise opening and closing, a gurgle), running drops between beats.
+  10 wounds at once on the Quest, 24 on the iPhone.
+- Falls: per man the hips' velocity; down faster than 9 m/s then stopped near the ground: drops up, a splat
+  (0.45-1.15 m), a wound on the hips (or head from higher, an artery from very high).

@@ -277,6 +277,8 @@ public partial class Game
     // (each frame) the muzzle's light goes out
     void FxUpdate()
     {
+        WoundsUpdate();
+        FallsUpdate();
         if (fx?.Light == null || !fx.Light.enabled) return;
         fxLightT -= Time.deltaTime;
         if (fxLightT <= 0f) fx.Light.enabled = false;
@@ -297,11 +299,7 @@ public partial class Game
             Vector3 dir = ray.direction;
             if (p > 0) dir = (Quaternion.AngleAxis(UnityEngine.Random.Range(0f, 360f), ray.direction) * Quaternion.AngleAxis(UnityEngine.Random.Range(1f, 4f), Vector3.Cross(ray.direction, Vector3.up).normalized + Vector3.up * 0.001f) * ray.direction).normalized;
             Vector3 end = ray.origin + dir * 120f;
-            if (p == 0 && struck != null && struck.Body != null && FxOnMan(new Ray(ray.origin, dir), struck, out Vector3 at))
-            {
-                FxBlood(at, dir, gun.Damage / 30f);
-                end = at;
-            }
+            if (p == 0 && struck != null && struck.Body != null && FxShotMan(new Ray(ray.origin, dir), struck, gun, out Vector3 at)) end = at;
             else if (Physics.Raycast(ray.origin, dir, out var hit, 300f, VrWorldMask(), QueryTriggerInteraction.Ignore))
             {
                 var rb = hit.collider.attachedRigidbody;

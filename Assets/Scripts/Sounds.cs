@@ -7,7 +7,7 @@ using UnityEngine;
 
 public partial class Game
 {
-    enum Sfx { Step, Jump, Land, Impact, Punch, Boom, Pistol, Deagle, Smg, Ak47, Shotgun, Sniper, Count }
+    enum Sfx { Step, Jump, Land, Impact, Punch, Boom, Pistol, Deagle, Smg, Ak47, Shotgun, Sniper, Squirt, Count }
 
     AudioClip[] sfx;
     AudioSource[] voices;
@@ -33,6 +33,7 @@ public partial class Game
         sfx[(int)Sfx.Shotgun] = Make("shotgun", rng, 0.7f, 80f, 1f, 1f, 0.11f, 0.4f, 0.1f);
         sfx[(int)Sfx.Sniper] = Make("sniper", rng, 0.9f, 95f, 1f, 1f, 0.09f, 0.55f, 0.16f);
         sfx[(int)Sfx.Jump] = Whoosh("jump", rng, 0.2f);
+        sfx[(int)Sfx.Squirt] = Squirt("squirt", rng, 0.3f);
         var go = new GameObject("Sounds");
         DontDestroyOnLoad(go);
         voices = new AudioSource[32]; // a GTA IV gunshot is half a dozen waves at once
@@ -61,6 +62,31 @@ public partial class Game
             peak = Mathf.Max(peak, Mathf.Abs(v));
         }
         for (int i = 0; i < n; i++) data[i] *= 0.9f / peak;
+        var clip = AudioClip.Create(name, n, 1, kRate, false);
+        clip.SetData(data, 0);
+        return clip;
+    }
+
+    // A spurt: a wet hiss that opens and closes (noise through a low pass that brightens then dulls), a little
+    // gurgle on it.
+    static AudioClip Squirt(string name, System.Random rng, float seconds)
+    {
+        int n = (int)(seconds * kRate);
+        var data = new float[n];
+        float low = 0f, low2 = 0f, peak = 1e-6f, gurgle = 0f;
+        for (int i = 0; i < n; i++)
+        {
+            float k = i / (float)n;
+            float cut = 0.04f + 0.35f * Mathf.Sin(Mathf.PI * Mathf.Pow(k, 0.6f));
+            low += cut * ((float)(rng.NextDouble() * 2.0 - 1.0) - low);
+            low2 += 0.5f * (low - low2);
+            if (i % 180 == 0) gurgle = 0.6f + 0.4f * (float)rng.NextDouble();
+            float env = Mathf.Min(1f, k * 18f) * Mathf.Pow(1f - k, 1.6f);
+            float v = low2 * env * gurgle * (1f + 0.35f * Mathf.Sin(i * 2f * Mathf.PI * 32f / kRate));
+            data[i] = v;
+            peak = Mathf.Max(peak, Mathf.Abs(v));
+        }
+        for (int i = 0; i < n; i++) data[i] *= 0.8f / peak;
         var clip = AudioClip.Create(name, n, 1, kRate, false);
         clip.SetData(data, 0);
         return clip;
