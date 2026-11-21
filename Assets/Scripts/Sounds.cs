@@ -33,7 +33,8 @@ public partial class Game
         sfx[(int)Sfx.Shotgun] = Make("shotgun", rng, 0.7f, 80f, 1f, 1f, 0.11f, 0.4f, 0.1f);
         sfx[(int)Sfx.Sniper] = Make("sniper", rng, 0.9f, 95f, 1f, 1f, 0.09f, 0.55f, 0.16f);
         sfx[(int)Sfx.Jump] = Whoosh("jump", rng, 0.2f);
-        sfx[(int)Sfx.Squirt] = Squirt("squirt", rng, 0.3f);
+        // (the spurt you gave: Resources/BloodSquirt.wav; else a made-up one)
+        sfx[(int)Sfx.Squirt] = Resources.Load<AudioClip>("BloodSquirt") ?? Squirt("squirt", rng, 0.3f);
         var go = new GameObject("Sounds");
         DontDestroyOnLoad(go);
         voices = new AudioSource[32]; // a GTA IV gunshot is half a dozen waves at once

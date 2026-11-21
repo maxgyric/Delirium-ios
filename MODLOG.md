@@ -772,3 +772,7 @@ files (default.xex, the three exported files, the archives) are picked by the la
   10 wounds at once on the Quest, 24 on the iPhone.
 - Falls: per man the hips' velocity; down faster than 9 m/s then stopped near the ground: drops up, a splat
   (0.45-1.15 m), a wound on the hips (or head from higher, an artery from very high).
+- Fixes: blood drops are drawn as stretched red drops you can see in the air (stretch 0.03 x speed x 1.3, 1.8x
+  bigger, brighter red, whole till they land); ResetAll clears the wounds (a reset man stopped bleeding only when
+  the wound ran out). The spurt's sound is the user's own clip (Resources/BloodSquirt.wav: their recording,
+  trimmed to 0.66 s, faded, normalised), the made-up one only if it's missing.

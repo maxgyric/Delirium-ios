@@ -119,13 +119,13 @@ public partial class Game
             Emit(fx.Mist, P(at + normal * 0.01f, bodyVel + (normal * 0.6f + Rnd(0.3f)), UnityEngine.Random.Range(0.05f, 0.1f) * Mathf.Sqrt(amount), UnityEngine.Random.Range(0.15f, 0.3f), kBloodMist));
         int back = Mathf.RoundToInt((OnQuest ? 4 : 6) * amount);
         for (int i = 0; i < back; i++)
-            Emit(fx.Drops, P(at + normal * 0.005f, bodyVel + (normal + Rnd(0.5f) - d * 0.3f) * UnityEngine.Random.Range(0.8f, 2.5f), UnityEngine.Random.Range(0.01f, 0.022f), UnityEngine.Random.Range(0.8f, 1.6f), kBlood));
+            Emit(fx.Drops, P(at + normal * 0.005f, bodyVel + (normal + Rnd(0.5f) - d * 0.3f) * UnityEngine.Random.Range(0.8f, 2.5f), UnityEngine.Random.Range(0.018f, 0.040f), UnityEngine.Random.Range(0.8f, 1.6f), kBlood));
         // out: a big gun's goes through and sprays on
         if (gun.Damage >= 30f || gun.Pellets)
         {
             int through = Mathf.RoundToInt((OnQuest ? 6 : 10) * amount);
             for (int i = 0; i < through; i++)
-                Emit(fx.Drops, P(exit + d * 0.01f, bodyVel + (d + Rnd(0.35f)) * UnityEngine.Random.Range(2f, 5f), UnityEngine.Random.Range(0.012f, 0.03f), UnityEngine.Random.Range(0.6f, 1.4f), kBlood));
+                Emit(fx.Drops, P(exit + d * 0.01f, bodyVel + (d + Rnd(0.35f)) * UnityEngine.Random.Range(2f, 5f), UnityEngine.Random.Range(0.022f, 0.054f), UnityEngine.Random.Range(0.6f, 1.4f), kBlood));
             Emit(fx.Mist, P(exit, bodyVel + d * 1.5f, 0.14f * Mathf.Sqrt(amount), 0.35f, kBloodMist));
             if (Physics.Raycast(exit + d * 0.05f, d, out var hit, 2.8f, VrWorldMask(), QueryTriggerInteraction.Ignore) && FxCanMark(hit.collider))
                 FxMark(fx.Splat, hit.point, hit.normal, UnityEngine.Random.Range(0.25f, 0.5f) * Mathf.Sqrt(amount), new Color(0.38f, 0.02f, 0.02f, 0.92f), hit.collider);
@@ -176,20 +176,20 @@ public partial class Game
                 {
                     w.NextDrop = now + (OnQuest ? 0.035f : 0.02f);
                     float push = (1f - into / 0.22f) * (1.2f + 3.2f * left * w.Strength) * (w.M.Killed ? 0.6f : 1f);
-                    Emit(fx.Drops, P(p + n * 0.01f, v + (n + Rnd(0.12f)) * push, UnityEngine.Random.Range(0.012f, 0.022f), UnityEngine.Random.Range(0.8f, 1.5f), kBlood));
+                    Emit(fx.Drops, P(p + n * 0.01f, v + (n + Rnd(0.12f)) * push, UnityEngine.Random.Range(0.022f, 0.040f), UnityEngine.Random.Range(0.8f, 1.5f), kBlood));
                 }
                 else if (into >= 0.22f && now >= w.NextDrop)
                 {
                     // between beats: it runs
                     w.NextDrop = now + 0.12f;
-                    Emit(fx.Drops, P(p + n * 0.01f, v + n * 0.25f + Rnd(0.1f), 0.012f, 1.2f, kBlood));
+                    Emit(fx.Drops, P(p + n * 0.01f, v + n * 0.25f + Rnd(0.1f), 0.022f, 1.2f, kBlood));
                 }
             }
             else if (now >= w.NextDrop)
             {
                 // it bleeds: drops, fewer as it goes
                 w.NextDrop = now + Mathf.Lerp(0.6f, 0.14f, left * w.Strength) * UnityEngine.Random.Range(0.7f, 1.3f);
-                Emit(fx.Drops, P(p + n * 0.01f, v + n * 0.2f + Rnd(0.15f), UnityEngine.Random.Range(0.01f, 0.018f), 1.3f, kBlood));
+                Emit(fx.Drops, P(p + n * 0.01f, v + n * 0.2f + Rnd(0.15f), UnityEngine.Random.Range(0.018f, 0.032f), 1.3f, kBlood));
             }
         }
     }
@@ -228,7 +228,7 @@ public partial class Game
                 if (fx.Drops == null) continue;
                 Vector3 at = g.point + Vector3.up * 0.05f;
                 for (int i = 0; i < Mathf.RoundToInt((OnQuest ? 8 : 14) * (0.5f + k)); i++)
-                    Emit(fx.Drops, P(at + Rnd(0.15f), (Vector3.up * 0.8f + Rnd(1f)) * UnityEngine.Random.Range(1f, 3f + 3f * k), UnityEngine.Random.Range(0.012f, 0.03f), UnityEngine.Random.Range(0.5f, 1.1f), kBlood));
+                    Emit(fx.Drops, P(at + Rnd(0.15f), (Vector3.up * 0.8f + Rnd(1f)) * UnityEngine.Random.Range(1f, 3f + 3f * k), UnityEngine.Random.Range(0.022f, 0.054f), UnityEngine.Random.Range(0.5f, 1.1f), kBlood));
                 if (FxCanMark(g.collider))
                     FxMark(fx.Splat, g.point, g.normal, 0.45f + 0.7f * k, new Color(0.36f, 0.02f, 0.02f, 0.92f), g.collider);
                 // and he bleeds a while from where he hit (his head, from high enough)

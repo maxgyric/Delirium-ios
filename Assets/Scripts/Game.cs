@@ -580,6 +580,7 @@ public partial class Game : MonoBehaviour
     void ResetAll()
     {
         Drop();
+        wounds.Clear(); // (their bleeding stops with it)
         foreach (var m in men)
         {
             if (nm.State(m.Body.transform).Ragdolled) nm.GetUp(m.Body.transform, 0.001f);

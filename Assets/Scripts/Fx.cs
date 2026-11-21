@@ -51,7 +51,7 @@ public partial class Game
         fx = new FxSet
         {
             Mist = FxSystem(root, "Blood mist", FxMat(sh, soft, false), 0.15f, OnQuest ? 80 : 200, false, 0f),
-            Drops = FxSystem(root, "Blood drops", FxMat(sh, blob, false), 1f, OnQuest ? 120 : 300, true, 0.004f),
+            Drops = FxSystem(root, "Blood drops", FxMat(sh, blob, false), 1f, OnQuest ? 160 : 400, true, 0.03f),
             Sparks = FxSystem(root, "Sparks", FxMat(sh, blob, true), 0.9f, OnQuest ? 120 : 300, true, 0.006f),
             Dust = FxSystem(root, "Dust", FxMat(sh, soft, false), -0.05f, OnQuest ? 80 : 200, false, 0f),
             Smoke = FxSystem(root, "Gun smoke", FxMat(sh, soft, false), -0.04f, OnQuest ? 60 : 160, false, 0f),
@@ -63,6 +63,7 @@ public partial class Game
         };
         // the drops and shells land; a drop leaves a splat where it does
         FxCollide(fx.Drops, 0.05f, 1f, true);
+        FxSolid(fx.Drops, 1.3f);
         FxCollide(fx.Shell, 0.45f, 0f, false);
         var lgo = new GameObject("Muzzle light");
         lgo.transform.SetParent(root.transform, false);
@@ -168,6 +169,19 @@ public partial class Game
         return ps;
     }
 
+    // a particle that stays whole till it dies (a drop: it goes when it lands), drawn `stretch` times its trail
+    static void FxSolid(ParticleSystem ps, float stretch)
+    {
+        var col = ps.colorOverLifetime;
+        var g = new Gradient();
+        g.SetKeys(new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
+            new[] { new GradientAlphaKey(1f, 0f), new GradientAlphaKey(1f, 0.85f), new GradientAlphaKey(0f, 1f) });
+        col.color = g;
+        var r = ps.GetComponent<ParticleSystemRenderer>();
+        r.lengthScale = stretch;
+        r.minParticleSize = 0f;
+    }
+
     void FxCollide(ParticleSystem ps, float bounce, float lifeLoss, bool tellMe)
     {
         var c = ps.collision;
@@ -196,7 +210,7 @@ public partial class Game
     static void Emit(ParticleSystem ps, ParticleSystem.EmitParams p) { if (ps != null) ps.Emit(p, 1); }
     static Vector3 Rnd(float r) => UnityEngine.Random.insideUnitSphere * r;
 
-    static readonly Color kBlood = new Color(0.42f, 0.02f, 0.02f, 1f), kBloodMist = new Color(0.55f, 0.04f, 0.04f, 0.55f);
+    static readonly Color kBlood = new Color(0.62f, 0.03f, 0.03f, 1f), kBloodMist = new Color(0.55f, 0.04f, 0.04f, 0.45f);
 
     // where something goes into a man, `dir` its way; amount: 1 a pistol's bullet
     void FxBlood(Vector3 at, Vector3 dir, float amount)
@@ -212,7 +226,7 @@ public partial class Game
         {
             // most out the far side, some back toward the shooter
             Vector3 way = (i % 3 == 0 ? -dir * 0.6f : dir) + Rnd(0.55f) + Vector3.up * 0.25f;
-            Emit(fx.Drops, P(at + Rnd(0.02f), way * UnityEngine.Random.Range(1.2f, 4.5f), UnityEngine.Random.Range(0.012f, 0.03f), UnityEngine.Random.Range(0.6f, 1.4f), kBlood));
+            Emit(fx.Drops, P(at + Rnd(0.02f), way * UnityEngine.Random.Range(1.2f, 4.5f), UnityEngine.Random.Range(0.022f, 0.054f), UnityEngine.Random.Range(0.6f, 1.4f), kBlood));
         }
         // the wall behind him
         if (amount >= 0.6f && Physics.Raycast(at + dir * 0.25f, dir, out var hit, 2.8f, VrWorldMask(), QueryTriggerInteraction.Ignore) && FxCanMark(hit.collider))
