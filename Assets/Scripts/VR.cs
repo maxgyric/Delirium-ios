@@ -495,13 +495,18 @@ public partial class Game
 
     static bool AllFilesAccess()
     {
+#if UNITY_ANDROID
         if (Application.platform != RuntimePlatform.Android) return true;
         try { using (var env = new AndroidJavaClass("android.os.Environment")) return env.CallStatic<bool>("isExternalStorageManager"); }
         catch (Exception) { return true; }
+#else
+        return true;
+#endif
     }
 
     static void AskAllFilesAccess()
     {
+#if UNITY_ANDROID
         if (Application.platform != RuntimePlatform.Android) return;
         try
         {
@@ -524,6 +529,7 @@ public partial class Game
             }
         }
         catch (Exception e) { Debug.LogWarning("[Sandbox] all files access: " + e.Message); }
+#endif
     }
 
     void VrBrowse(int what)
