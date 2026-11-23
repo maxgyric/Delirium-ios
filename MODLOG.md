@@ -809,3 +809,7 @@ files (default.xex, the three exported files, the archives) are picked by the la
   back to walking. MeleeStrike: the strike frames passed this frame, the set's points in the world against every
   man's capsules (FxWounds' kParts) + 5 cm: MeleeLands once a man (nm.MeleeHit, 55 + 1.6 dmg, 160 for a finisher /
   takedown; health -2 x dmg, a kill move all; nm.Kill at 0; blood sometimes; Sfx.Punch).
+- Melee fixes: homing to the blow's own reach (the strike set's points' furthest forward x over its strike frames,
+  0.3-1.6 m; + 8 cm: the fist lands just inside his body) instead of the addon's hom[0] (bigger than an arm's
+  length: up close he backed off and swung short); hit tolerance +8 cm; blows softer (25 + 0.8 dmg, finishers /
+  takedowns 85). Punch is its own button on the right (Aim's place, with fists); Fire for guns unchanged.

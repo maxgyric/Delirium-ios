@@ -12,7 +12,7 @@ public partial class Game
 {
     GtaAnim.MeleeMove mel;          // the blow being thrown (null: none)
     Man melTarget;
-    float melT, melYaw, melEnd, melStrikeFrom, melStrikeTo;
+    float melT, melYaw, melEnd, melStrikeFrom, melStrikeTo, melReach;
     bool melQueued, melWasFiring;
     readonly HashSet<Man> melHit = new HashSet<Man>();
 
@@ -101,10 +101,33 @@ public partial class Game
         float last = Mathf.Max(1f, pick.C.Frames - 1);
         melStrikeFrom = s != null ? s[0] / last : 0.3f;
         melStrikeTo = s != null ? (s[0] + s[1] - 1f) / last : 0.45f;
+        melReach = MeleeReach(pick);
         heroNextFire = Time.time + 0.1f;
         act = null;
         Play(Sfx.Jump, heroPos + Vector3.up * 1.3f, 0.4f); // the swing's air
         return true;
+    }
+
+    // how far ahead of his feet the blow's fist (or foot) gets, at its strike's middle: he homes in to stand that far
+    // (less the man's half-width) from the man
+    static float MeleeReach(GtaAnim.MeleeMove m)
+    {
+        var s = m.C.Strike;
+        if (s == null || m.Sb == null || !GtaAnim.MeleeStrikes.TryGetValue(m.Sb, out var set)) return m.Kill ? 0.75f : 0.8f;
+        int n = (int)s[1];
+        float reach = 0f;
+        for (int f = 0; f < n; f++)
+        {
+            int at = 2 + f * 30;
+            if (at + 30 > s.Length) break;
+            foreach (var pr in set)
+            {
+                if (pr.point < 1 || pr.point > 10) continue;
+                float x = s[at + (pr.point - 1) * 3];
+                if (x > reach) reach = x;
+            }
+        }
+        return Mathf.Clamp(reach, 0.3f, 1.6f);
     }
 
     static bool Fits(GtaAnim.MeleeMove m, float d, float a, float facing, bool running)
@@ -219,10 +242,11 @@ public partial class Game
                 melYaw = Mathf.MoveTowardsAngle(melYaw, wantYaw + turnAtStrike, 540f * dt);
                 Vector3 own = GtaAnim.Motion(c, melStrikeFrom) - m;
                 float ownFwd = own.x; // (its own way on to the strike, roughly toward him)
-                float extra = dist - ownFwd - mel.HomDist;
+                // (his body's front: the fist lands just inside it)
+                float extra = dist - ownFwd - (melReach + 0.08f);
                 float left = Mathf.Max(dt, (melStrikeFrom - ph) * c.Dur);
                 float move = Mathf.Clamp(extra * Mathf.Clamp01(dt / left), -mel.HomSpeed * dt, mel.HomSpeed * dt);
-                move = Mathf.Clamp(move, -2.5f * dt, 6f * dt);
+                move = Mathf.Clamp(move, -2.5f * dt, 5f * dt);
                 step += to / dist * move;
             }
         }
@@ -260,7 +284,7 @@ public partial class Game
                 foreach (var m in men)
                 {
                     if (m.Hero || m.Body == null || melHit.Contains(m)) continue;
-                    if (MeleeTouches(m, w, r + 0.05f, out Vector3 on)) MeleeLands(m, on, fwd);
+                    if (MeleeTouches(m, w, r + 0.08f, out Vector3 on)) MeleeLands(m, on, fwd);
                 }
             }
         }
@@ -313,7 +337,7 @@ public partial class Game
         melHit.Add(m);
         var owner = m.Body.transform;
         bool big = mel.Ko != null || mel.Kill;
-        float force = big ? 160f : 55f + mel.Dmg * 1.6f;
+        float force = big ? 85f : 25f + mel.Dmg * 0.8f;
         Vector3 dir = (fwd + Vector3.up * (mel.Ground != null ? -0.2f : 0.15f)).normalized;
         nm.MeleeHit(owner, at, dir * force, hero.Body.Bone("Head").position);
         Attacked(m);

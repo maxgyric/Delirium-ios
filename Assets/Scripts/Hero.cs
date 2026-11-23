@@ -1179,9 +1179,14 @@ public partial class Game
                 else if (useTarget != null && Vector2.Distance(f.Pos, BtnUse(w, h)) < kBtnR + 6f) UseNow(); // a map's button, a door
                 else if (BikeTap(f.Pos, f.Id, w, h)) { } // Ride, Off (Gas and Brake are Jump's and Sprint's places)
                 else if (Vector2.Distance(f.Pos, BtnJump(w, h)) < kBtnR + 6f) { hJumpReq = true; hJumpId = f.Id; }
-                else if (Vector2.Distance(f.Pos, BtnAim(w, h)) < kBtnR + 6f) { if (heroMode == 0 && !kGuns[weapon % kGuns.Length].Fists) heroAim = !heroAim; }
+                else if (Vector2.Distance(f.Pos, BtnAim(w, h)) < kBtnR + 6f)
+                {
+                    // (fists: Punch is here, on the right; a gun: Aim)
+                    if (heroMode == 0 && kGuns[weapon % kGuns.Length].Fists) hFireId = f.Id;
+                    else if (heroMode == 0) heroAim = !heroAim;
+                }
                 else if (Vector2.Distance(f.Pos, BtnDrunk(w, h)) < kBtnR + 6f) { if (heroNoclip) hDownId = f.Id; else ToggleDrunk(); }
-                else if ((heroAim || (kGuns[weapon % kGuns.Length].Fists && heroMode == 0)) && Vector2.Distance(f.Pos, BtnFire(w, h)) < kBtnR + 6f) hFireId = f.Id;
+                else if (heroAim && Vector2.Distance(f.Pos, BtnFire(w, h)) < kBtnR + 6f) hFireId = f.Id;
                 else if (Vector2.Distance(f.Pos, BtnSprint(w, h)) < kBtnR + 6f) hSprintId = f.Id;
                 else if (Vector2.Distance(f.Pos, PadL(w, h)) < kStickR + 45f) hStickId = f.Id;
                 else
@@ -1266,7 +1271,7 @@ public partial class Game
         Disc(BtnSprint(w, h), kBtnR, heroSprint ? lit : knob * new Color(1f, 1f, 1f, 0.6f), "Sprint");
         Disc(BtnJump(w, h), kBtnR, heroNoclip && hJumpId != kNone ? lit : knob * new Color(1f, 1f, 1f, 0.6f), heroNoclip ? "Up" : "Jump");
         if (!fists) Disc(BtnAim(w, h), kBtnR, heroAim ? lit : knob * new Color(1f, 1f, 1f, 0.6f), "Aim");
-        if (fists && heroMode == 0) Disc(BtnFire(w, h), kBtnR, new Color(1f, 0.45f, 0.35f, 0.6f), "Punch");
+        if (fists && heroMode == 0) Disc(BtnAim(w, h), kBtnR, new Color(1f, 0.45f, 0.35f, hFireId != kNone ? 0.85f : 0.6f), "Punch");
         if (useTarget != null && !riding) Disc(BtnUse(w, h), kBtnR, new Color(1f, 0.85f, 0.3f, 0.7f), "Use");
         if (heroNoclip) Disc(BtnDrunk(w, h), kBtnR, hDownId != kNone ? lit : knob * new Color(1f, 1f, 1f, 0.6f), "Down");
         else Disc(BtnDrunk(w, h), kBtnR, heroDrunk ? lit : knob * new Color(1f, 1f, 1f, 0.6f), "Drunk");
