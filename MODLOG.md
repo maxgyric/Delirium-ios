@@ -813,3 +813,22 @@ files (default.xex, the three exported files, the archives) are picked by the la
   0.3-1.6 m; + 8 cm: the fist lands just inside his body) instead of the addon's hom[0] (bigger than an arm's
   length: up close he backed off and swung short); hit tolerance +8 cm; blows softer (25 + 0.8 dmg, finishers /
   takedowns 85). Punch is its own button on the right (Aim's place, with fists); Fire for guns unchanged.
+
+## Hostile men (Bots.cs)
+- "+ Hostile" (the HUD's top row, Scene > People "Add hostile", VR menu): a man (AddMan) with a Bot: on GTA V's clips
+  like the hero (BotsPose in LateUpdate: his clip on his own loop, a quarter-second fade between clips, Apply at his
+  own position/yaw; the get-up / ragdoll pose faded in over 0.35 s after he's back). Mind leaves him alone while
+  he's on clips; once Delirium has him (any hit: ShootWeapon / MeleeHit / Ragdoll take a body that isn't a doll)
+  Mode 1: Mind's ragdoll upkeep, get-up (Rise) -> BotTakeBack; staggered but on his feet 1.8 s -> back.
+- Interact > "Hostile NPC weapon" (and the VR menu's "Hostile: X"): kGuns' (PlayerPrefs delirium.hostileGun), every
+  hostile re-armed; the gun's boxes built by Hero's GunParts (factored out of GunInHand), held in his right hand,
+  pointed at your chest.
+- Fists: runs (> 5 m) / walks at you, in 2.4 m and ready: HeroMelee's choice (targeted, no heavy, no takedowns,
+  finishers under 60 health; ground blows when you're down), homing to the blow's reach, 55% chains on (branch);
+  strike points vs your capsules: nm.MeleeHit (30 + 0.8 dmg, 85 finishers), health -1.5 dmg, blood sometimes.
+- Gun: keeps 4.5-13 m (walks in, backs off facing you; strafe clips sideways/back, GTA V's aim idle standing),
+  fires when facing you (bursts of 3-6 for SMG/AK, single shots 0.9-2 s apart), spread 0.8-3.5 deg; FxMuzzle,
+  PlayGunOf; the line vs your capsules (FxOnBody) unless the map is first: ShootWith(you) (Delirium ragdolls you,
+  health), FxBullet with his gun.
+- VR in your own eyes (vrOn, !vrThird, heroMode 0): their blows and bullets don't land (sound/fx only).
+- Refactors: PlayGunOf(gun), ShootWith(man, ray, gun), FxBullet(ray, struck, gun = null), GunParts(name).

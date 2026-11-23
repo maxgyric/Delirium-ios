@@ -1034,8 +1034,38 @@ public partial class Game
             matGun = Mat(new Color(0.13f, 0.13f, 0.15f));
             matWood = Mat(new Color(0.45f, 0.27f, 0.13f));
         }
+        gunMuzzle = new Vector3(GunParts(kGuns[k].Name), 0.035f, 0f);
+        GunAim();
+    }
+
+    // The gun in his hand, its barrel where it should point: at what the camera's on while he aims, along his
+    // forearm while he carries it (worked out in the world: the hand bone's own roll doesn't matter).
+    void GunAim()
+    {
+        var body = hero.Body;
+        Transform hand = body.Bone("RightHand"), fore = body.Bone("RightForeArm");
+        Vector3 carry = (hand.position - fore.position).normalized;
+        Vector3 dir = carry;
+        if (heroMode == 0 && hUpper > 0f)
+        {
+            Vector3 aimed = (cam.transform.position + cam.transform.forward * 60f - hand.position).normalized;
+            dir = Vector3.Slerp(carry, aimed, hUpper).normalized;
+        }
+        Vector3 up = Mathf.Abs(Vector3.Dot(dir, Vector3.up)) > 0.95f ? body.transform.forward : Vector3.up;
+        var turn = Quaternion.LookRotation(dir, up) * Quaternion.Euler(0f, -90f, 0f); // the gun's +X is its barrel
+        gunModel.transform.SetPositionAndRotation(hand.position + dir * 0.06f - turn * Vector3.up * 0.01f, turn);
+    }
+
+    // its boxes, into gunModel (+X its barrel, +Y its top, the grip at the origin): its length
+    float GunParts(string name)
+    {
+        if (matGun == null)
+        {
+            matGun = Mat(new Color(0.13f, 0.13f, 0.15f));
+            matWood = Mat(new Color(0.45f, 0.27f, 0.13f));
+        }
         float len = 0.2f;
-        switch (kGuns[k].Name)
+        switch (name)
         {
             case "pistol":
                 Part(0.05f, 0.03f, 0.17f, 0.034f, 0.026f, matGun);
@@ -1079,26 +1109,7 @@ public partial class Game
                 len = 0.88f;
                 break;
         }
-        gunMuzzle = new Vector3(len, 0.035f, 0f);
-        GunAim();
-    }
-
-    // The gun in his hand, its barrel where it should point: at what the camera's on while he aims, along his
-    // forearm while he carries it (worked out in the world: the hand bone's own roll doesn't matter).
-    void GunAim()
-    {
-        var body = hero.Body;
-        Transform hand = body.Bone("RightHand"), fore = body.Bone("RightForeArm");
-        Vector3 carry = (hand.position - fore.position).normalized;
-        Vector3 dir = carry;
-        if (heroMode == 0 && hUpper > 0f)
-        {
-            Vector3 aimed = (cam.transform.position + cam.transform.forward * 60f - hand.position).normalized;
-            dir = Vector3.Slerp(carry, aimed, hUpper).normalized;
-        }
-        Vector3 up = Mathf.Abs(Vector3.Dot(dir, Vector3.up)) > 0.95f ? body.transform.forward : Vector3.up;
-        var turn = Quaternion.LookRotation(dir, up) * Quaternion.Euler(0f, -90f, 0f); // the gun's +X is its barrel
-        gunModel.transform.SetPositionAndRotation(hand.position + dir * 0.06f - turn * Vector3.up * 0.01f, turn);
+        return len;
     }
 
     Material matGun, matWood;

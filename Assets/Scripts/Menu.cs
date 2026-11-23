@@ -308,6 +308,7 @@ public partial class Game
         GUILayout.BeginHorizontal();
         if (GUILayout.Button("Add one", btn, GUILayout.Height(34f))) AddMan();
         if (GUILayout.Button("Add 4", btn, GUILayout.Height(34f))) for (int i = 0; i < 4; i++) AddMan();
+        if (GUILayout.Button("Add hostile", btn, GUILayout.Height(34f))) AddHostile();
         if (GUILayout.Button("Remove others", btn, GUILayout.Height(34f)))
         {
             Drop();
@@ -512,6 +513,11 @@ public partial class Game
         int wpn = Grid(weaponLabels, 3, weapon % weapons.Length);
         if (wpn >= 0) { weapon = wpn; tool = Tool.Shoot; }
         if (heroOn) Info("The hero holds it: Aim, then Fire. Fists: Punch.");
+
+        Head("Hostile NPC weapon");
+        int hw = Grid(weaponLabels, 3, hostileWeapon % weapons.Length);
+        if (hw >= 0) { hostileWeapon = hw; PlayerPrefs.SetInt(kPrefHostileGun, hw); foreach (var b in bots) BotArm(b, hw); }
+        Info("What the hostile men carry (\"+ Hostile\"): fists fight GTA V's way, a gun shoots at you from a distance.");
 
         float gp = Slide("Gun push", gunPush, 0.2f, 3f, "x");
         if (Mathf.Abs(gp - gunPush) > 0.01f) { gunPush = gp; LoadGuns(); }

@@ -125,10 +125,12 @@ public partial class Game
         s.PlayOneShot(sfx[(int)what], Mathf.Clamp01(v));
     }
 
-    void PlayGun(Vector3 at)
+    void PlayGun(Vector3 at) => PlayGunOf(kGuns[weapon % kGuns.Length], at);
+
+    void PlayGunOf(Gun gun, Vector3 at)
     {
         Sfx s;
-        switch (kGuns[weapon % kGuns.Length].Name)
+        switch (gun.Name)
         {
             case "pistol": s = Sfx.Pistol; break;
             case "deagle": s = Sfx.Deagle; break;

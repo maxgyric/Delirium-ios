@@ -256,6 +256,7 @@ public partial class Game : MonoBehaviour
         public float FireLeft;       // seconds still burning
         public float FireTick;       // till his health is next told to the reaction
         public bool Hero;            // the one you play (Hero.cs)
+        public Bot BotOf;            // a hostile man: his clips and his mind (Bots.cs)
         public float FlinchUntil;    // a near miss's flinch and look end then
         public float AttackerUntil;  // the hero is his attacker till then (Hero.Attacked)
         public float AttackerTick;
@@ -312,10 +313,11 @@ public partial class Game : MonoBehaviour
     };
 
     // A shot of the gun in hand at `m` along `ray` (from the camera): his reaction, and his health.
-    void Shoot(Man m, Ray ray)
+    void Shoot(Man m, Ray ray) => ShootWith(m, ray, kGuns[weapon % kGuns.Length]);
+
+    void ShootWith(Man m, Ray ray, Gun gun)
     {
         var owner = m.Body.transform;
-        var gun = kGuns[weapon % kGuns.Length];
         if (gun.Pellets)
         {
             int hits = nm.Shotgun(owner, ray.origin, ray.direction, gun.Name, god ? 200f : m.Health);
@@ -512,6 +514,7 @@ public partial class Game : MonoBehaviour
     {
         if (m == null || m.Hero) return;
         if (held == m) Drop();
+        if (m.BotOf != null) BotGone(m.BotOf);
         try { nm?.Unleash(m.Body.transform, -1); } catch (Exception) { }
         if (m.Body != null) Destroy(m.Body.gameObject);
         men.Remove(m);
@@ -581,6 +584,7 @@ public partial class Game : MonoBehaviour
     {
         Drop();
         wounds.Clear(); // (their bleeding stops with it)
+        foreach (var b in bots) BotReset(b);
         foreach (var m in men)
         {
             if (nm.State(m.Body.transform).Ragdolled) nm.GetUp(m.Body.transform, 0.001f);
@@ -605,6 +609,7 @@ public partial class Game : MonoBehaviour
         foreach (var m in men) Mind(m, dt);
         EntsUpdate(dt); // (a GMod map's doors, lifts, trains, timers: before the hero, who rides them)
         if (heroOn) { HeroUpdate(dt); BikeUpdate(dt); }
+        BotsUpdate(dt);
         else Pointer();
         GtaSoundsUpdate();
         BikeAudio(dt);
@@ -629,6 +634,12 @@ public partial class Game : MonoBehaviour
         if (m.Rising || m.Broken || (m.Hero && riding)) { m.VelSet = false; return; } // (riding: his pose is the bike's)
         var owner = m.Body.transform;
         var st = nm.State(owner);
+        if (m.BotOf != null && m.BotOf.Mode == 0)
+        {
+            if (!st.Ragdolled) { m.VelSet = false; return; } // on his clips (Bots.cs)
+            m.BotOf.Mode = 1;                // hit: Delirium has him
+            m.BotOf.Mel = null;
+        }
         if (m.Hero && heroMode == 0)
         {
             if (!st.Ragdolled) { m.VelSet = false; return; } // on his clips
@@ -878,9 +889,11 @@ public partial class Game : MonoBehaviour
                     hips.SetPositionAndRotation(hp, hr);
                 }
                 if (m.Hero) HeroUp();
+                else if (m.BotOf != null) BotTakeBack(m.BotOf);
                 else if (nm.Ragdoll(m.Body.transform, Vector3.zero)) Outfit(m);
             }
         }
+        BotsPose(); // (the hostile men on their clips)
         if (heroOn)
         {
             BikePose();
@@ -1152,6 +1165,7 @@ public partial class Game : MonoBehaviour
         topX = 8f;
         if (Button("Reset", 80f)) ResetAll();
         if (Button("+ Man (" + men.Count + ")", 110f)) AddMan();
+        if (Button("+ Hostile", 110f)) AddHostile();
         if (Button(GtaAnim.State == 1 ? "Hero (loading)" : "Add hero", 130f)) AddHero();
         if (Button(speed < 1f ? "Slow-mo: on" : "Slow-mo: off", 130f)) SetSpeed(speed < 1f ? 1f : 0.25f);
         if (tool == Tool.Shoot && Button("Gun: " + weaponLabels[weapon % weaponLabels.Length], 170f)) weapon = (weapon + 1) % weapons.Length;

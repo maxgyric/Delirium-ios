@@ -309,9 +309,9 @@ public partial class Game
     // ------------------------------------------------------------------ a bullet's way (every shot: Missed is called for each)
     // the man struck (his nearest part to the line), else the first thing of the map on it; the tracer from the
     // muzzle if one was just fired; a shotgun's pellets fanned out
-    void FxBullet(Ray ray, Man struck)
+    void FxBullet(Ray ray, Man struck, Gun shotWith = null)
     {
-        var gun = kGuns[weapon % kGuns.Length];
+        var gun = shotWith ?? kGuns[weapon % kGuns.Length];
         if (gun.Fists) return;
         bool muzzle = fxMuzzleFrame == Time.frameCount;
         int pellets = gun.Pellets ? (OnQuest ? 5 : 8) : 1;
