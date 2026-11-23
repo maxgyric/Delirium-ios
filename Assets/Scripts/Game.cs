@@ -609,8 +609,8 @@ public partial class Game : MonoBehaviour
         foreach (var m in men) Mind(m, dt);
         EntsUpdate(dt); // (a GMod map's doors, lifts, trains, timers: before the hero, who rides them)
         if (heroOn) { HeroUpdate(dt); BikeUpdate(dt); }
-        BotsUpdate(dt);
         else Pointer();
+        BotsUpdate(dt); // (the hostile men: Bots.cs)
         GtaSoundsUpdate();
         BikeAudio(dt);
         for (int i = flashes.Count - 1; i >= 0; i--)
