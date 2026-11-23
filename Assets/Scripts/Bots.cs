@@ -9,7 +9,7 @@ using UnityEngine;
 
 public partial class Game
 {
-    public class Bot
+    class Bot
     {
         public Man M;
         public int Gun;              // kGuns'
