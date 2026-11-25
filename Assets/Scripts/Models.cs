@@ -276,6 +276,7 @@ public partial class Game
     {
         Debug.Log("[Sandbox] map " + mapName + " freed (memory " + Mem() + ")");
         FxClearMarks(); // (the bullet holes and the blood on it)
+        ClearSwings(); // (and what was put on it)
         // the meshes its renderers draw: its own and the batches made of them (not freed with their objects)
         var meshes = new HashSet<Mesh>();
         foreach (var mf in mapRoot.GetComponentsInChildren<MeshFilter>(true))

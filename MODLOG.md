@@ -832,3 +832,15 @@ files (default.xex, the three exported files, the archives) are picked by the la
   health), FxBullet with his gun.
 - VR in your own eyes (vrOn, !vrThird, heroMode 0): their blows and bullets don't land (sound/fx only).
 - Refactors: PlayGunOf(gun), ShootWith(man, ray, gun), FxBullet(ray, struck, gun = null), GunParts(name).
+
+## Objects: GTA IV's swingset glitch (Objects.cs)
+- Menu > Objects (new tab, index 10) and the VR menu: "Put a swingset here" (where you look, facing you; 8 at most),
+  remove them, Fling power. Built of primitives: three A-frames (the middle pole red), a top bar, two seats on
+  chains on HingeJoints to the frame's kinematic body (they swing).
+- SwingsUpdate: what's in its zone (local bounds round the frame): men (hips; the hero by heroPos on his clips;
+  not while riding), the bike (ridden, parked, wreck), loose rigidbodies. Each one's leaning time vs its own wait
+  (0.25-1.5 s, random): the seats thrash (torques) and the frame rattles (Sfx.Impact) meanwhile; then Fling: away
+  from the swing +-40 deg, 35-70 deg up, 22-42 m/s x power, random spin; men: nm.Explode from 1.2 m under/behind
+  (the hero: off his clips first, Knock, heroRb velocity); the bike: BikeCrash (rider over the bars) or BikeFall,
+  the wreck given the velocity; loose bodies: velocity (less for heavy ones). 2 s rest per thing. Cleared with the
+  map (FreeMapNow).

@@ -341,7 +341,7 @@ public partial class Game
         for (int i = vrMenu.childCount - 1; i >= 0; i--) Destroy(vrMenu.GetChild(i).gameObject);
         if (vrFont == null) vrFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         if (vrPanelMat == null) { vrPanelMat = Mat(new Color(0.08f, 0.09f, 0.12f)); vrBtnMat = Mat(new Color(0.22f, 0.25f, 0.32f)); vrBtnLit = Mat(new Color(0.35f, 0.55f, 0.9f)); }
-        const float W = 0.56f, H = 0.7f;
+        const float W = 0.56f, H = 0.77f;
         var back = GameObject.CreatePrimitive(PrimitiveType.Quad);
         Destroy(back.GetComponent<Collider>());
         back.transform.SetParent(vrMenu, false);
@@ -376,6 +376,9 @@ public partial class Game
                 y -= 0.07f;
                 VrBtn("+ Hostile", -0.13f, y, 0.24f, () => AddHostile());
                 VrBtn("Hostile: " + kGuns[hostileWeapon % kGuns.Length].Label, 0.13f, y, 0.24f, () => { hostileWeapon = (hostileWeapon + 1) % kGuns.Length; PlayerPrefs.SetInt(kPrefHostileGun, hostileWeapon); foreach (var b in bots) BotArm(b, hostileWeapon); VrMenuBuild(); });
+                y -= 0.07f;
+                VrBtn("+ Swingset", -0.13f, y, 0.24f, () => AddSwing());
+                VrBtn("Remove swings", 0.13f, y, 0.24f, () => ClearSwings());
                 y -= 0.07f;
                 VrBtn("Slow-mo", -0.13f, y, 0.24f, () => SetSpeed(speed < 1f ? 1f : 0.25f));
                 VrBtn("Default map", 0.13f, y, 0.24f, () => { DefaultMap(); PlayerPrefs.DeleteKey(kPrefMap); });

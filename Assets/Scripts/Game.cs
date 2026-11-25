@@ -611,6 +611,7 @@ public partial class Game : MonoBehaviour
         if (heroOn) { HeroUpdate(dt); BikeUpdate(dt); }
         else Pointer();
         BotsUpdate(dt); // (the hostile men: Bots.cs)
+        SwingsUpdate(dt); // (GTA IV's swingsets: Objects.cs)
         GtaSoundsUpdate();
         BikeAudio(dt);
         for (int i = flashes.Count - 1; i >= 0; i--)

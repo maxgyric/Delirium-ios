@@ -30,7 +30,7 @@ public partial class Game
     string consoleLine = "";
     readonly List<string> consoleLog = new List<string>();
 
-    static readonly string[] kTabs = { "Scene", "Character", "Reactions", "Parameters", "Interact", "Inspect", "Console", "Files", "Settings", "Help" };
+    static readonly string[] kTabs = { "Scene", "Character", "Reactions", "Parameters", "Interact", "Inspect", "Console", "Files", "Settings", "Help", "Objects" };
     static readonly string[] kBodies = { "Fitted", "Small", "Average", "Large", "Lanky", "Fat", "Stocky", "Waddler", "Guard", "Brute", "Brawler", "Bruiser", "Random" };
     static readonly string[] kReactions =
     {
@@ -263,6 +263,7 @@ public partial class Game
                 case 6: ConsoleTab(m); break;
                 case 7: FilesTab(); break;
                 case 8: SettingsTab(); break;
+                case 10: ObjectsTab(); break;
                 default: HelpTab(); break;
             }
         GUILayout.EndScrollView();
