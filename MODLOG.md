@@ -844,3 +844,8 @@ files (default.xex, the three exported files, the archives) are picked by the la
   (the hero: off his clips first, Knock, heroRb velocity); the bike: BikeCrash (rider over the bars) or BikeFall,
   the wreck given the velocity; loose bodies: velocity (less for heavy ones). 2 s rest per thing. Cleared with the
   map (FreeMapNow).
+- Hostile men, round 2: they climb as the hero does (BotTryClimb: HeroClimb's probes, ledge top, PickClimb's
+  clips blended by height, the climb's own way and rise scaled; tried every 0.2 s while moving; no vaults: they
+  climb on and walk off); always GTA V's sprint, not the run (Move[3]); with fists near you (8 m) and standing:
+  GTA V's melee stance (a named idle loop in D.melee or one of GTA V's names; else the intro's end; else a blow's
+  start, held), the pose their blows start and end in. Non-looping previous clips are no longer wrapped in fades.

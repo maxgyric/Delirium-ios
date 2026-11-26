@@ -18,6 +18,12 @@ public partial class Game
         public float Yaw, VelY;
         public GtaAnim.Clip Cur, Prev;
         public float Phase, PrevPhase, Fade;
+        public bool Hold;            // Cur held at Phase (a stance), not looped
+        // climbing (HeroClimb's way): the clips (blended), how far along, where from, its line, its rise's scale
+        public GtaAnim.Clip ClA, ClB;
+        public float ClW, ClT, ClBase, ClTurn, ClShift, ClKz, ClTop, ClTry;
+        public Vector3 ClOrigin;
+        public bool Climbing;
         // a blow
         public GtaAnim.MeleeMove Mel;
         public float MelT, MelYaw, StrikeFrom, StrikeTo, Reach, MelEnd;
@@ -84,6 +90,7 @@ public partial class Game
         b.Vel = Vector3.zero;
         b.VelY = 0f;
         b.Mel = null;
+        b.Climbing = false;
         b.Cur = b.Prev = null;
         b.Hand = false;
         b.NextAct = Time.time + 1f;
@@ -107,6 +114,7 @@ public partial class Game
         b.Vel = Vector3.zero;
         b.VelY = 0f;
         b.Mel = null;
+        b.Climbing = false;
         b.Knocked = 0f;
         b.Cur = b.Prev = null;
         b.NextAct = Time.time + 0.6f;
@@ -150,7 +158,10 @@ public partial class Game
         Vector3 want = Vector3.zero;
         float faceYaw = b.Yaw;
         float walk = GtaAnim.Move[1].Ok ? GtaAnim.Move[1].Speed : 1.5f, run = GtaAnim.Move[2].Ok ? GtaAnim.Move[2].Speed : 3.6f;
+        if (b.Climbing) { BotClimbUpdate(b, dt); return; }
         if (b.Mel != null) { BotMelee(b, t, dt); BotMove(b, dt); return; }
+        // (always sprinting when he runs: GTA V's sprint)
+        if (GtaAnim.Move.Length > 3 && GtaAnim.Move[3] != null && GtaAnim.Move[3].Ok) run = GtaAnim.Move[3].Speed;
         if (t != null)
         {
             Vector3 to = Where(t) - b.Pos;
@@ -162,7 +173,7 @@ public partial class Game
             {
                 // closing in (running from afar), then a blow when he's in reach and ready
                 float reachIn = 1.6f;
-                if (d > reachIn) want = dir * (d > 5f ? run : walk);
+                if (d > reachIn) want = dir * (d > 3f ? run : walk);
                 if (d < 2.4f && Time.time >= b.NextAct && GtaAnim.Melee && BotStartMelee(b, t, null)) { BotMove(b, dt); return; }
             }
             else
@@ -175,25 +186,49 @@ public partial class Game
         }
         b.Vel = Vector3.MoveTowards(b.Vel, want, 8f * dt);
         b.Yaw = Mathf.MoveTowardsAngle(b.Yaw, faceYaw, 360f * dt);
+        // in his way: something he can climb (a ledge, a wall, a fence: up it, as you do)
+        if (want.sqrMagnitude > 0.5f && Time.time >= b.ClTry)
+        {
+            b.ClTry = Time.time + 0.2f;
+            if (BotTryClimb(b, want.normalized)) return;
+        }
         BotMove(b, dt);
         // his clip: a gun held up (GTA V's aim idle) standing, else his walk or run by his speed (a gun: backing off
         // is the same walk, he faces you)
         float sp = new Vector3(b.Vel.x, 0f, b.Vel.z).magnitude;
         GtaAnim.Clip c;
+        bool near = t != null && (Where(t) - b.Pos).magnitude < 8f;
+        if (sp < 0.3f && gun.Fists && near && GtaAnim.MeleeStance != null && GtaAnim.MeleeStance.Ok)
+        {
+            // up in his guard, ready (the same stance his blows start and end in: no snapping between them)
+            if (GtaAnim.MeleeStanceLoops) BotPlay(b, GtaAnim.MeleeStance, 1f, dt);
+            else BotHold(b, GtaAnim.MeleeStance, GtaAnim.MeleeStancePhase, dt);
+            return;
+        }
         if (sp < 0.3f) c = !gun.Fists && GtaAnim.StrafeIdle != null && GtaAnim.StrafeIdle.Ok ? GtaAnim.StrafeIdle : GtaAnim.Move[0];
         else
         {
             float a = -Vector3.SignedAngle(Quaternion.Euler(0f, b.Yaw, 0f) * Vector3.forward, b.Vel, Vector3.up);
             int sector = (Mathf.RoundToInt(a / 45f) + 8) % 8;
-            c = sector != 0 && GtaAnim.Strafe[0, sector] != null && GtaAnim.Strafe[0, sector].Ok ? GtaAnim.Strafe[0, sector] : sp > (walk + run) * 0.5f ? GtaAnim.Move[2] : GtaAnim.Move[1];
+            var fast = GtaAnim.Move.Length > 3 && GtaAnim.Move[3] != null && GtaAnim.Move[3].Ok ? GtaAnim.Move[3] : GtaAnim.Move[2];
+            c = sector != 0 && GtaAnim.Strafe[0, sector] != null && GtaAnim.Strafe[0, sector].Ok ? GtaAnim.Strafe[0, sector] : sp > (walk + run) * 0.5f ? fast : GtaAnim.Move[1];
         }
         BotPlay(b, c, c != null && c.Speed > 0.1f && sp > 0.3f ? sp / c.Speed : 1f, dt);
+    }
+
+    // a clip held at one pose (a stance)
+    void BotHold(Bot b, GtaAnim.Clip c, float phase, float dt)
+    {
+        BotPlay(b, c, 0f, dt);
+        b.Hold = true;
+        b.Phase = Mathf.Clamp(phase, 0f, 0.999f);
     }
 
     // a clip on its loop (a new one faded in over a quarter second)
     void BotPlay(Bot b, GtaAnim.Clip c, float rate, float dt)
     {
         if (c == null || !c.Ok) return;
+        b.Hold = false;
         if (c != b.Cur)
         {
             b.Prev = b.Cur;
@@ -204,7 +239,7 @@ public partial class Game
         }
         b.Phase += dt * rate / Mathf.Max(0.05f, c.Dur);
         if (b.Phase > 1f) b.Phase -= Mathf.Floor(b.Phase);
-        if (b.Prev != null) b.PrevPhase = (b.PrevPhase + dt / Mathf.Max(0.05f, b.Prev.Dur)) % 1f;
+        if (b.Prev != null && b.Prev.Cycle) b.PrevPhase = (b.PrevPhase + dt / Mathf.Max(0.05f, b.Prev.Dur)) % 1f;
         b.Fade = Mathf.Max(0f, b.Fade - dt / 0.25f);
     }
 
@@ -423,12 +458,20 @@ public partial class Game
         foreach (var b in bots)
         {
             var m = b.M;
-            if (b.Mode != 0 || m.Body == null || m.Rising || m.Killed || m.Broken || b.Cur == null) { if (b.GunGo != null && (m.Killed || b.Mode != 0)) BotGunCarry(b, null); continue; }
+            if (b.Mode != 0 || m.Body == null || m.Rising || m.Killed || m.Broken || (b.Cur == null && !b.Climbing)) { if (b.GunGo != null && (m.Killed || b.Mode != 0)) BotGunCarry(b, null); continue; }
             var body = m.Body;
             body.transform.SetPositionAndRotation(b.Pos, Quaternion.Euler(0f, b.Yaw, 0f));
-            float ph = b.Mel != null ? b.Phase : GtaAnim.At(b.Cur, b.Phase);
-            if (!GtaAnim.Pose(b.Cur, ph, bA)) continue;
-            if (b.Fade > 0f && b.Prev != null && GtaAnim.Pose(b.Prev, GtaAnim.At(b.Prev, b.PrevPhase), bC)) GtaAnim.Blend(bA, bC, b.Fade);
+            float ph = b.Mel != null || b.Hold ? b.Phase : GtaAnim.At(b.Cur, b.Phase);
+            if (b.Climbing)
+            {
+                // the climb's two clips, blended for the ledge's height
+                float u = Mathf.Clamp01(b.ClT / b.ClA.Dur);
+                if (!GtaAnim.Pose(b.ClA, u, bA)) continue;
+                if (b.ClB != null && b.ClW > 0f && GtaAnim.Pose(b.ClB, u, bB)) GtaAnim.Blend(bA, bB, 1f - b.ClW);
+                if (b.Fade > 0f && b.Prev != null && GtaAnim.Pose(b.Prev, b.Prev.Cycle ? GtaAnim.At(b.Prev, b.PrevPhase) : b.PrevPhase, bC)) GtaAnim.Blend(bA, bC, b.Fade);
+            }
+            else if (!GtaAnim.Pose(b.Cur, ph, bA)) continue;
+            else if (b.Fade > 0f && b.Prev != null && GtaAnim.Pose(b.Prev, b.Prev.Cycle ? GtaAnim.At(b.Prev, b.PrevPhase) : b.PrevPhase, bC)) GtaAnim.Blend(bA, bC, b.Fade);
             body.Apply(bA, b.Pos, b.Yaw);
             if (b.Hand)
             {
@@ -464,5 +507,92 @@ public partial class Game
         Vector3 up = Mathf.Abs(Vector3.Dot(dir, Vector3.up)) > 0.95f ? body.transform.forward : Vector3.up;
         var turn = Quaternion.LookRotation(dir, up) * Quaternion.Euler(0f, -90f, 0f);
         b.GunGo.transform.SetPositionAndRotation(hand.position + dir * 0.06f - turn * Vector3.up * 0.01f, turn);
+    }
+
+    // ------------------------------------------------------------------ climbing (HeroClimb's ledge finding and clips)
+    bool BotTryClimb(Bot b, Vector3 fwd)
+    {
+        if (!GtaAnim.V || GtaAnim.VClimb.Count == 0) return false;
+        float speed = new Vector3(b.Vel.x, 0f, b.Vel.z).magnitude;
+        float range = 0.25f + (speed > 1.5f ? 1.12f : 0.61f);
+        float hitD = float.MaxValue;
+        Vector3 hitP = Vector3.zero, n = Vector3.zero;
+        foreach (float hz in kProbes)
+            if (Physics.Raycast(b.Pos + Vector3.up * hz, fwd, out var hit, range, VrWorldMask(), QueryTriggerInteraction.Ignore)
+                && hit.collider.attachedRigidbody == null && Mathf.Abs(hit.normal.y) < 0.3f && hit.distance < hitD)
+            {
+                hitD = hit.distance;
+                hitP = hit.point;
+                n = hit.normal;
+            }
+        if (hitD == float.MaxValue) return false;
+        Vector3 nf = new Vector3(n.x, 0f, n.z).normalized;
+        float facing = -Vector3.Dot(nf, fwd);
+        if (facing < Mathf.Cos(50f * Mathf.Deg2Rad)) return false;
+        Vector3 into = -nf;
+        float wallYaw = Mathf.Atan2(into.x, into.z) * Mathf.Rad2Deg;
+        float d = hitD * facing;
+        Vector3 p = hitP + into * 0.13f;
+        p.y = b.Pos.y + kClimbMax + 0.05f;
+        if (Physics.CheckSphere(p, 0.1f, VrWorldMask(), QueryTriggerInteraction.Ignore)) return false;
+        if (!Physics.SphereCast(p, 0.1f, Vector3.down, out var top, kClimbMax + 0.05f - kClimbMin + 0.05f, VrWorldMask(), QueryTriggerInteraction.Ignore) || top.normal.y < 0.7f) return false;
+        float topY = top.point.y, h = topY - b.Pos.y;
+        if (h < kClimbMin || h > kClimbMax) return false;
+        // (a wall to stand on: not a thin one to vault; over a fence he just climbs on and walks off)
+        if (!PickClimb(h, d, speed, false, Random.value < 0.5f, out var a, out var bb, out float w, out bool run)) return false;
+        float reach = Mathf.Lerp(Reach(a), Reach(bb ?? a), w);
+        float zend = Mathf.Lerp(RiseEnd(a), RiseEnd(bb ?? a), w);
+        if (zend < 0.1f) return false;
+        if (Physics.SphereCast(b.Pos + Vector3.up * 0.5f, 0.2f, Vector3.up, out _, h + 1.35f, VrWorldMask(), QueryTriggerInteraction.Ignore)) return false;
+        b.ClA = a;
+        b.ClB = bb;
+        b.ClW = w;
+        b.ClT = 0f;
+        b.ClOrigin = b.Pos;
+        b.ClBase = wallYaw;
+        b.ClTurn = Mathf.DeltaAngle(wallYaw, b.Yaw);
+        b.ClShift = d - reach;
+        b.ClKz = h / zend;
+        b.ClTop = topY;
+        b.Climbing = true;
+        b.Prev = b.Cur;
+        b.PrevPhase = b.Phase;
+        b.Fade = b.Prev != null ? 1f : 0f;
+        b.Cur = null;
+        b.Vel = Vector3.zero;
+        b.VelY = 0f;
+        Play(Sfx.Jump, b.Pos, 0.5f);
+        return true;
+    }
+
+    void BotClimbUpdate(Bot b, float dt)
+    {
+        b.ClT += dt;
+        b.Fade = Mathf.Max(0f, b.Fade - dt / 0.15f);
+        if (b.Prev != null && b.Prev.Cycle) b.PrevPhase = (b.PrevPhase + dt / Mathf.Max(0.05f, b.Prev.Dur)) % 1f;
+        float u = Mathf.Clamp01(b.ClT / b.ClA.Dur);
+        Vector3 m = GtaAnim.Motion(b.ClA, u);
+        float z = GtaAnim.Rise(b.ClA, u);
+        if (b.ClB != null && b.ClW > 0f)
+        {
+            m = Vector3.Lerp(m, GtaAnim.Motion(b.ClB, u), b.ClW);
+            z = Mathf.Lerp(z, GtaAnim.Rise(b.ClB, u), b.ClW);
+        }
+        float al = Smooth(u / kAlign);
+        b.Pos = b.ClOrigin + Quaternion.Euler(0f, b.ClBase, 0f) * new Vector3(-m.y, 0f, m.x + b.ClShift * al) + Vector3.up * z * b.ClKz;
+        b.Yaw = b.ClBase + b.ClTurn * (1f - al);
+        if (u >= 1f)
+        {
+            // up: on his way again (his clips fade back in from the climb's end)
+            b.Climbing = false;
+            b.Pos.y = b.ClTop;
+            b.Prev = b.ClA;
+            b.PrevPhase = 0.999f;
+            b.Fade = 1f;
+            b.Cur = GtaAnim.Move[0];
+            b.Phase = 0f;
+            b.NextAct = Time.time + 0.2f;
+            Play(Sfx.Step, b.Pos, 0.5f);
+        }
     }
 }

@@ -640,6 +640,7 @@ public partial class Game : MonoBehaviour
             if (!st.Ragdolled) { m.VelSet = false; return; } // on his clips (Bots.cs)
             m.BotOf.Mode = 1;                // hit: Delirium has him
             m.BotOf.Mel = null;
+            m.BotOf.Climbing = false;
         }
         if (m.Hero && heroMode == 0)
         {

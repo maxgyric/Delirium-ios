@@ -29,6 +29,12 @@ public static partial class GtaAnim
     public static readonly Dictionary<string, string[]> MeleeBranches = new Dictionary<string, string[]>();
     // a strike set: its points (1..10) and each one's reach (m)
     public static readonly Dictionary<string, (int point, float r)[]> MeleeStrikes = new Dictionary<string, (int, float)[]>();
+    // other named clips of it ("intro", "idle"...: by their names), and the fighting stance found among them: a loop
+    // to hold (StanceLoops), else one pose of a clip (its phase StancePhase)
+    public static readonly Dictionary<string, MeleeMove> MeleeNamed = new Dictionary<string, MeleeMove>();
+    public static Clip MeleeStance;
+    public static float MeleeStancePhase;
+    public static bool MeleeStanceLoops;
     public static bool Melee => MeleeTargeted.Count > 0 || MeleeNoTarget.Count > 0;
 
     static readonly Regex kField = new Regex(@"(\w+)\s*=\s*(""[^""]*""|\{[^{}]*\}|-?[\d.]+|true|false)");
@@ -122,11 +128,26 @@ public static partial class GtaAnim
             m.C = c;
             if (!m.Ok) continue;
             if (m.Id == null) m.Id = key ?? m.ClipName;
+            if (key != null && !MeleeNamed.ContainsKey(key)) MeleeNamed[key] = m;
             if (section == "no_target" && key != null) MeleeNoTarget[key] = m;
             else if (section == "targeted") MeleeTargeted.Add(m);
             else if (section == "combo") MeleeCombo.Add(m);
             else if (section == "ground" && sub == "moves") MeleeGround.Add(m);
         }
+        string stanceName = "";
+        // the stance: an idle loop if there's one (named, or one of GTA V's names for it), else the intro's end (he's
+        // up in his guard), else where a blow starts from
+        foreach (var k in new[] { "idle", "stance", "base", "loop" })
+            if (MeleeNamed.TryGetValue(k, out var nm) && nm.Ok) { MeleeStance = nm.C; MeleeStanceLoops = true; stanceName = nm.ClipName; break; }
+        if (MeleeStance == null)
+            foreach (var n in new[] { "melee_idle", "melee_base_idle", "melee_unarmed_idle", "melee_idle_a", "melee_idle_base", "meleev_idle" })
+            {
+                var c = GetV("gtgl_male_move_" + n, true);
+                if (c != null && c.Ok) { MeleeStance = c; MeleeStanceLoops = true; stanceName = n; break; }
+            }
+        if (MeleeStance == null && MeleeNamed.TryGetValue("intro", out var intro) && intro.Ok) { MeleeStance = intro.C; MeleeStancePhase = 1f; stanceName = intro.ClipName + " (its end)"; }
+        if (MeleeStance == null && MeleeNoTarget.TryGetValue("still", out var still) && still.Ok) { MeleeStance = still.C; MeleeStancePhase = 0f; stanceName = still.ClipName + " (its start)"; }
+        Debug.Log("[Hero] GTA V's melee stance: " + (MeleeStance == null ? "none" : stanceName + (MeleeStanceLoops ? " (a loop)" : "")) + "; named: " + string.Join(", ", new List<string>(MeleeNamed.Keys)));
         int strikes = 0;
         foreach (var c in cache.Values) if (c.Ok && c.Strike != null) strikes++;
         Debug.Log($"[Hero] GTA V's melee: {MeleeTargeted.Count} aimed blows, {MeleeCombo.Count} in chains, {MeleeGround.Count} on the ground, {MeleeNoTarget.Count} at no one, {MeleeBranches.Count} chains, {MeleeStrikes.Count} strike sets; {strikes}/{cache.Count} clips with their strike");
