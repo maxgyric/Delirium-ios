@@ -849,3 +849,7 @@ files (default.xex, the three exported files, the archives) are picked by the la
   climb on and walk off); always GTA V's sprint, not the run (Move[3]); with fists near you (8 m) and standing:
   GTA V's melee stance (a named idle loop in D.melee or one of GTA V's names; else the intro's end; else a blow's
   start, held), the pose their blows start and end in. Non-looping previous clips are no longer wrapped in fades.
+- Fix: a climbing hostile has no Cur clip; BotsPose read GtaAnim.At(null) and threw, which stopped LateUpdate
+  before the hero's pose and the camera (they froze till the climb ended, and his climb was undrawn). The phase is
+  only read off Cur when there is one; each bot's pose and mind run in try/catch (logged every 5 s at most) so a
+  hostile man can never stop the frame again.

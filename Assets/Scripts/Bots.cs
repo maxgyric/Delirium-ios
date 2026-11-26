@@ -142,7 +142,11 @@ public partial class Game
                 else b.Knocked = 0f;
                 continue;
             }
-            BotThink(b, dt);
+            try { BotThink(b, dt); }
+            catch (System.Exception e)
+            {
+                if (Time.time > botPoseSaid) { botPoseSaid = Time.time + 5f; Debug.LogWarning("[Sandbox] a hostile man's mind: " + e); }
+            }
         }
     }
 
@@ -456,21 +460,32 @@ public partial class Game
         if (bA == null) { bA = new GtaAnim.Frame[n]; bB = new GtaAnim.Frame[n]; bC = new GtaAnim.Frame[n]; }
         var t = BotQuarry();
         foreach (var b in bots)
+            try { BotPose(b, t); }
+            catch (System.Exception e)
+            {
+                if (Time.time > botPoseSaid) { botPoseSaid = Time.time + 5f; Debug.LogWarning("[Sandbox] a hostile man's pose: " + e); }
+            }
+    }
+    float botPoseSaid;
+
+    void BotPose(Bot b, Man t)
+    {
         {
             var m = b.M;
-            if (b.Mode != 0 || m.Body == null || m.Rising || m.Killed || m.Broken || (b.Cur == null && !b.Climbing)) { if (b.GunGo != null && (m.Killed || b.Mode != 0)) BotGunCarry(b, null); continue; }
+            if (b.Mode != 0 || m.Body == null || m.Rising || m.Killed || m.Broken || (b.Cur == null && !b.Climbing)) { if (b.GunGo != null && (m.Killed || b.Mode != 0)) BotGunCarry(b, null); return; }
             var body = m.Body;
             body.transform.SetPositionAndRotation(b.Pos, Quaternion.Euler(0f, b.Yaw, 0f));
-            float ph = b.Mel != null || b.Hold ? b.Phase : GtaAnim.At(b.Cur, b.Phase);
+            // (climbing he has no Cur: the climb's clips)
+            float ph = b.Climbing || b.Cur == null ? 0f : b.Mel != null || b.Hold ? b.Phase : GtaAnim.At(b.Cur, b.Phase);
             if (b.Climbing)
             {
                 // the climb's two clips, blended for the ledge's height
                 float u = Mathf.Clamp01(b.ClT / b.ClA.Dur);
-                if (!GtaAnim.Pose(b.ClA, u, bA)) continue;
+                if (!GtaAnim.Pose(b.ClA, u, bA)) return;
                 if (b.ClB != null && b.ClW > 0f && GtaAnim.Pose(b.ClB, u, bB)) GtaAnim.Blend(bA, bB, 1f - b.ClW);
                 if (b.Fade > 0f && b.Prev != null && GtaAnim.Pose(b.Prev, b.Prev.Cycle ? GtaAnim.At(b.Prev, b.PrevPhase) : b.PrevPhase, bC)) GtaAnim.Blend(bA, bC, b.Fade);
             }
-            else if (!GtaAnim.Pose(b.Cur, ph, bA)) continue;
+            else if (!GtaAnim.Pose(b.Cur, ph, bA)) return;
             else if (b.Fade > 0f && b.Prev != null && GtaAnim.Pose(b.Prev, b.Prev.Cycle ? GtaAnim.At(b.Prev, b.PrevPhase) : b.PrevPhase, bC)) GtaAnim.Blend(bA, bC, b.Fade);
             body.Apply(bA, b.Pos, b.Yaw);
             if (b.Hand)
